@@ -1,0 +1,67 @@
+name: Multi-Agent Code Review
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+  pull-requests: write
+  security-events: write
+
+jobs:
+  macr-review:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Build pull request diff
+        run: |
+          mkdir -p reports
+          git fetch origin "${{ github.base_ref }}" --depth=1
+          git diff --no-ext-diff --unified=80 "origin/${{ github.base_ref }}...HEAD" > /tmp/macr.diff
+          test -s /tmp/macr.diff
+
+      - name: Generate SARIF
+        env:
+          PYTHONPATH: src
+        run: |
+          python3 cli/agent_review.py review-diff \
+            --repo . \
+            --diff-file /tmp/macr.diff \
+            --format sarif \
+            --output reports/macr-review.sarif.json
+
+      - name: Generate GitHub review comments
+        env:
+          PYTHONPATH: src
+        run: |
+          python3 cli/agent_review.py review-diff \
+            --repo . \
+            --diff-file /tmp/macr.diff \
+            --format github \
+            --output reports/macr-review-comments.json
+
+      - name: Upload SARIF
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: reports/macr-review.sarif.json
+
+      - name: Post PR review comments
+        if: github.event.pull_request.head.repo.full_name == github.repository
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          GITHUB_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          python3 scripts/post_github_review.py \
+            --comments reports/macr-review-comments.json

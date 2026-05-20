@@ -1,0 +1,14 @@
+[project]
+name = "multi-agent-code-review-lab"
+version = "0.1.0"
+description = "GitHub-first multi-agent codebase collaboration and evaluation tool."
+requires-python = ">=3.10"
+dependencies = []
+
+[project.scripts]
+agent-review = "macr.cli:main"
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
+
