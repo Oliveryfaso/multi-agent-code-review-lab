@@ -95,7 +95,7 @@ python3 cli/agent_review.py prepare-real-eval \
 适合：
 
 - 用你自己挑选的真实 GitHub issue 做小规模、高质量、可解释测试集。
-- 在简历项目中展示“真实工程问题定位”。
+- 在项目中展示“真实工程问题定位”。
 
 输入 JSONL 示例：
 

@@ -62,7 +62,7 @@ User Query
 背景问题：
 
 - 直接把用户问题发给 LLM，容易产生不存在的文件、函数和行号。
-- 简历展示上会像普通 LLM wrapper，工程含量不足。
+- 公开项目中会像普通 LLM wrapper，工程价值不足。
 
 备选方案：
 
@@ -500,7 +500,7 @@ User Query
 
 - 重复运行同一仓库时，Code Graph 可以直接从缓存加载。
 - 用户打开页面能快速判断 run 是否健康。
-- 页面更适合简历/GitHub 展示：既有工程数据，也有科学可视化。
+- 页面更适合作为工程工具界面：既有工程数据，也有可视化运行状态。
 
 代价：
 
@@ -606,7 +606,7 @@ User Query
 - 支持 `--source swe-bench`、`--source codesearchnet`、`--source github-issue`。
 - SWE-bench 导入时，Agent 只看到 `problem_statement`；`patch/test_patch` 只用于离线提取 expected files/symbols/test selector。
 - CodeSearchNet 导入为 query-to-function 检索评测。
-- GitHub issue JSONL 支持手工精选真实 issue，更适合简历展示。
+- GitHub issue JSONL 支持手工精选真实 issue，更适合小规模真实问题定位评测。
 - 新增 `docs/real_data_testing_plan.md`，记录真实数据测试路线。
 - 新增 `reports/real_data_showcase.md`，并在 Trace Viewer 中展示真实数据测试状态。
 
@@ -748,7 +748,7 @@ User Query
 
 背景问题：
 
-- 当前系统已经能问答、patch、eval，但简历和真实工程价值仍偏“代码库 QA”。
+- 当前系统已经能问答、patch、eval，但真实工程价值仍偏“代码库 QA”。
 - 工程团队最常见的落地点是 PR / diff review：输入变更，输出风险摘要、review comments、测试建议和最终审核。
 - `Orchestrator` 仍然偏大，缺少可逐步迁移到 typed runtime 的基础结构。
 
@@ -839,7 +839,7 @@ User Query
 
 - 成本可控：不把所有任务都送进 LLM/API。
 - 多 Agent 路线更工程化：Agent 编排由显式 policy 管理，而不是靠代码分支隐式发生。
-- Trace 可以解释 skipped agent，便于调试、展示和简历阐述。
+- Trace 可以解释 skipped agent，便于调试、审计和用户理解。
 
 代价：
 
@@ -950,7 +950,7 @@ User Query
 
 - 用户可以选择 CLI 或网页端完成 review。
 - 网页端直接复用现有 Agent Board、Trace、Viewer 展示。
-- 更适合演示和简历项目展示。
+- 更适合本地演示和项目文档展示。
 - 长任务不会阻塞 HTTP 请求，用户能看到后台 job 状态。
 - 上传目录不会长期堆积，本地使用的安全边界更清楚。
 
@@ -981,7 +981,7 @@ User Query
 
 - 多轮测试暴露的问题分散在聊天记录、trace、eval report 和代码修改里。
 - 如果只在 README 展示最终通过指标，项目会缺少工程化试错过程。
-- 简历项目需要展示问题诊断、修复决策和指标变化，而不是只展示 Demo 成功。
+- 工程项目需要展示问题诊断、修复决策和指标变化，而不是只展示 Demo 成功。
 
 最终选择：
 
@@ -1145,7 +1145,7 @@ OK
 
 影响：
 
-- 作为 GitHub / 简历展示时观感不够工程化。
+- 作为 GitHub 项目页面时观感不够工程化。
 - Final Audit、Human Review、真实数据状态等关键结果不够突出。
 
 修复：
@@ -1195,7 +1195,7 @@ OK
 
 影响：
 
-- 难以支撑工程能力展示。
+- 难以支撑工程质量判断。
 - Final Review 和 recovery 机制覆盖不足。
 
 修复：

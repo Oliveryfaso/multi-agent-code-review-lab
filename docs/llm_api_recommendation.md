@@ -128,6 +128,6 @@ class LLMProvider:
 - finish_reason
 - estimated_cost
 
-这样你可以在简历里写：
+这个 provider 抽象层在项目中的作用：
 
-> 设计 provider-agnostic LLM 调用层，支持 OpenAI/Qwen/DeepSeek 可插拔切换，统一记录 token cost、latency、tool-call trace 和 prompt version，用于离线评测和线上监控。
+> Provider-agnostic LLM 调用层支持 OpenAI/Qwen/DeepSeek 等模型可插拔切换，统一记录 token cost、latency、tool-call trace 和 prompt version，用于离线评测、成本观察和运行监控。

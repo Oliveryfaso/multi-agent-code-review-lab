@@ -1,6 +1,6 @@
 # Security Notes
 
-This project is designed as a local engineering tool and portfolio project, not as a hosted multi-tenant service.
+This project is designed as a local engineering tool, not as a hosted multi-tenant service.
 
 ## Intended Use
 

@@ -1,30 +1,25 @@
 # Multi-Agent Code Review Lab
 
-一个本地优先、面向代码库理解、问题定位、轻量修复和 Agent 评测的多 Agent 工程工具。
+一个本地优先、面向代码库理解、问题定位、PR 风险审查、轻量修复验证和 Agent 工作流评测的多 Agent 工程工具。
 
 当前阶段已进入可运行 MVP：CLI、Web Review Workbench、DeepSeek Provider、Agent Board、Tool Router、Retrieval Critic、`rg + AST + Symbol Graph`、patch verification、eval report、本地 trace viewer 和 GitHub PR workflow 都已跑通。
 
-> Scope: this is a portfolio-grade and personal-use local tool, not a hosted multi-tenant SaaS. It is designed to demonstrate agent engineering, evidence-first retrieval, review workflow design, and evaluation discipline.
+> Scope: this is a local-first developer tool, not a hosted multi-tenant SaaS. It is designed for evidence-driven code review experiments, local repository analysis, PR risk detection, and agent workflow evaluation.
 
-## 项目定位
+## 适用用户
 
-中文名：多 Agent 代码库协作与评测平台
+这个项目适合：
 
-英文名：Multi-Agent Code Review Lab
+- 想在本地审查中小型 Python 仓库的开发者。
+- 想把 PR diff 转换成结构化 review comments / SARIF 的维护者。
+- 想研究 multi-agent code review、evidence-first retrieval、Agent Board 和评测闭环的工程人员。
+- 想对比规则工具、代码结构分析和少量 LLM 调用如何协作的 LLM 应用开发者。
 
-面向岗位：
+当前边界：
 
-- AI Agent Engineer
-- LLM Application Engineer
-- AI Application Engineer
-
-最终呈现：
-
-- 主体是 GitHub 上可运行、可复现、可评测的工程工具。
-- CLI、代码结构、测试、trace、eval report 是核心展示物，适合自动化、CI 和 GitHub 展示。
-- 网页端作为交互式工作台，支持上传代码 zip、发起后台代码库问答或 diff review，并直接展示 Agent trace、工具调用、证据链和评测结果。
-- 不做营销型 landing page，避免项目被理解成普通 AI Demo。
-- 默认定位是开源作品集项目和个人本地工具；公网服务、多租户权限和容器沙箱不是当前目标。
+- 默认面向本地可信环境和个人/团队内部实验。
+- 不提供公网多租户鉴权、容器级沙箱或企业级安全扫描承诺。
+- 输出应作为 review 辅助信号，不能替代人工审核。
 
 核心能力：
 
@@ -67,11 +62,9 @@ DeepSeek 已作为第一版真实 Provider 接入；规则 Provider 和 Mock Pro
 ## 文档
 
 - [项目大纲](docs/project_outline.md)
-- [项目收尾总结](docs/project_closure_summary.md)
 - [Agent 系统升级计划](docs/agent_system_upgrade_plan.md)
 - [多 Agent 系统试错、技术演进与测试问题记录](docs/multi_agent_system_evolution.md)
 - [真实数据测试计划](docs/real_data_testing_plan.md)
-- [简历升级分析](docs/cv_upgrade_analysis.md)
 - [LLM API 选择建议](docs/llm_api_recommendation.md)
 
 ## 开源与安全边界
@@ -80,16 +73,6 @@ DeepSeek 已作为第一版真实 Provider 接入；规则 Provider 和 Mock Pro
 - `.env`、API key、私有 trace、上传的代码 zip、外部真实仓库 checkout 不应提交到 GitHub。
 - Web Review Workbench 默认用于 `127.0.0.1` 本地运行，不建议直接暴露到公网。
 - 详细安全边界见 [SECURITY.md](SECURITY.md)。
-
-## 推荐第一阶段交付
-
-1. 导入一个 Python 小型代码库作为分析对象。
-2. 支持代码定位、调用链解释、测试失败分析三类任务。
-3. 接入 `rg`、Python AST、git diff/log、pytest runner。
-4. 输出每次任务的 JSON trace。
-5. 建立 20 条离线评测样例。
-6. 生成 Markdown 评测报告，方便 GitHub 展示。
-7. 预留本地 Web trace viewer；后续升级为 Web Review Workbench，但核心能力仍复用同一套 Orchestrator。
 
 ## 当前已搭建能力
 

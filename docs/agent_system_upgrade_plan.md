@@ -474,7 +474,7 @@ Phase2 覆盖：
 
 - SWE-bench Lite：后续真实 issue-to-patch 主线。
 - CodeSearchNet：后续检索召回专项测试。
-- 手工 GitHub issue：当前最适合简历展示的小规模真实工程测试。
+- 手工 GitHub issue：当前最适合小规模真实工程问题定位测试。
 
 测试：
 
@@ -755,12 +755,10 @@ Phase2 覆盖：
 - 增加更强的系统级隔离，例如容器或只读挂载。
 - 给 Web Workbench 加示例 zip / 示例 diff，一键生成演示 trace。
 
-## 6. 简历表达升级
+## 6. 当前公开功能摘要
 
-中文：
-
-> 将代码库问答 Demo 升级为 evidence-first 多 Agent 代码审查系统，设计 Agent Board 共享信息板和 Agent-to-Agent artifact 协议，使 Planner、Tool Router、Retrieval Critic、Code Search、AST/Symbol Graph、Code Graph、Solver、Patch、Patch Ranker、Verifier、Monitor 等 Agent 在固定责任区内交换结构化中间产物；基于 `rg + AST + Symbol Graph + Code Graph + DeepSeek + Verifier` 实现代码定位、证据归因、patch 候选生成、测试验证和离线评测，并提供 CLI 与本地 Web Review Workbench 双入口展示每次 run 的 plan、tool calls、evidence、patch ranking、patch verification 与 monitor metrics。
-
-英文：
-
-> Upgraded a codebase QA prototype into an evidence-first multi-agent code review system with a shared Agent Board and structured agent-to-agent artifacts. Implemented Planner, Tool Router, Retrieval Critic, Code Search, AST/Symbol Graph, Code Graph, Solver, Patch, Patch Ranker, Verifier, and Monitor agents with explicit responsibility sections, traceable intermediate outputs, patch candidate ranking, patch verification, offline evaluation, plus CLI and local Web Review Workbench entry points for plan/tool/evidence/verification observability.
+- Evidence-first 多 Agent 代码审查系统。
+- Agent Board 共享信息板和 Agent-to-Agent artifact 协议。
+- Planner、Routing Policy、Tool Router、Retrieval Critic、Code Search、AST/Symbol Graph、Code Graph、Solver、Patch、Patch Ranker、Verifier、Monitor 等 Agent 在固定责任区内交换结构化中间产物。
+- 基于 `rg + AST + Symbol Graph + Code Graph + DeepSeek + Verifier` 实现代码定位、证据归因、patch 候选生成、测试验证和离线评测。
+- 提供 CLI 与本地 Web Review Workbench 双入口，展示每次 run 的 plan、tool calls、evidence、patch ranking、patch verification 与 monitor metrics。

@@ -10,7 +10,7 @@
 
 ### 最终呈现形态
 
-这个项目面向工程能力展示，因此最终以 GitHub 工程工具为主，网页展示为辅。
+这个项目面向本地代码审查、仓库理解和 Agent 工作流评测，因此最终以可运行的 GitHub 工程工具为主，网页展示为辅。
 
 主交付物：
 
@@ -585,7 +585,7 @@ Multi-Agent-Code-Review-Lab/
 - 支持代码定位和 bug investigation。
 - 20 条 eval case，覆盖 auth、order、payment、notification、test failure 和 call graph。
 - Markdown eval report。
-- GitHub 上可直接展示样例 trace 和评测结果。
+- GitHub 上可直接查看样例 trace 和评测结果。
 
 ### Phase 2：Symbol Graph + LSP
 
@@ -613,7 +613,7 @@ Multi-Agent-Code-Review-Lab/
 
 - 轻量修复闭环。
 - patch apply rate 和 test pass rate 指标。
-- `patches/*.patch` 可作为 GitHub 展示物。
+- `patches/*.patch` 可作为可复现 patch artifact。
 
 ### Phase 4：Monitor + Dashboard
 
@@ -628,15 +628,4 @@ Multi-Agent-Code-Review-Lab/
 
 - 100 条 eval case。
 - CLI eval report 作为主输出。
-- Web trace viewer 作为辅助展示。
-- 简历可展示图表。
-
-## 12. 简历表达
-
-中文：
-
-> 设计并实现以 GitHub repo 和 CLI 为主的多 Agent 代码库协作与评测工具，构建 Planner、Tool Router、Code Search、AST/Symbol、LSP、Verifier、Monitor 等 Agent，集成 ripgrep、Python AST、git、pytest 与少量语义检索，支持代码定位、调用链解释、测试失败分析和轻量修复验证；构建离线评测集并记录 trace，跟踪 task success、file/symbol hit、evidence precision、tool-call success、hallucinated reference、latency 与 token cost 等指标，并提供本地 Web trace viewer 辅助展示 Agent 路由、工具调用和失败归因。
-
-英文：
-
-> Designed and built a GitHub-first multi-agent codebase collaboration and evaluation tool with CLI workflows and a local trace viewer. Implemented Planner, Tool Router, Code Search, AST/Symbol, LSP, Verifier, and Monitor agents; integrated ripgrep, Python AST, git, pytest, and limited semantic search for code localization, call-chain explanation, test-failure diagnosis, and lightweight patch verification. Built an offline evaluation suite with trace logging to track task success, file/symbol hit rate, evidence precision, tool-call success, hallucinated references, latency, and token cost.
+- Web trace viewer 作为辅助可视化。

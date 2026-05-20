@@ -18,3 +18,7 @@ reports/*.sarif.json
 reports/*comments.json
 .coverage
 htmlcov/
+
+# Local planning notes, not part of the public project docs.
+docs/cv_upgrade_analysis.md
+docs/project_closure_summary.md
