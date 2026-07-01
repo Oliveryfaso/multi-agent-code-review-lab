@@ -22,6 +22,10 @@ class OrchestratorTests(unittest.TestCase):
         self.assertTrue(any(call.get("router") for call in trace.tool_calls))
         self.assertTrue(trace.metrics["contract_validation"]["ok"])
         self.assertTrue(trace.metrics["final_review"]["ok"])
+        self.assertIn("workflow", trace.metrics)
+        self.assertGreaterEqual(trace.metrics["workflow"]["checkpoint_count"], 5)
+        self.assertEqual(trace.metrics["workflow"]["graph"]["state_schema"], "Trace + AgentBoard + EvidenceStore + policy/checkpoints")
+        self.assertIn("workflow", trace.board)
         self.assertIn("final_review", trace.board)
         evidence_payload = trace.board["evidence"][0]["payload"]
         self.assertEqual(evidence_payload["count"], len(evidence_payload["items"]))
@@ -49,6 +53,9 @@ class OrchestratorTests(unittest.TestCase):
         self.assertEqual(trace.metrics["diff_review"]["risk_level"], "medium")
         self.assertTrue(trace.metrics["contract_validation"]["ok"])
         self.assertTrue(trace.metrics["final_review"]["ok"])
+        self.assertEqual(trace.metrics["workflow"]["mode"], "diff")
+        self.assertGreaterEqual(trace.metrics["workflow"]["checkpoint_count"], 4)
+        self.assertIn("workflow", trace.board)
 
 
 if __name__ == "__main__":

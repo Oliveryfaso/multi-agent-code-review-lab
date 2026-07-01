@@ -145,6 +145,7 @@ class TraceViewer:
         final_review = metrics.get("final_review") or {}
         diff_review = metrics.get("diff_review") or {}
         code_smell = metrics.get("code_smell") or {}
+        workflow = metrics.get("workflow") or {}
         calls = trace.get("tool_calls", [])
         evidence = answer.get("evidence", [])
 
@@ -190,6 +191,9 @@ class TraceViewer:
     .flow-label {{ font-size:11px; fill:#344054; text-anchor:middle; }}
     .flow-lane {{ font-size:11px; fill:#667085; font-weight:700; }}
     .flow-lane-line {{ stroke:#d9e1ec; stroke-width:1; }}
+    .workflow-strip {{ margin-top:10px; display:grid; grid-template-columns:repeat(auto-fit,minmax(135px,1fr)); gap:8px; }}
+    .workflow-chip {{ border:1px solid var(--line); border-radius:8px; padding:8px; background:#fbfdff; }}
+    .workflow-chip strong {{ display:block; font-size:15px; }}
     .timeline {{ display:grid; grid-template-columns:repeat(auto-fit,minmax(132px,1fr)); gap:8px; }}
     .state-card {{ border:1px solid var(--line); border-left:4px solid var(--accent); border-radius:8px; padding:9px; background:#fbfdff; animation:rise .28s ease-out both; }}
     .state-card.failed {{ border-left-color:var(--bad); }}
@@ -261,6 +265,7 @@ class TraceViewer:
         {self._metric("Human Review", "yes" if final_review.get("human_review_required") else "no")}
         {self._metric("Code Smell", f"{int(float(code_smell.get('smell_ratio') or 0) * 100)}% / {code_smell.get('severity', 'n/a')}")}
         {self._metric("Diff Risk", diff_review.get("risk_level", "n/a"))}
+        {self._metric("Workflow", f"{workflow.get('executed_node_count', 0)} run / {workflow.get('checkpoint_count', 0)} cp")}
       </div>
       {self._final_review_notice(final_review)}
       <p class="muted"><strong>Query:</strong> {self._esc(trace.get("query", ""))}</p>
@@ -272,6 +277,7 @@ class TraceViewer:
         <div>
           <h3>Agent Flow Map</h3>
           {self._agent_flow(board)}
+          {self._workflow_panel(workflow)}
         </div>
         <div>
           <h3>Health Signals</h3>
@@ -287,6 +293,7 @@ class TraceViewer:
       </div>
     </section>
     {self._detail("Execution Plan & State Timeline", self._steps(plan.get("steps", [])) + self._states(states), open_by_default=True)}
+    {self._detail("Workflow Graph & Checkpoints", self._workflow_details(workflow))}
     {self._detail("Repository Map", self._repo_map(board))}
     {self._detail("PR / Diff Review", self._diff_review(board))}
     {self._detail("Evidence & Tool Calls", "<p class='muted'>`miss` means exploratory search returned no matches; it is not a hard tool failure.</p>" + self._tool_mix(calls) + self._evidence(evidence[:8]) + self._tool_calls(calls))}
@@ -698,6 +705,56 @@ class TraceViewer:
             + "".join(lines)
             + "".join(nodes)
             + "</svg></div>"
+        )
+
+    def _workflow_panel(self, workflow: dict) -> str:
+        if not workflow:
+            return "<p class='muted'>No workflow graph metadata in this trace yet.</p>"
+        return (
+            "<div class='workflow-strip'>"
+            f"<div class='workflow-chip'><span class='muted'>Mode</span><strong>{self._esc(workflow.get('mode', 'n/a'))}</strong></div>"
+            f"<div class='workflow-chip'><span class='muted'>Nodes</span><strong>{workflow.get('executed_node_count', 0)} / {workflow.get('node_count', 0)}</strong></div>"
+            f"<div class='workflow-chip'><span class='muted'>Skipped</span><strong>{workflow.get('skipped_node_count', 0)}</strong></div>"
+            f"<div class='workflow-chip'><span class='muted'>Checkpoints</span><strong>{workflow.get('checkpoint_count', 0)}</strong></div>"
+            "</div>"
+        )
+
+    def _workflow_details(self, workflow: dict) -> str:
+        if not workflow:
+            return "<p class='muted'>No workflow graph metadata in this trace yet.</p>"
+        graph = workflow.get("graph") or {}
+        nodes = graph.get("nodes") or []
+        checkpoints = workflow.get("checkpoints") or []
+        node_rows = "".join(
+            (
+                f"<tr><td>{self._esc(node.get('name'))}</td>"
+                f"<td>{self._esc(node.get('owner'))}</td>"
+                f"<td>{self._esc(node.get('decision'))}</td>"
+                f"<td>{self._esc(node.get('decision_reason'))}</td></tr>"
+            )
+            for node in nodes
+        )
+        checkpoint_rows = "".join(
+            (
+                f"<tr><td>{self._esc(item.get('node'))}</td>"
+                f"<td>{self._esc(item.get('status'))}</td>"
+                f"<td>{self._esc(', '.join(item.get('next_nodes') or []))}</td>"
+                f"<td>{item.get('state_count', 0)}</td>"
+                f"<td>{self._esc(item.get('detail'))}</td></tr>"
+            )
+            for item in checkpoints
+        )
+        return (
+            "<div class='grid'>"
+            f"{self._metric('Mode', workflow.get('mode', 'n/a'))}"
+            f"{self._metric('Graph Nodes', workflow.get('node_count', 0))}"
+            f"{self._metric('Graph Edges', workflow.get('edge_count', 0))}"
+            f"{self._metric('Checkpoints', workflow.get('checkpoint_count', 0))}"
+            "</div>"
+            "<h3>Node Decisions</h3>"
+            f"<div class='table-wrap'><table><thead><tr><th>Node</th><th>Owner</th><th>Decision</th><th>Reason</th></tr></thead><tbody>{node_rows}</tbody></table></div>"
+            "<h3>Checkpoints</h3>"
+            f"<div class='table-wrap'><table><thead><tr><th>Node</th><th>Status</th><th>Next</th><th>States</th><th>Detail</th></tr></thead><tbody>{checkpoint_rows}</tbody></table></div>"
         )
 
     def _health(self, metrics: dict, calls: list[dict], evidence: list[dict], states: list[dict]) -> str:

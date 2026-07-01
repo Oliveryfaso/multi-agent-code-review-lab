@@ -25,6 +25,8 @@ class ViewerTests(unittest.TestCase):
         self.assertIn('data-mode-panel="diff" hidden', html)
         self.assertIn("Run Observability", html)
         self.assertIn("Agent Flow Map", html)
+        self.assertIn("Workflow Graph &amp; Checkpoints", html)
+        self.assertIn("Checkpoints", html)
         self.assertIn("Planning", html)
         self.assertIn("Retrieval", html)
         self.assertIn("Delivery", html)

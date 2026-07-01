@@ -24,6 +24,7 @@ class MonitorAgent:
         code_smell = trace.metrics.get("code_smell", {}) if isinstance(trace.metrics, dict) else {}
         if code_smell.get("severity") == "high":
             suggestions.append("treat high code smell ratio as a refactor-before-feature risk")
+        workflow = trace.metrics.get("workflow", {}) if isinstance(trace.metrics, dict) else {}
         return {
             "tool_call_count": len(tool_calls),
             "failed_tool_calls": len(failed),
@@ -32,5 +33,6 @@ class MonitorAgent:
             "evidence_count": evidence_count,
             "llm_cost": llm_cost,
             "code_smell": code_smell,
+            "workflow_checkpoint_count": workflow.get("checkpoint_count", 0),
             "suggestions": suggestions,
         }

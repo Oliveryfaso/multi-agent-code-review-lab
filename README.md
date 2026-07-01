@@ -6,6 +6,67 @@
 
 > Scope: this is a local-first developer tool, not a hosted multi-tenant SaaS. It is designed for evidence-driven code review experiments, local repository analysis, PR risk detection, and agent workflow evaluation.
 
+## Quick Start
+
+无需 API key 即可跑通本地 demo：
+
+```bash
+scripts/check_demo_ready.sh
+```
+
+手动运行一个样例问题：
+
+```bash
+python3 cli/agent_review.py ask \
+  --repo sample_repos/sample_python_api \
+  "这个接口在哪里鉴权？"
+```
+
+启动本地 Web Review Workbench：
+
+```bash
+python3 cli/agent_review.py view --port 8765
+```
+
+打开：
+
+```text
+http://127.0.0.1:8765
+```
+
+## Architecture At A Glance
+
+```mermaid
+flowchart LR
+  U["User query / PR diff"] --> P["Planner"]
+  P --> Policy["Routing Policy"]
+  Policy --> Router["Tool Router"]
+  Router --> Search["rg / text search"]
+  Router --> AST["AST / Symbol Graph"]
+  Router --> Graph["Code Graph"]
+  Search --> Critic["Retrieval Critic"]
+  AST --> Evidence["Evidence Memory"]
+  Graph --> Evidence
+  Critic --> Evidence
+  Evidence --> Solver["Solver / Patch Agent"]
+  Solver --> Audit["Final Review Agent"]
+  Audit --> Monitor["Monitor + Trace Viewer"]
+  Policy --> Board["Agent Board"]
+  Router --> Board
+  Evidence --> Board
+  Audit --> Board
+```
+
+## Why Not Just Call An LLM API?
+
+代码审查需要可验证证据，而不是只生成自然语言答案。本项目把 LLM 放在合适的位置：
+
+- 先用 `rg`、AST、Symbol Graph、Code Graph 获取文件、行号、符号和调用关系。
+- Agent 通过 `AgentBoard` 写入结构化 artifact，而不是靠隐式上下文传话。
+- `RoutingPolicyAgent` 会跳过不必要的 Agent 和 API 调用，低风险任务优先走确定性路径。
+- `FinalReviewAgent` 会检查证据、置信度、contract、code smell 和 patch verification。
+- Trace Viewer 展示每一步发生了什么、为什么这样路由、哪里需要人工审核。
+
 ## 适用用户
 
 这个项目适合：
@@ -62,10 +123,12 @@ DeepSeek 已作为第一版真实 Provider 接入；规则 Provider 和 Mock Pro
 ## 文档
 
 - [项目大纲](docs/project_outline.md)
+- [Agent Framework Mapping](docs/agent_framework_mapping.md)
 - [Agent 系统升级计划](docs/agent_system_upgrade_plan.md)
 - [多 Agent 系统试错、技术演进与测试问题记录](docs/multi_agent_system_evolution.md)
 - [真实数据测试计划](docs/real_data_testing_plan.md)
 - [LLM API 选择建议](docs/llm_api_recommendation.md)
+- [Release Checklist](docs/RELEASE_CHECKLIST.md)
 
 ## 开源与安全边界
 
@@ -86,6 +149,7 @@ Phase 0 / Phase 1 骨架已具备：
 - `agent-review code-smell`: 计算 Python 仓库的 code smell ratio、维护性风险等级和热点函数。
 - `agent-review view`: 启动本地 Web Review Workbench + Trace Viewer，支持上传代码 zip 后以后台 job 做问答分析或 diff review，并展示 plan、tool calls、evidence、patch verification 和 eval report。
 - `AgentBoard`: 共享信息板，Agent 按固定区块写入 task、plan、policy、routing、repo map、retrieval、retrieval critique、code intelligence、code graph、evidence、review、pr review、patch、verification、monitor。
+- `Workflow Graph`: 以 LangGraph-style 的状态图方式描述 task、planner、policy、router、retrieval、code intelligence、solver、final review、patch、monitor 等节点，记录条件边、执行/跳过原因和 checkpoint。
 - `RoutingPolicyAgent`: 在执行前判断哪些 Agent/工具/API 调用值得运行，低风险任务优先规则路径，明显过剩的 LLM/API 调用会被跳过并记录原因。
 - `ToolRouterAgent`: 独立路由 Agent，读取 Plan 和 Board，输出 tool call schedule；每个 tool call 记录 router reason。
 - `RepoMapAgent`: 在检索前生成仓库结构摘要、focus files 和 top symbols，提供类似 repo map 的全局上下文，降低纯关键词检索的偶然性。
@@ -104,7 +168,7 @@ Phase 0 / Phase 1 骨架已具备：
 - `MockLLMProvider`: 用于无网络、无 API key 和单元测试场景。
 - 工具链：`rg` 文本检索、Python AST 解析、Symbol Graph、Code Graph、git log、pytest/unittest test runner。
 - Trace Viewer 展示 Agent Board，可审查每个 Agent 的中间产物、检索纠错、信息交接和 verifier 结果。
-- Trace Viewer 展示 State Timeline、Agent Flow Map、Health Signals、Contract 状态、Final Audit、Human Review、工具健康概览和 eval report，方便用户判断系统跑到哪一步、产物是否完整、成本和证据质量如何。
+- Trace Viewer 展示 State Timeline、Workflow Graph、Agent Flow Map、Health Signals、Contract 状态、Final Audit、Human Review、工具健康概览和 eval report，方便用户判断系统跑到哪一步、产物是否完整、成本和证据质量如何。
 - Web Workbench 使用后台 job 和 `/jobs/<id>.json` 状态轮询；上传 zip 会做路径穿越、symlink、文件数量和解压体积检查，job 结束后清理临时目录。
 - 样例代码库：`sample_repos/sample_python_api`。
 - Phase 1 评测集：`eval_sets/phase1.jsonl`。

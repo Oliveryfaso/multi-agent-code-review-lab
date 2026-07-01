@@ -1434,7 +1434,54 @@ OK
 - 成本、延迟、cache 命中率问题。
 - Code Smell 指标或维护性风险策略问题。
 
-## 6. 后续技术更新记录模板
+## 6. 最新技术更新记录
+
+### 2026-06-30 LangGraph-style Workflow Graph 与 Checkpoint
+
+背景问题：
+
+- 现有系统已经具备 Planner、Policy、Router、Retrieval、Code Graph、Final Review 等 Agent，但 Orchestrator 仍主要表现为显式 pipeline。
+- 对比成熟 LangGraph 工作流，项目还缺少稳定的 graph schema、条件边说明、节点级执行/跳过状态，以及可持久化 checkpoint。
+- 如果直接引入 LangGraph 依赖，短期会增加迁移成本，并可能遮蔽本项目最核心的代码审查证据链、Agent Board 和工具路由实现。
+
+备选方案：
+
+- 方案 A：立即改造成 LangGraph `StateGraph`。
+- 方案 B：保持原 pipeline，不做工作流层抽象。
+- 方案 C：先实现项目内的 LangGraph-style workflow contract，包括 node、edge、policy decision 和 checkpoint，后续再做可选 LangGraph adapter。
+
+最终选择：
+
+- 采用方案 C。
+- 新增 `CodeReviewWorkflow`，显式定义 task、planner、policy、router、repo_map、retrieval、retrieval_critic、code_intelligence、code_graph、code_quality、solver、pr_review、final_review、patch、verification、monitor 等节点。
+- 每次 run 在 `AgentBoard.workflow` 写入 graph spec，并在 policy、repo_map、router、evidence/code_graph、solver、patch、final_review 等关键边界写入 checkpoint。
+- `Trace.metrics.workflow` 汇总 mode、node_count、edge_count、executed/skipped node count、checkpoint_count 和 checkpoint 明细。
+- Trace Viewer 新增 `Workflow Graph & Checkpoints` 展示区。
+
+收益：
+
+- 项目更接近成熟 LangGraph 工作流的核心形态：显式状态、节点、条件边、checkpoint 和可观测运行轨迹。
+- 仍保持本地工具的低依赖、可测试和可解释优势。
+- 后续迁移 LangGraph 时，可以直接把现有节点包装成 graph nodes，把 `Trace + AgentBoard + EvidenceStore` 映射为 graph state。
+- 用户能看清每次 run 哪些节点执行、哪些节点跳过、为什么跳过，以及中间状态保存点。
+
+代价：
+
+- Orchestrator 多维护一份 workflow metadata。
+- 每次新增 Agent 或 board section 时，需要同步 workflow node/edge 和 checkpoint 策略。
+
+测试 / eval：
+
+- 新增 orchestrator 测试断言普通问答和 diff review 都包含 workflow metrics 与 board section。
+- 新增 viewer 测试断言页面展示 `Workflow Graph & Checkpoints`。
+- 待每次重大工作流变更后继续跑全量单元测试。
+
+后续风险：
+
+- 当前 checkpoint 是观测和恢复设计基础，还不是完整 durable execution；进程崩溃后不能从任意 checkpoint 自动 resume。
+- 如果未来任务链更长，建议添加可选 LangGraph adapter 或更细粒度 checkpoint store。
+
+## 7. 后续技术更新记录模板
 
 以后新增重大技术方案时，按这个模板追加：
 

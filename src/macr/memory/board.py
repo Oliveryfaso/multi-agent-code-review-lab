@@ -20,6 +20,7 @@ class AgentBoard:
 
     SECTIONS = [
         "task",
+        "workflow",
         "plan",
         "policy",
         "routing",

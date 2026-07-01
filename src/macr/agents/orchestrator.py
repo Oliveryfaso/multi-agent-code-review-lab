@@ -30,6 +30,7 @@ from macr.tools.repo_map import RepoMapTool
 from macr.tools.search import TextSearchTool
 from macr.tools.symbol_graph import SymbolGraphTool
 from macr.tools.test_runner import TestRunnerTool
+from macr.workflow import CodeReviewWorkflow, WorkflowCheckpoint
 
 
 class Orchestrator:
@@ -63,6 +64,7 @@ class Orchestrator:
         self.monitor = MonitorAgent()
         self.contracts = BoardContractValidator()
         self.trace_store = trace_store or TraceStore(Path("traces"))
+        self.workflow = CodeReviewWorkflow()
 
     def run(self, repo_path: Path, query: str, test_selector: str | None = None) -> Trace:
         return self._run(repo_path, query, test_selector, generate_patch=False)
@@ -82,6 +84,7 @@ class Orchestrator:
         context = RunContext(repo_path=repo_path, query=trace.query, trace=trace, board=AgentBoard())
         recorder = RuntimeRecorder(context.trace)
         board = context.board
+        checkpoints: list[WorkflowCheckpoint] = []
         policy = self.policy_agent.diff_review_policy(provider_available=bool(self.provider))
         recorder.record("task_received", "completed", "Diff review task accepted", {"diff_chars": len(diff_text)})
         board.post(
@@ -98,6 +101,18 @@ class Orchestrator:
             "Diff review routing policy",
             policy.to_dict(),
         )
+        self._post_workflow_graph(board, mode="diff", policy=policy)
+        checkpoints.append(
+            self._workflow_checkpoint(
+                "policy",
+                "completed",
+                "Diff review policy skipped planner/search and routed to repository map.",
+                trace,
+                board,
+                next_nodes=["repo_map"],
+                metrics={"skipped_steps": len(policy.skipped_steps)},
+            )
+        )
         repo_map_result = self.repo_map.run(repo_path, [])
         trace.tool_calls.append(self._tool_record(repo_map_result))
         board.post(
@@ -112,6 +127,16 @@ class Orchestrator:
             "completed",
             "Repo Map Agent summarized repository before diff review",
             {"mapped_files": repo_map_result.data.get("mapped_files", 0) if isinstance(repo_map_result.data, dict) else 0},
+        )
+        checkpoints.append(
+            self._workflow_checkpoint(
+                "repo_map",
+                "completed",
+                "Repository map checkpoint persisted before PR diff review.",
+                trace,
+                board,
+                next_nodes=["pr_review"],
+            )
         )
         review_report = self.pr_reviewer.review(diff_text)
         board.post(
@@ -130,6 +155,17 @@ class Orchestrator:
                 "changed_file_count": review_report["changed_file_count"],
                 "comment_count": len(review_report["comments"]),
             },
+        )
+        checkpoints.append(
+            self._workflow_checkpoint(
+                "pr_review",
+                "completed",
+                "Diff review artifact is available for final audit.",
+                trace,
+                board,
+                next_nodes=["code_quality", "final_review"],
+                metrics={"comment_count": len(review_report["comments"]), "risk_level": review_report["risk_level"]},
+            )
         )
         smell_report = self.code_smell.analyze(repo_path)
         board.post(
@@ -155,7 +191,21 @@ class Orchestrator:
             "Diff review final audit",
             final_report,
         )
+        checkpoints.append(
+            self._workflow_checkpoint(
+                "final_review",
+                "completed",
+                "Final audit checkpoint completed for diff review.",
+                trace,
+                board,
+                next_nodes=["monitor"],
+                metrics={"human_review_required": final_report["human_review_required"]},
+            )
+        )
+        workflow_summary = self.workflow.summarize(mode="diff", policy=policy, checkpoints=checkpoints)
         trace.board = board.to_dict()
+        trace.metrics["code_smell"] = smell_report
+        trace.metrics["workflow"] = workflow_summary
         trace.metrics = self.monitor.summarize(trace)
         trace.metrics["code_smell"] = smell_report
         trace.metrics["contract_validation"] = contract_report.to_dict()
@@ -166,7 +216,10 @@ class Orchestrator:
             "comment_count": len(review_report["comments"]),
             "test_suggestion_count": len(review_report["test_suggestions"]),
         }
+        trace.metrics["workflow"] = workflow_summary
         board.post("monitor", "monitor", "run_metrics", "Monitor summary", trace.metrics)
+        trace.board = board.to_dict()
+        self._post_workflow_checkpoints(board, checkpoints)
         trace.board = board.to_dict()
         recorder.record("completed", "completed", "Diff review trace saved with board artifacts")
         self.trace_store.save(trace)
@@ -183,6 +236,7 @@ class Orchestrator:
         repo_path = repo_path.resolve()
         trace = Trace(query=query, repo_path=str(repo_path))
         board = AgentBoard()
+        checkpoints: list[WorkflowCheckpoint] = []
         self._state(trace, "task_received", "completed", "User task accepted", {"generate_patch": generate_patch})
         board.post(
             "task",
@@ -236,6 +290,18 @@ class Orchestrator:
                 "skipped_steps": len(policy.skipped_steps),
             },
         )
+        self._post_workflow_graph(board, mode="patch" if generate_patch else "ask", policy=policy)
+        checkpoints.append(
+            self._workflow_checkpoint(
+                "policy",
+                "completed",
+                "Policy checkpoint records execute/skip decisions before tool routing.",
+                trace,
+                board,
+                next_nodes=["repo_map", "router"],
+                metrics={"executed_steps": len(policy.executed_steps), "skipped_steps": len(policy.skipped_steps)},
+            )
+        )
         evidence = EvidenceStore()
         candidate_files: set[str] = set()
         file_match_lines: dict[str, set[int]] = {}
@@ -263,8 +329,29 @@ class Orchestrator:
                 "focus_files": len(repo_map_result.data.get("focus_files", [])) if isinstance(repo_map_result.data, dict) else 0,
             },
         )
+        checkpoints.append(
+            self._workflow_checkpoint(
+                "repo_map",
+                "completed",
+                "Repository map checkpoint captured focus files before retrieval.",
+                trace,
+                board,
+                next_nodes=["router", "retrieval"],
+            )
+        )
         schedule = self.router.route(plan, board, test_selector)
         self._state(trace, "routed", "completed", "Tool Router produced schedule", {"tool_calls_planned": len(schedule)})
+        checkpoints.append(
+            self._workflow_checkpoint(
+                "router",
+                "completed",
+                "Tool Router checkpoint captured the planned tool schedule.",
+                trace,
+                board,
+                next_nodes=self._next_nodes_from_schedule(schedule),
+                metrics={"tool_calls_planned": len(schedule)},
+            )
+        )
 
         for spec in schedule:
             if spec.action == "search_text":
@@ -431,6 +518,17 @@ class Orchestrator:
             "Retrieval and code intelligence produced evidence",
             {"candidate_files": len(candidate_files), "evidence_count": len(evidence), "tool_calls": len(trace.tool_calls)},
         )
+        checkpoints.append(
+            self._workflow_checkpoint(
+                "code_graph",
+                "completed",
+                "Evidence checkpoint captured retrieval, AST, symbol graph, and code graph outputs.",
+                trace,
+                board,
+                next_nodes=["code_quality", "solver"],
+                metrics={"candidate_files": len(candidate_files), "evidence_count": len(evidence)},
+            )
+        )
         smell_report = self.code_smell.analyze(repo_path)
         board.post(
             "code_quality",
@@ -497,6 +595,17 @@ class Orchestrator:
             "completed",
             "Solver produced evidence-backed review",
             {"answer_evidence_count": len(trace.answer.evidence) if trace.answer else 0},
+        )
+        checkpoints.append(
+            self._workflow_checkpoint(
+                "solver",
+                "completed",
+                "Solver checkpoint captured the evidence-backed answer.",
+                trace,
+                board,
+                next_nodes=["final_review", "patch" if generate_patch else "monitor"],
+                metrics={"answer_confidence": trace.answer.confidence if trace.answer else 0},
+            )
         )
         board.post(
             "evidence",
@@ -570,6 +679,17 @@ class Orchestrator:
                 "Patch candidates verified and ranked",
                 {"candidate_count": len(patch_candidates), "selected_source": trace.patch.source},
             )
+            checkpoints.append(
+                self._workflow_checkpoint(
+                    "patch",
+                    "completed",
+                    "Patch checkpoint captured candidate ranking and verification.",
+                    trace,
+                    board,
+                    next_nodes=["final_review"],
+                    metrics={"candidate_count": len(patch_candidates), "selected_source": trace.patch.source},
+                )
+            )
         pre_monitor_board = board.to_dict()
         contract_report = self.contracts.validate(pre_monitor_board, generate_patch=generate_patch)
         self._state(
@@ -604,11 +724,32 @@ class Orchestrator:
             "Cross-agent final audit",
             asdict(final_report),
         )
+        checkpoints.append(
+            self._workflow_checkpoint(
+                "final_review",
+                "completed" if final_report.ok else "needs_review",
+                "Final audit checkpoint completed before monitor summary.",
+                trace,
+                board,
+                next_nodes=["monitor"],
+                metrics={"confidence": final_report.confidence, "human_review_required": final_report.human_review_required},
+            )
+        )
+        workflow_summary = self.workflow.summarize(
+            mode="patch" if generate_patch else "ask",
+            policy=policy,
+            checkpoints=checkpoints,
+        )
+        trace.metrics["code_smell"] = smell_report
+        trace.metrics["workflow"] = workflow_summary
         trace.metrics = self.monitor.summarize(trace)
         trace.metrics["code_smell"] = smell_report
         trace.metrics["contract_validation"] = contract_report.to_dict()
         trace.metrics["final_review"] = asdict(final_report)
+        trace.metrics["workflow"] = workflow_summary
         board.post("monitor", "monitor", "run_metrics", "Monitor summary", trace.metrics)
+        trace.board = board.to_dict()
+        self._post_workflow_checkpoints(board, checkpoints)
         trace.board = board.to_dict()
         self._state(trace, "completed", "completed", "Trace saved with metrics and board artifacts")
         self.trace_store.save(trace)
@@ -704,6 +845,57 @@ class Orchestrator:
                         confidence=0.68,
                     )
                 )
+
+    def _post_workflow_graph(self, board: AgentBoard, *, mode: str, policy) -> None:
+        board.post(
+            "workflow",
+            "orchestrator",
+            "graph_spec",
+            "LangGraph-style workflow graph and routing decisions",
+            self.workflow.graph_payload(mode=mode, policy=policy),
+        )
+
+    def _post_workflow_checkpoints(self, board: AgentBoard, checkpoints: list[WorkflowCheckpoint]) -> None:
+        board.post(
+            "workflow",
+            "orchestrator",
+            "checkpoints",
+            "Workflow checkpoints persisted during this run",
+            {"items": [checkpoint.__dict__ for checkpoint in checkpoints], "count": len(checkpoints)},
+        )
+
+    def _workflow_checkpoint(
+        self,
+        node: str,
+        status: str,
+        detail: str,
+        trace: Trace,
+        board: AgentBoard,
+        *,
+        next_nodes: list[str] | None = None,
+        metrics: dict | None = None,
+    ) -> WorkflowCheckpoint:
+        return self.workflow.checkpoint(
+            node=node,
+            status=status,
+            detail=detail,
+            board=board.to_dict(),
+            state_count=len(trace.state_timeline),
+            next_nodes=next_nodes or [],
+            metrics=metrics or {},
+        )
+
+    def _next_nodes_from_schedule(self, schedule: list) -> list[str]:
+        mapping = {
+            "search_text": "retrieval",
+            "parse_candidate_files": "code_intelligence",
+            "build_symbol_graph": "code_graph",
+            "build_code_graph": "code_graph",
+            "git_log": "retrieval",
+            "run_tests": "verification",
+        }
+        nodes = [mapping.get(getattr(spec, "action", ""), getattr(spec, "tool_family", "tool")) for spec in schedule]
+        return list(dict.fromkeys(nodes))
 
     def _diff_review_questions(self, review_report: dict, contract_report: dict) -> list[str]:
         questions: list[str] = []
