@@ -1,0 +1,25 @@
+# Offline diagnostic comparison
+
+The comparison core records captured responses from the existing `ModelProfile` / `ModelResponse` contracts. `LocalHTTPProvider` remains the loopback adapter; its trusted token counter and the owned-service lifecycle still belong to the caller. This entry never generates, starts a service, runs analysed source, repairs output or retries. It adds no dependency or agent framework.
+
+Run the public, self-authored scripted example in a **new** artifact directory:
+
+```sh
+python3 -I -S -B scripts/compare_diagnostics.py \
+  --input examples/diagnostic-comparison.json \
+  --out artifacts/comparison-demo-01
+```
+
+The example has two fictional profiles and three categories: a real list-consumption defect, a healthy inclusive threshold, and an unavailable external callback. Source is supplied as text and never executed. All responses, 10/32 token counts and release observations are fixtures. Six records with valid JSON yield **zero diagnostic passes while semantic review is pending**. Exit zero means the offline replay finished, not that any diagnosis passed. This is a workflow demonstration, not a new model benchmark or blind evaluation.
+
+`prepare_comparison` freezes explicit requests, prompt/dataset versions, model/runtime/tokenizer/template revisions, quantization, sampling and context/output limits. Both profiles must share runtime and request parameters; model-specific revisions may differ. `reference.json` contains the independent expected verdicts and rubric version, separate from model messages. Canonical SHA256 bindings are part of the comparison protocol, not a claim that locally writable records are externally authenticated. Keep expected answers out of request construction.
+
+`record_response` consumes the fixed profile→case order once, preserving the complete normalized response and its proof. Infrastructure errors stop further consumption. Only retained responses with matching HTTP200, exact input/output usage and request/profile/response bindings, release, idle and remove-waiting observations can be classified as continuable output failures. A Provider exception without retained raw output is infrastructure failure. Format/truncation, field contract and source-range citation errors keep separate codes. These fields are caller observations: the reader does not independently attest native runtime identity or cancellation.
+
+The live owner must retain the outer raw HTTP body and native token/template/identity/closure evidence **before** adapter validation, and stop dispatch on infrastructure or write failure. The portable bundle uses normalized `ModelResponse`; it does not replace raw HTTP acquisition. An exclusive cell claim plus the RunStore's existing finite-JSON encoding and shared atomic-write primitive preserve uncertain writes and block re-consumption. Each file is replaced atomically; the collection is not one transaction or a power-loss guarantee. Keep the typed RunStore investigation state and old frozen machine entries unchanged.
+
+`compare_results` accepts independent human reviews keyed `profile_id/case_id`. Each review binds `record_sha256`, exact supplied `evidence_refs`, a reason, and `mechanism`, `trigger`, `citation_support`, `abstention_reason` (`supported` / `partial` / `contradicted` / `unknown`). A defect or healthy verdict needs correct verdict, fully supported mechanism, trigger and citation support. Unknown needs correct abstention and a supported reason; with no citations, citation support stays unknown. Valid JSON, location overlap, or a partially correct mechanism alone never pass. Failed contracts cannot receive semantic credit. Reviews are separate from requests and raw results; changing a reference or scoring another response is rejected.
+
+`save_comparison` rechecks the report and saves an immutable JSON/Markdown pair in a fresh report folder. JSON preserves per-case provenance, native-claim bindings, usage, latency, false alarms/abstention and review details. Markdown separates infrastructure, format/contract, semantic failure and pending review. The replay command always reports `new_model_calls=0` and `real_model_accuracy_measured=false`; actual capability claims require independently audited live runs. Results are bounded to 12 cases × 4 profiles, input 1 MiB, total comparison records 2 MiB, and each cell 128 KiB. These are checked write limits, not filesystem quotas; trusted regression tests also use the existing 120-second/64-MiB allocated-output guard.
+
+The next live comparison should remeasure the existing 3B baseline on the same newly pinned llama.cpp as a non-thinking 4B, then compare the same frozen inputs and grading. [Qwen's official model card](https://huggingface.co/Qwen/Qwen3-4B-Instruct-2507) establishes non-thinking behavior; a quantizer's GGUF needs its own source/size/integrity qualification. New binaries, templates, native API fields and memory use still need local validation under a separate execution authorization. Existing model results and frozen plans remain unchanged; no accuracy improvement has been measured by this development batch.
