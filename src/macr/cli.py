@@ -11,25 +11,39 @@ from macr.costs import estimate_llm_cost
 from macr.evals.real_data import prepare_real_eval
 from macr.evals.runner import EvalRunner
 from macr.pr_outputs import to_github_comments, to_sarif
-from macr.providers.deepseek import DeepSeekProvider
+from macr.providers.base import ModelRequest, ProviderError, invoke
+from macr.providers.mock import MockLLMProvider
 from macr.viewer import TraceViewer
 
 
-def _provider(name: str):
-    if name == "deepseek":
-        return DeepSeekProvider()
-    return None
+def _provider(name: str, model_profile: Path | None = None):
+    if name == 'rules':
+        return None
+    if name == 'mock':
+        return MockLLMProvider()
+    if name == 'local':
+        from macr.providers.local_http import LocalHTTPProvider
+        from macr.providers.profiles import load_profile
+        if model_profile is None:
+            raise ProviderError('model_profile_missing')
+        return LocalHTTPProvider(load_profile(model_profile))
+    raise ProviderError('remote_disabled' if name == 'deepseek' else 'local_profile_unavailable')
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(prog="agent-review")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
+    baseline_parser = subparsers.add_parser('static-baseline', help='Offline evaluation retrieval baseline; no model or source execution.')
+    baseline_parser.add_argument('--input', required=True, type=Path)
+    baseline_parser.add_argument('--out', required=True, type=Path)
+    baseline_parser.add_argument('--json', action='store_true')
+
     ask_parser = subparsers.add_parser("ask", help="Run one codebase question.")
     ask_parser.add_argument("query")
     ask_parser.add_argument("--repo", required=True, type=Path)
     ask_parser.add_argument("--test-selector")
-    ask_parser.add_argument("--provider", default="mock", choices=["mock", "deepseek"])
+    ask_parser.add_argument("--provider", default="rules", choices=["rules", "mock"])
     ask_parser.add_argument("--llm-planner", action="store_true")
     ask_parser.add_argument("--clarification", help="Human clarification from a prior final-review question.")
     ask_parser.add_argument("--json", action="store_true")
@@ -38,7 +52,7 @@ def main() -> None:
     patch_parser.add_argument("query")
     patch_parser.add_argument("--repo", required=True, type=Path)
     patch_parser.add_argument("--test-selector")
-    patch_parser.add_argument("--provider", default="mock", choices=["mock", "deepseek"])
+    patch_parser.add_argument("--provider", default="rules", choices=["rules", "mock"])
     patch_parser.add_argument("--llm-planner", action="store_true")
     patch_parser.add_argument("--llm-patch", action="store_true")
     patch_parser.add_argument("--clarification", help="Human clarification from a prior final-review question.")
@@ -56,7 +70,7 @@ def main() -> None:
     eval_parser.add_argument("--eval-file", required=True, type=Path)
     eval_parser.add_argument("--repo-root", default=Path("."), type=Path)
     eval_parser.add_argument("--report", default=Path("reports/eval_report.md"), type=Path)
-    eval_parser.add_argument("--provider", default="mock", choices=["mock", "deepseek"])
+    eval_parser.add_argument("--provider", default="rules", choices=["rules", "mock"])
     eval_parser.add_argument("--llm-planner", action="store_true")
 
     real_eval_parser = subparsers.add_parser("prepare-real-eval", help="Convert public real-world datasets into MACR eval JSONL.")
@@ -72,7 +86,10 @@ def main() -> None:
     smell_parser.add_argument("--json", action="store_true")
 
     check_parser = subparsers.add_parser("llm-check", help="Check a configured LLM provider.")
-    check_parser.add_argument("--provider", default="deepseek", choices=["deepseek"])
+    check_parser.add_argument("--provider", default="mock", choices=["mock", "local"])
+    check_parser.add_argument("--model-profile", type=Path, help="Explicit model profile JSON below project artifacts.")
+    check_parser.add_argument("--input-token-upper-bound", type=int, help="Caller-supplied input token bound including rendered template/tools/schema; no automatic estimate.")
+    check_parser.add_argument("--max-output-tokens", type=int, default=None)
     check_parser.add_argument("--prompt", default="Reply with JSON: {\"ok\": true}")
 
     view_parser = subparsers.add_parser("view", help="Start the local trace viewer.")
@@ -84,7 +101,16 @@ def main() -> None:
     view_parser.add_argument("--patch-dir", default=Path("patches"), type=Path)
 
     args = parser.parse_args()
-    if args.command == "ask":
+    if args.command == 'static-baseline':
+        from macr.evals.static_baseline import run_baseline
+        try:
+            report = run_baseline(args.input, args.out)
+        except (ValueError, OSError, ProviderError) as error:
+            print(json.dumps({'status': 'rejected', 'model_calls': 0, 'dynamic_validation': False,
+                              'error_code': getattr(error, 'code', str(error))}))
+            raise SystemExit(2)
+        print(json.dumps(report, ensure_ascii=False, indent=2))
+    elif args.command == "ask":
         query = _with_clarification(args.query, args.clarification)
         trace = Orchestrator(provider=_provider(args.provider), use_llm_planner=args.llm_planner).run(
             args.repo,
@@ -155,32 +181,20 @@ def main() -> None:
         else:
             _print_code_smell(report)
     elif args.command == "llm-check":
-        if args.provider == "deepseek":
-            provider = DeepSeekProvider()
-            try:
-                response = provider.complete_sync(
-                    [
-                        {"role": "system", "content": "You are a concise API connectivity checker."},
-                        {"role": "user", "content": args.prompt},
-                    ],
-                    response_schema={"type": "object"},
-                )
-            except ValueError as exc:
-                raise SystemExit(
-                    f"{exc}\n"
-                    "Set it with:\n"
-                    "  set -a\n"
-                    "  source .env\n"
-                    "  set +a"
-                ) from exc
-            print(json.dumps({
-                "provider": response.provider,
-                "model": response.model,
-                "latency_ms": response.latency_ms,
-                "usage": response.usage,
-                "cost": estimate_llm_cost(response),
-                "content": response.content,
-            }, ensure_ascii=False, indent=2))
+        try:
+            provider = _provider(args.provider, args.model_profile)
+            if args.provider == 'local':
+                output_limit = provider.profile.output_limit if args.max_output_tokens is None else args.max_output_tokens
+                request = ModelRequest([{"role": "user", "content": args.prompt}], response_schema={"type": "object"},
+                    max_input_tokens=provider.profile.context_limit - output_limit, max_output_tokens=output_limit,
+                    timeout_seconds=provider.profile.timeout_seconds,
+                    metadata={"input_token_upper_bound": args.input_token_upper_bound})
+            else:
+                request = ModelRequest([{"role": "user", "content": args.prompt}], response_schema={"type": "object"})
+            response = invoke(provider, request)
+        except ProviderError as exc:
+            raise SystemExit(exc.code) from None
+        print(json.dumps({"provider": response.provider, "model": response.model, "usage": response.usage, "usage_kind": response.usage_kind, "metrics": response.metrics, "content": response.content}, ensure_ascii=False, indent=2))
     elif args.command == "view":
         TraceViewer(
             root=Path("."),

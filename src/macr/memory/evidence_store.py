@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 from dataclasses import asdict
+from copy import deepcopy
+from macr.investigation.records import EvidenceRecord, SnapshotRef
+from macr.investigation.validation import ContractError, decode_record
 
 from macr.schemas import Evidence
 
@@ -8,9 +11,41 @@ from macr.schemas import Evidence
 class EvidenceStore:
     """Deduplicates evidence while keeping the strongest confidence per location."""
 
-    def __init__(self) -> None:
+    def __init__(self, snapshot: SnapshotRef | None = None) -> None:
         self._items: list[Evidence] = []
         self._index: dict[tuple[str, int, int, str, str], int] = {}
+        self.snapshot = snapshot
+        self._records: dict[str, EvidenceRecord] = {}
+
+    def add_record(self, record: EvidenceRecord) -> str:
+        record = decode_record(EvidenceRecord, asdict(record))
+        if self.snapshot is None or record.snapshot_id != self.snapshot.snapshot_id or record.validity != 'valid':
+            raise ContractError('stale_evidence')
+        existing = self._records.get(record.evidence_id)
+        if existing is not None and existing != record:
+            raise ContractError('evidence_conflict')
+        self._records[record.evidence_id] = deepcopy(record)
+        return record.evidence_id
+
+    def get_record(self, evidence_id: str) -> EvidenceRecord:
+        if evidence_id not in self._records:
+            raise ContractError('unknown_evidence')
+        record = self._records[evidence_id]
+        if self.snapshot is None or record.snapshot_id != self.snapshot.snapshot_id or record.validity != 'valid':
+            raise ContractError('stale_evidence')
+        return deepcopy(record)
+
+    def source_groups(self) -> list[list[str]]:
+        groups = {}
+        for record in self._records.values():
+            location = record.location
+            # Source readers share one provenance group; execution observations use a job ID.
+            source_origins = {'source', 'source_excerpt', 'rg', 'ast', 'graph', 'search_text', 'parse_ast', 'symbol_graph', 'code_graph'}
+            provenance = 'source' if record.origin in source_origins else record.tool_run_id or record.evidence_id
+            key = (record.snapshot_id, location.file if location else '', location.start if location else 0,
+                   location.end if location else 0, provenance)
+            groups.setdefault(key, []).append(record.evidence_id)
+        return list(groups.values())
 
     def add(self, evidence: Evidence) -> bool:
         key = self._key(evidence)

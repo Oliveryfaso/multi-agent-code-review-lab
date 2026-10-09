@@ -1,72 +1,39 @@
 from __future__ import annotations
-
-import subprocess
 from pathlib import Path
-
+from macr.investigation.scope import RepositoryScope
+from macr.investigation.records import ScopeManifest, ScopeProfile, SnapshotBundle
+from macr.investigation.snapshots import SnapshotStore
+from macr.investigation.validation import ContractError
 from macr.schemas import ToolResult
 from macr.tools.timing import Timer
 
-
 class TextSearchTool:
-    name = "search_text"
+    name = 'search_text'
 
-    def run(self, repo_path: Path, query: str, max_results: int = 20) -> ToolResult:
+    def run(self, repo_path: Path, query: str, max_results: int = 20, *, scope: ScopeManifest | None = None, snapshot: SnapshotBundle | None = None, store: SnapshotStore | None = None) -> ToolResult:
         with Timer() as timer:
+            if type(max_results) is not int or not 1 <= max_results <= 1000 or not isinstance(query, str) or not query or '\x00' in query:
+                return ToolResult(False, self.name, {"matches": []}, "Search request rejected", timer.elapsed_ms(), "contract_invalid")
             try:
-                proc = subprocess.run(
-                    ["rg", "-n", "--no-heading", "--glob", "!*.pyc", query, str(repo_path)],
-                    text=True,
-                    capture_output=True,
-                    check=False,
-                )
-            except FileNotFoundError:
-                return self._fallback(repo_path, query, max_results, timer)
-        if proc.returncode not in {0, 1}:
-            return ToolResult(False, self.name, {}, "rg failed", timer.latency_ms, "tool_error", proc.stderr, True)
-        matches = []
-        for line in proc.stdout.splitlines()[:max_results]:
-            parts = line.split(":", 2)
-            if len(parts) != 3:
-                continue
-            path, line_no, text = parts
-            try:
-                rel = str(Path(path).resolve().relative_to(repo_path.resolve()))
-            except ValueError:
-                rel = path
-            matches.append({"file": rel, "line": int(line_no), "text": text.strip()})
-        if not matches:
-            return ToolResult(
-                False,
-                self.name,
-                {"matches": []},
-                f"No matches for `{query}`",
-                timer.latency_ms,
-                "empty_recall",
-                f"No text matches for {query}",
-                True,
-                "semantic_search",
-            )
-        return ToolResult(True, self.name, {"query": query, "matches": matches}, f"Found {len(matches)} matches", timer.latency_ms)
-
-    def _fallback(self, repo_path: Path, query: str, max_results: int, timer: Timer) -> ToolResult:
-        matches = []
-        for path in repo_path.rglob("*"):
-            if len(matches) >= max_results or not path.is_file() or path.suffix in {".pyc", ".png", ".jpg"}:
-                continue
-            try:
-                for index, line in enumerate(path.read_text(errors="ignore").splitlines(), start=1):
-                    if query.lower() in line.lower():
-                        matches.append(
-                            {
-                                "file": str(path.relative_to(repo_path)),
-                                "line": index,
-                                "text": line.strip(),
-                            }
-                        )
+                store = store or SnapshotStore()
+                snapshot = snapshot or store.capture(repo_path, scope or RepositoryScope().inventory(repo_path, ScopeProfile()))
+                matches, errors, read, truncated = [], [], 0, False
+                for entry in snapshot.scope.eligible:
+                    data = store.read_verified(snapshot.ref, entry.path)
+                    read += len(data)
+                    try:
+                        text = data.decode('utf-8')
+                    except UnicodeError:
+                        errors.append({"file": entry.path, "code": "encoding_error"})
+                        continue
+                    for line, body in enumerate(text.splitlines(), 1):
+                        if query in body:
+                            matches.append({"file": entry.path, "line": line, "text": body.strip()[:400]})
+                            if len(matches) >= max_results:
+                                truncated = True
+                                break
+                    if truncated:
                         break
-            except OSError:
-                continue
-        if not matches:
-            return ToolResult(False, self.name, {"matches": []}, f"No matches for `{query}`", timer.latency_ms, "empty_recall", retryable=True)
-        return ToolResult(True, self.name, {"query": query, "matches": matches}, f"Found {len(matches)} matches", timer.latency_ms)
-
+                return ToolResult(bool(matches), self.name, {"query": query, "matches": matches, "truncated": truncated, "errors": errors, "bytes_read": read, "content_id": snapshot.ref.content_id, "legacy": True}, "Searched verified literal bytes", timer.elapsed_ms(), None if matches else "empty_recall")
+            except (ContractError, OSError) as exc:
+                return ToolResult(False, self.name, {"matches": []}, "Search snapshot rejected", timer.elapsed_ms(), getattr(exc, 'code', 'storage_unavailable'))

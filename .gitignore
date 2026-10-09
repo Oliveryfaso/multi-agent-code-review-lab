@@ -22,3 +22,42 @@ htmlcov/
 # Local planning notes, not part of the public project docs.
 docs/cv_upgrade_analysis.md
 docs/project_closure_summary.md
+
+# AppleDouble metadata from the external drive; no permission changes required.
+._*
+
+# Local binary assets. Keep source, license text and small reproducible fixtures.
+/artifacts/models/**/*.gguf
+/artifacts/models/**/*.part
+/artifacts/runtimes/**/*.zip
+/artifacts/environments/**/*.sparsebundle/
+/artifacts/environments/**/*.dmg
+/artifacts/environments/**/*.img
+/artifacts/environments/**/*.qcow2
+/artifacts/environments/**/*.iso
+/artifacts/environments/**/.ssh/
+
+# Generated UUID trees and copied workspaces, rather than all of artifacts/.
+/artifacts/tests/????????-????-????-????-????????????/
+/artifacts/**/snapshots/????????-????-????-????-????????????/
+/artifacts/patch_checks/????????-????-????-????-????????????/
+/artifacts/demos/**/full-????????-????-????-????-????????????/
+/artifacts/demos/**/affected-????????-????-????-????-????????????/
+/artifacts/implementation/**/source-freeze/
+/artifacts/implementation/**/before/
+/artifacts/implementation/**/own-batch-regression-*/
+/artifacts/index/*-qualified-ast-v*.json
+/artifacts/test-runs/
+
+# Runtime logs, raw HTTP captures and consumed grants; no global JSON/Python rule.
+/artifacts/**/*.log
+/artifacts/**/case-*-raw-response.json
+/artifacts/**/case-*-actual-http-request.json
+/artifacts/model-services/**/raw-response.json
+/artifacts/model-services/**/actual-http-request.json
+/artifacts/model-services/**/execution-result.json
+/artifacts/model-services/**/authorization.json
+/artifacts/model-services/**/window.json
+/artifacts/model-services/**/batch-window.json
+/artifacts/model-services/**/tmp/
+/artifacts/model-services/**/cache/

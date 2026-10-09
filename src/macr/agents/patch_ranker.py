@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from macr.schemas import PatchArtifact
+from macr.execution.results import classify_check
+from macr.investigation.records import CheckSpec
 
 
 class PatchRankerAgent:
@@ -31,10 +33,12 @@ class PatchRankerAgent:
             else:
                 score -= 60
                 reasons.append("apply_failed")
-            if verification.get("test_check") == "passed":
+            test_result = verification.get("test_result")
+            actual_status = classify_check(test_result, CheckSpec("ranking-check")).observed_status if isinstance(test_result, dict) else "unknown"
+            if actual_status == "passed":
                 score += 35
                 reasons.append("tests_passed")
-            elif verification.get("test_check") == "failed":
+            elif actual_status == "failed":
                 score -= 50
                 reasons.append("tests_failed")
             diff_lines = [line for line in candidate.diff.splitlines() if line.startswith(("+", "-")) and not line.startswith(("+++", "---"))]
@@ -65,6 +69,7 @@ class PatchRankerAgent:
 
     def choose(self, candidates: list[PatchArtifact]) -> tuple[PatchArtifact, list[dict]]:
         ranking = self.rank(candidates)
-        if not ranking:
-            raise ValueError("no patch candidates to rank")
-        return candidates[ranking[0]["index"]], ranking
+        eligible = [item for item in ranking if item["verification"].get("patch_apply_check") == "passed" and candidates[item["index"]].diff.strip()]
+        if not eligible:
+            raise ValueError("no applicable patch candidates")
+        return candidates[eligible[0]["index"]], ranking

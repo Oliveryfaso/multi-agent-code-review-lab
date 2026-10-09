@@ -1,24 +1,16 @@
-from __future__ import annotations
-
-from macr.providers.base import LLMResponse
-
+from copy import deepcopy
+from macr.providers.base import ModelRequest, ModelResponse, ProviderCapabilities, ProviderError, validate_request, validate_response
 
 class MockLLMProvider:
-    """Provider placeholder used until a real LLM API key is configured."""
-
-    name = "mock"
-
-    async def complete(
-        self,
-        messages: list[dict[str, str]],
-        tools: list[dict] | None = None,
-        response_schema: dict | None = None,
-        metadata: dict | None = None,
-    ) -> LLMResponse:
-        return LLMResponse(
-            content="Mock provider response. Real LLM provider is not configured yet.",
-            usage={"input_tokens": 0, "output_tokens": 0},
-            model="mock-llm",
-            provider=self.name,
-        )
-
+    """Scripted contract fixture. Never represents deployed-model readiness."""
+    name = 'mock'
+    capabilities = ProviderCapabilities()
+    def __init__(self, responses: list[ModelResponse] | None = None):
+        self.responses = list(responses or [])
+        self.requests = []
+    def complete(self, request: ModelRequest) -> ModelResponse:
+        validate_request(request)
+        self.requests.append(deepcopy(request))
+        if not self.responses:
+            raise ProviderError('mock_script_exhausted')
+        return deepcopy(validate_response(self.responses.pop(0)))

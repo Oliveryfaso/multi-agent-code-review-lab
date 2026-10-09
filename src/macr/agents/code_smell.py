@@ -142,4 +142,4 @@ class CodeSmellAgent:
 
     def _include(self, path: Path) -> bool:
         ignored_parts = {".venv", "__pycache__", ".git", ".macr_cache", "external_repos"}
-        return not any(part in ignored_parts for part in path.parts)
+        return not any(part in ignored_parts or part.startswith("._") for part in path.parts)

@@ -4,6 +4,12 @@ from dataclasses import dataclass, field
 from typing import Any
 
 
+def decode_investigation_record(record_type, payload: dict):
+    """Explicit versioned adapter; legacy board validation is unchanged."""
+    from macr.investigation.validation import decode_record
+    return decode_record(record_type, payload)
+
+
 @dataclass
 class ContractViolation:
     section: str

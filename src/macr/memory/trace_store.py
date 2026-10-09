@@ -18,3 +18,9 @@ class TraceStore:
         latest.write_text(json.dumps(trace.to_dict(), ensure_ascii=False, indent=2))
         return path
 
+    def read_legacy(self, path: Path) -> dict:
+        from macr.memory.run_store import RunStore
+        # Reading legacy data has no effect on new investigation/check grades.
+        reader = RunStore.__new__(RunStore)
+        reader.allowed = (Path(__file__).resolve().parents[3] / 'artifacts').resolve()
+        return reader.read_legacy(path)

@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from collections import Counter
 
-from macr.providers.base import LLMProvider, LLMResponse
+from macr.providers.base import LLMProvider, LLMResponse, ModelRequest, ProviderError, invoke
 from macr.prompts import system_prompt
 from macr.schemas import AgentAnswer, Evidence, Plan
 
@@ -62,7 +62,7 @@ class SolverAgent:
                 f"{fallback.answer} LLM Provider 调用失败，已使用确定性 fallback。"
                 f"错误类型：{type(exc).__name__}。"
             )
-            fallback.next_steps.insert(0, "run `agent-review llm-check --provider deepseek` to verify API connectivity")
+            fallback.next_steps.insert(0, "check the configured local model profile; no remote fallback is enabled")
             return fallback, None
         if not llm_response.content.strip():
             return fallback, llm_response
@@ -113,10 +113,7 @@ class SolverAgent:
                 ),
             },
         ]
-        complete_sync = getattr(self.provider, "complete_sync", None)
-        if complete_sync:
-            return complete_sync(messages)
-        raise TypeError("Configured provider must expose complete_sync for the sync orchestrator.")
+        return invoke(self.provider, ModelRequest(messages))
 
     def _compact_evidence(self, evidence: list[Evidence]) -> list[Evidence]:
         compacted: list[Evidence] = []

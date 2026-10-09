@@ -36,6 +36,14 @@ class RoutingPolicyAgent:
 
     LLM_SOLVER_INTENTS = {"bug_investigation", "test_failure_analysis", "patch_planning", "light_patch"}
 
+    def investigation_profile(self, mode: str):
+        from macr.investigation.budget import scan_profile
+        from macr.investigation.records import BudgetProfile
+        from macr.investigation.validation import ContractError
+        if mode not in ('locate', 'scan'):
+            raise ContractError('invalid_mode')
+        return scan_profile() if mode == 'scan' else BudgetProfile()
+
     def decide(
         self,
         plan: Plan,

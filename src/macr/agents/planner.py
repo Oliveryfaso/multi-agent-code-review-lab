@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import re
 
-from macr.providers.base import LLMProvider, LLMResponse
+from macr.providers.base import LLMProvider, LLMResponse, ModelRequest, ProviderError, invoke
 from macr.prompts import system_prompt
 from macr.schemas import Plan, PlanStep
 
@@ -101,9 +101,7 @@ class LlmPlanner:
 
     def plan(self, query: str) -> tuple[Plan, LLMResponse | None]:
         fallback_plan = self.fallback.plan(query)
-        complete_sync = getattr(self.provider, "complete_sync", None)
-        if not complete_sync:
-            return fallback_plan, None
+        self.last_model_error = None
         messages = [
             {
                 "role": "system",
@@ -138,9 +136,10 @@ class LlmPlanner:
             },
         ]
         try:
-            response = complete_sync(messages, response_schema={"type": "object"})
+            response = invoke(self.provider, ModelRequest(messages, response_schema={"type": "object"}))
             plan = self._parse_response(response.content, fallback_plan)
-        except Exception:
+        except Exception as exc:
+            self.last_model_error = exc.code if isinstance(exc, ProviderError) else "model_format_invalid"
             return fallback_plan, None
         return plan, response
 

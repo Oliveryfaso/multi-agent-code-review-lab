@@ -1,38 +1,32 @@
+import os
 import unittest
-from pathlib import Path
-from tempfile import TemporaryDirectory
-
+from debugger_fixtures import fixture_root, write_files
 from macr.tools.code_graph import CodeGraphTool
+
+
+def graph_fixture():
+    return write_files(fixture_root(), {"backend/gateway.py": "def charge_card(payload):\n    return 1\n", "backend/payments.py": "from backend.gateway import charge_card\ndef process_payment(payload):\n    return charge_card(payload)\n", "tests/test_auth.py": "from backend.payments import process_payment\ndef test_process_payment_rejects_invalid_payload():\n    assert process_payment({}) == 1\n"})
 
 
 class CodeGraphTests(unittest.TestCase):
     def test_code_graph_builds_call_and_test_edges(self):
-        result = CodeGraphTool().run(
-            Path("sample_repos/sample_python_api"),
-            ["process_payment"],
-            ["backend/payments.py", "tests/test_auth.py"],
-        )
-
+        result = CodeGraphTool(cache_dir=fixture_root()).run(graph_fixture(), ["process_payment"], ["backend/payments.py", "tests/test_auth.py"])
         self.assertTrue(result.ok)
-        neighborhoods = result.data["neighborhoods"]
-        payment = next(item for item in neighborhoods if item["symbol"] == "process_payment")
-        outgoing_targets = {edge.get("to_symbol") for edge in payment["outgoing"]}
-        incoming_sources = {edge.get("from_symbol") for edge in payment["incoming"]}
+        payment = next(n for n in result.data["neighborhoods"] if n["symbol"] == "process_payment")
+        self.assertIn("charge_card", {e["to_symbol"] for e in payment["outgoing"]})
+        self.assertIn("test_process_payment_rejects_invalid_payload", {e["from_symbol"] for e in payment["incoming"]})
+        self.assertTrue(all("resolution" in edge for edge in result.data["edges"]))
 
-        self.assertIn("charge_card", outgoing_targets)
-        self.assertIn("test_process_payment_rejects_invalid_payload", incoming_sources)
-
-    def test_code_graph_reuses_persistent_cache(self):
-        with TemporaryDirectory() as tmp:
-            tool = CodeGraphTool(cache_dir=Path(tmp))
-            repo = Path("sample_repos/sample_python_api")
-            first = tool.run(repo, ["process_payment"])
-            second = tool.run(repo, ["process_payment"])
-
+    def test_code_graph_reuses_content_bound_cache(self):
+        tool, root = CodeGraphTool(cache_dir=fixture_root()), graph_fixture()
+        first, second = tool.run(root, ["process_payment"]), tool.run(root, ["process_payment"])
         self.assertFalse(first.data["cache"]["hit"])
         self.assertTrue(second.data["cache"]["hit"])
         self.assertEqual(first.data["cache"]["fingerprint"], second.data["cache"]["fingerprint"])
-
-
-if __name__ == "__main__":
-    unittest.main()
+        file = root / "backend/gateway.py"
+        stamp = file.stat()
+        file.write_text(file.read_text().replace("return 1", "return 2"))
+        os.utime(file, ns=(stamp.st_atime_ns, stamp.st_mtime_ns))
+        changed = tool.run(root, ["process_payment"])
+        self.assertFalse(changed.data["cache"]["hit"])
+        self.assertNotEqual(first.data["cache"]["fingerprint"], changed.data["cache"]["fingerprint"])

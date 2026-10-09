@@ -39,6 +39,10 @@ class WorkflowCheckpoint:
 class CodeReviewWorkflow:
     """LangGraph-style workflow contract without binding the core tool to a framework."""
 
+    def read_investigation(self, store, run_id: str):
+        """Read durable state; does not rerun actions or promote legacy grades."""
+        return store.load(run_id)
+
     POLICY_NODE_MAP = {
         "repo_map": "repo_map",
         "text_search": "retrieval",

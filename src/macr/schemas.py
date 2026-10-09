@@ -6,6 +6,9 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
+# Legacy Trace/Board payloads stay readable; strict records live in investigation.
+INVESTIGATION_SCHEMA_VERSION = 1
+
 
 def utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()

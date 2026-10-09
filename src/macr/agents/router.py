@@ -7,6 +7,10 @@ from macr.schemas import Plan, ToolCallSpec
 class ToolRouterAgent:
     """Turns planner intent and board state into executable tool call specs."""
 
+    def next_investigation_action(self, queue, budget):
+        """New engine adapter; returns a request, never dispatches it."""
+        return queue.pop(budget)
+
     def route(self, plan: Plan, board: AgentBoard, test_selector: str | None = None) -> list[ToolCallSpec]:
         specs: list[ToolCallSpec] = []
         wanted = [step.tool_family for step in plan.steps[: plan.max_tool_calls]]
