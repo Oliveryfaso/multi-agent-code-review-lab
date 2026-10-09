@@ -134,6 +134,36 @@ class DiagnosticCompareTests(unittest.TestCase):
             refs=self.compare.report_paths(folder)
             self.assertEqual(json.loads(encoded(refs))['json'],str(folder/'comparison.json'))
 
+    def test_service_summary_counts_preflight_failure_as_not_started(self):
+        one={'success':True,'server_start_attempts':1,'generation_requests':3,'process':{'pid':42}}
+        blocked={'success':False,'server_start_attempts':0,'generation_requests':0,'process':{},'failure':'bind conflict'}
+        report=self.compare.summarize_services([one,blocked],planned_services=2)
+        self.assertEqual((report['services_started'],report['generation_requests'],report['not_started_services']),(1,3,1))
+        self.assertTrue(report['second_service_cancelled']);self.assertFalse(report['success'])
+        self.assertTrue(self.compare.summarize_services([one],planned_services=2)['second_service_cancelled'])
+        failed_spawn=blocked|{'server_start_attempts':1}
+        report=self.compare.summarize_services([failed_spawn],planned_services=1)
+        self.assertEqual((report['service_start_attempts'],report['services_started']),(1,0))
+        with self.assertRaises(ValueError):self.compare.summarize_services([blocked|{'generation_requests':1}],planned_services=1)
+
+    def test_infrastructure_record_is_not_a_generated_or_quality_case(self):
+        self.prepare()
+        self.compare.record_response(self.root,'model-a','defect',error=ProviderError('service_preflight_failed'),provenance='scripted')
+        report=self.compare.compare_results(self.root);model=report['models'][0]
+        self.assertEqual((model['recorded'],model['captured_responses'],model['quality_cases']),(1,0,0))
+        self.assertIsNone(model['diagnostic_rate'])
+        paths=self.compare.save_comparison(self.root,report)
+        self.assertIn('N/A',Path(paths['markdown']).read_text())
+
+    def test_pending_review_has_no_rate_and_format_failure_keeps_its_real_denominator(self):
+        self.prepare();row=self.record()
+        self.assertIsNone(self.compare.compare_results(self.root)['models'][0]['diagnostic_rate'])
+        self.record(case=1,response=self.response(content='{}'))
+        report=self.compare.compare_results(self.root,reviews={'model-a/defect':self.review(row,mechanism='partial')})
+        model=report['models'][0]
+        self.assertEqual((model['captured_responses'],model['quality_cases']),(2,2))
+        self.assertEqual(model['diagnostic_rate'],0)
+
     def test_format_failure_with_bound_release_proof_continues_without_repair(self):
         self.prepare()
         row = self.record(response=self.response(content='{"verdict":'))

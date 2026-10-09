@@ -93,4 +93,36 @@ class B11521EvidenceTests(unittest.TestCase):
         for changed in [raw|{'system_fingerprint':'other'},raw|{'model':'other'},raw|{'usage':raw['usage']|{'prompt_tokens':8}},raw|{'usage':raw['usage']|{'prompt_tokens_details':{'cached_tokens':1}}},raw|{'choices':[]}]:
             with self.assertRaises(ValueError):a.validate_response(changed,http_status=200,model_id='fixture-model',input_tokens=7)
 
+    def test_kernel_port_requires_explicit_mode_and_preserves_closed_argv(self):
+        a=self.adapter();args=ARGV.copy();args[args.index('--port')+1]='0'
+        with self.assertRaises(ValueError):a.validate_preflight(VERSION,HELP,args)
+        self.assertEqual(a.validate_preflight(VERSION,HELP,args,port_mode='kernel')['port_mode'],'kernel')
+        for changed in [ARGV,args+['--reuse-port'],args+['--port','0']]:
+            with self.assertRaises(ValueError):a.validate_preflight(VERSION,HELP,changed,port_mode='kernel')
+
+    def test_listener_requires_same_port_in_own_pid_observation_and_native_log(self):
+        a=self.adapter();log=b'srv  llama_server: listening on http://127.0.0.1:49152\n'
+        self.assertEqual(a.listener_port(log,pid=42,returncode=0,output='p42\nn127.0.0.1:49152\n'),49152)
+        self.assertIsNone(a.listener_port(log,pid=42,returncode=1,output=''))
+        self.assertIsNone(a.listener_port(b'',pid=42,returncode=0,output='p42\nn127.0.0.1:49152\n'))
+
+    def test_listener_unknown_foreign_ambiguous_and_non_loopback_observations_stop(self):
+        a=self.adapter();log=b'srv  llama_server: listening on http://127.0.0.1:49152\n'
+        for code,output in [(0,'p43\nn127.0.0.1:49152\n'),(0,'p42\nn0.0.0.0:49152\n'),(0,'p42\nn127.0.0.1:49153\n'),
+            (0,'p42\nn127.0.0.1:49152\nn127.0.0.1:49153\n'),(1,'p42\n'),(2,''),(True,'')]:
+            with self.assertRaises(ValueError):a.listener_port(log,pid=42,returncode=code,output=output)
+        for changed in [log+log,log.replace(b'127.0.0.1',b'localhost'),log.replace(b'49152',b'0'),log.replace(b'49152',b'65536')]:
+            with self.assertRaises(ValueError):a.listener_port(changed,pid=42,returncode=0,output='p42\nn127.0.0.1:49152\n')
+
+    def test_listener_partial_log_cannot_authorize_api(self):
+        a=self.adapter();output='p42\nn127.0.0.1:49152\n'
+        self.assertIsNone(a.listener_port(b'srv  llama_server: listening on http://127.0.0.1:49152',pid=42,returncode=0,output=output))
+        with self.assertRaises(ValueError):a.listener_port(b'\xff\n',pid=42,returncode=0,output=output)
+
+    def test_listener_fd_field_matches_real_lsof_fpn_output(self):
+        a=self.adapter();log=b'srv  llama_server: listening on http://127.0.0.1:49152\n'
+        self.assertEqual(a.listener_port(log,pid=42,returncode=0,output='p42\nf3\nn127.0.0.1:49152\n'),49152)
+        for output in ['p42\nfcwd\nn127.0.0.1:49152\n','p42\nf3\nn127.0.0.1:49152\nf4\nn127.0.0.1:49152\n']:
+            with self.assertRaises(ValueError):a.listener_port(log,pid=42,returncode=0,output=output)
+
 if __name__=='__main__':unittest.main()

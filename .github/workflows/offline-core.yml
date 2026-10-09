@@ -84,6 +84,9 @@ jobs:
           test_diagnostic_compare
           test_b11521_evidence
 
+      - name: Bounded kernel loopback lifecycle fixtures
+        run: python -I -S -B tests/test_loopback_lifecycle.py
+
       - name: Bounded failure diagnostic
         if: failure()
         run: |

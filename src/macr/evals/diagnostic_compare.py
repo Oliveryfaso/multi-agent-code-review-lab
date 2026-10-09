@@ -246,8 +246,13 @@ def compare_results(out, *, reviews=None):
     models = []
     for profile in manifest['profiles']:
         selected = [r for r in rows if r['profile_id'] == profile['profile_id']]
+        captured=sum(r['response'] is not None for r in selected)
+        quality=sum(r['response'] is not None and r['failure_class']!='infrastructure' for r in selected)
+        passes=sum(r['diagnostic_passed'] for r in selected)
+        pending=any(r['failure_class']=='semantic_pending' for r in selected)
         models.append({'profile': profile, 'expected': len(manifest['cases']), 'recorded': len(selected),
-            'diagnostic_passes': sum(r['diagnostic_passed'] for r in selected),
+            'captured_responses':captured,'quality_cases':quality,'diagnostic_passes':passes,
+            'diagnostic_rate':passes/quality if quality and not pending else None,
             **{name: sum(r['failure_class'] == name for r in selected)
                for name in ('infrastructure', 'format', 'semantic', 'semantic_pending')}})
     return {'schema_version': 1, 'prompt_version': manifest['prompt_version'], 'dataset_version': manifest['dataset_version'],
@@ -255,6 +260,23 @@ def compare_results(out, *, reviews=None):
         'cases': rows, 'models': models, 'stopped': state['stopped'], 'uncertain_cell': state['pending'],
         'new_model_calls': 0, 'real_model_accuracy_measured': False,
         'measurement': 'Offline captured-response review; scripted proofs are fixtures; native claims need independent owner audit.'}
+
+
+def summarize_services(results,*,planned_services):
+    """Service lifecycle only. A preflight error is neither a start nor a score."""
+    _require(type(planned_services) is int and 1<=planned_services<=2 and type(results) is list and len(results)<=planned_services)
+    attempts=started=requests=0;started_rows=[]
+    for row in results:
+        _require(type(row) is dict and type(row.get('success')) is bool and type(row.get('process')) is dict)
+        count,calls=row.get('server_start_attempts'),row.get('generation_requests');pid=row['process'].get('pid')
+        _require(type(count) is int and count in (0,1) and type(calls) is int and 0<=calls<=3
+            and (pid is None or type(pid) is int and pid>0) and (not calls or count==1 and pid is not None)
+            and (pid is None or count==1) and (not row['success'] or count==1 and pid is not None),'service_result_invalid')
+        attempts+=count;requests+=calls;started+=pid is not None;started_rows.append(pid is not None)
+    return {'success':len(results)==planned_services and all(r['success'] for r in results),
+        'service_start_attempts':attempts,'services_started':started,'generation_requests':requests,
+        'not_started_services':planned_services-started,
+        'second_service_cancelled':planned_services==2 and (len(started_rows)<2 or not started_rows[1])}
 
 
 def report_paths(folder):
@@ -270,11 +292,12 @@ def save_comparison(out, report):
     folder = out / ('report-' + str(uuid4()))
     lines = ['# Diagnostic comparison', '', report['measurement'], '',
              f"Prompt: {report['prompt_version']}; dataset: {report['dataset_version']}", '',
-             '| Model | Recorded | Pass | Infrastructure | Format/contract | Semantic | Pending |',
-             '| --- | ---: | ---: | ---: | ---: | ---: | ---: |']
+             '| Model | Records | Captured | Quality cases | Score | Infrastructure | Format/contract | Semantic | Pending |',
+             '| --- | ---: | ---: | ---: | --- | ---: | ---: | ---: | ---: |']
     for model in report['models']:
+        score='pending' if model['semantic_pending'] else 'N/A' if model['diagnostic_rate'] is None else str(model['diagnostic_passes'])+'/'+str(model['quality_cases'])
         lines.append('| ' + ' | '.join(str(value) for value in [model['profile']['profile_id'], model['recorded'],
-            model['diagnostic_passes'], model['infrastructure'], model['format'], model['semantic'], model['semantic_pending']]) + ' |')
+            model['captured_responses'],model['quality_cases'],score,model['infrastructure'],model['format'],model['semantic'],model['semantic_pending']]) + ' |')
     lines += ['', '| Cell | Origin | Outcome | Error |', '| --- | --- | --- | --- |']
     for row in report['cases']:
         lines.append(f"| {row['cell']} | {row['provenance']} | {row['failure_class'] or 'reviewed pass'} | {row['error_code'] or ''} |")

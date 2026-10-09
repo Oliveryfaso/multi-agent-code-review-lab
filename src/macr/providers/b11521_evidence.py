@@ -12,14 +12,15 @@ LOG_LIMIT=4*1024*1024
 def _require(ok,code):
     if not ok:raise ValueError(code)
 
-def validate_preflight(version,help_text,argv):
+def validate_preflight(version,help_text,argv,*,port_mode='fixed'):
     """Reject the old verbosity1 argv before an owner can spawn a model."""
     _require(type(version) is str and re.match(r'^version: 0\.6\.0-dev \(build 11521, commit b42b7e6d3\)(?:\r?\n|$)',version),'runtime_version')
     _require(type(help_text) is str and len(help_text.encode())<=1024**2,'runtime_help')
     for level,name in enumerate(['generic output','error','warning','info','trace (more info)','debug']):
         _require(len(re.findall(r'^\s*- '+str(level)+': '+re.escape(name)+r'\s*$',help_text,re.M))==1,'log_level_semantics')
     _require(type(argv) is list and all(type(s) is str for s in argv),'argv_invalid')
-    pairs={'--log-verbosity':'5','--log-colors':'off','--host':'127.0.0.1','--port':'18080','--device':'none','--n-gpu-layers':'0',
+    _require(port_mode in ('fixed','kernel'),'port_mode')
+    pairs={'--log-verbosity':'5','--log-colors':'off','--host':'127.0.0.1','--port':'0' if port_mode=='kernel' else '18080','--device':'none','--n-gpu-layers':'0',
         '--cache-ram':'0','--threads':'2','--threads-batch':'2','--threads-http':'2','--parallel':'1','--ctx-size':'2048','--predict':'384','--chat-template':'chatml',
         '--batch-size':'128','--ubatch-size':'128','--temp':'0','--top-p':'1','--top-k':'0','--min-p':'0','--seed':'0'}
     flags=['--no-log-prefix','--no-log-timestamps','--no-log-jsonl','--offline','--no-cache-prompt','--no-context-shift','--no-webui','--no-agent','--no-kv-offload','--no-cont-batching','--no-warmup']
@@ -33,7 +34,39 @@ def validate_preflight(version,help_text,argv):
     for flag,value in pairs.items():
         _require(argv.count(flag)==1 and argv.index(flag)+1<len(argv) and argv[argv.index(flag)+1]==value,'argv_'+flag[2:].replace('-','_'))
     _require(all(argv.count(flag)==1 for flag in flags),'argv_required_flags')
-    return {'version':FINGERPRINT,'required_level':5,'format':'plain_no_prefix_no_timestamp_no_colors','native_http_logger_required':False}
+    return {'version':FINGERPRINT,'required_level':5,'format':'plain_no_prefix_no_timestamp_no_colors','native_http_logger_required':False,'port_mode':port_mode}
+
+def listener_port(log,*,pid,returncode,output):
+    """Bind the native address to a single LISTEN socket observed for our PID.
+
+    The caller uses bounded `lsof -nP -a -p PID -i4TCP -sTCP:LISTEN -Fpn`,
+    checks child identity before/after, and makes no API call on None/error.
+    Port0 is bound by the server itself; there is no reserve/release handoff.
+    """
+    _require(type(log) is bytes and len(log)<=LOG_LIMIT and type(pid) is int and 0<pid<2**31,'listener_capture')
+    complete=log if log.endswith(b'\n') else log.rpartition(b'\n')[0]
+    try:lines=complete.decode('utf-8','strict').splitlines()
+    except UnicodeError:raise ValueError('listener_log_invalid') from None
+    ports=[]
+    for line in lines:
+        if 'listening on' not in line:continue
+        match=re.fullmatch(r'srv  llama_server: listening on http://127\.0\.0\.1:([1-9][0-9]{0,4})',line)
+        _require(match is not None,'listener_log_unknown')
+        ports.append(int(match[1]));_require(ports[-1]<=65535,'listener_port_invalid')
+    _require(len(ports)<=1,'listener_log_ambiguous')
+    _require(type(returncode) is int and returncode in (0,1) and type(output) is str and len(output.encode())<=1024**2,'listener_observation')
+    if returncode==1:
+        _require(output=='','listener_observation_unknown');return None
+    fields=output.splitlines()
+    if len(fields)==3:
+        _require(re.fullmatch(r'f[0-9]{1,7}',fields[1]) is not None,'listener_descriptor')
+        fields=[fields[0],fields[2]]
+    _require(len(fields)==2 and fields[0]=='p'+str(pid),'listener_identity_or_count')
+    match=re.fullmatch(r'n127\.0\.0\.1:([1-9][0-9]{0,4})',fields[1])
+    _require(match is not None and int(match[1])<=65535,'listener_address')
+    if not ports:return None
+    _require(int(match[1])==ports[0],'listener_port_drift')
+    return ports[0]
 
 def validate_model(props,models,*,weight_path,model_id):
     _require(type(props) is dict and type(models) is dict and type(props.get('total_slots')) is int and props['total_slots']==1
