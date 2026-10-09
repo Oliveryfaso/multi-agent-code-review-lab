@@ -12,7 +12,6 @@ from copy import deepcopy
 from dataclasses import asdict
 from pathlib import Path
 from threading import RLock
-from uuid import uuid4
 
 from macr.investigation import records as r
 from macr.investigation.budget import BudgetLedger, FIELDS
@@ -22,6 +21,7 @@ from macr.investigation.snapshots import SnapshotStore
 from macr.investigation.validation import ContractError, decode_record, validate_action, validate_identifier, validate_transition, TRANSITIONS, TERMINALS
 from macr.memory.board import AgentBoard
 from macr.memory.evidence_store import EvidenceStore
+from macr.memory.atomic_file import atomic_write
 
 
 class StorageError(ContractError):
@@ -297,9 +297,7 @@ class RunStore:
                 if len(data) > self.MAX_BYTES:
                     self._failed = True
                     raise StorageError('state_size_limit')
-                temp = folder / f'checkpoint-{uuid4()}.tmp'
-                self._write(temp, data, os.O_WRONLY | os.O_CREAT | os.O_EXCL)
-                os.replace(temp, folder / 'checkpoint.json')
+                atomic_write(folder / 'checkpoint.json', data)
                 return r.CheckpointRef(state.task.run_id, sequence, str(folder / 'checkpoint.json'))
             except OSError:
                 self._failed = True

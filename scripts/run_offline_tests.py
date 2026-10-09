@@ -34,6 +34,7 @@ OFFLINE_MODULES = frozenset({
     'test_local_http_provider', 'test_investigation_budget', 'test_investigation_queue',
     'test_investigation_memory', 'test_run_store', 'test_run_recovery',
     'test_repo_map', 'test_patch_agent', 'test_patch_ranker',
+    'test_trace_store',
 })
 OFFLINE_CASES = frozenset({
     'test_orchestrator.OrchestratorTests.test_canonical_graph_edge_kind_reaches_evidence_in_both_directions',
