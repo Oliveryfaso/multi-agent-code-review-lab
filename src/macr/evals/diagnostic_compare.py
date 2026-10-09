@@ -257,7 +257,13 @@ def compare_results(out, *, reviews=None):
         'measurement': 'Offline captured-response review; scripted proofs are fixtures; native claims need independent owner audit.'}
 
 
+def report_paths(folder):
+    """JSON-compatible references, including platform-native path separators."""
+    return {'json': str(folder / 'comparison.json'), 'markdown': str(folder / 'comparison.md')}
+
+
 def save_comparison(out, report):
+    """Persist the verified report and return JSON-compatible path strings."""
     out, _, _, _, _ = _load(out)
     reviews = {row['cell']: row['review'] for row in report['cases'] if 'review' in row}
     _require(encoded(report) == encoded(compare_results(out, reviews=reviews)), 'comparison_report_drift')
@@ -278,4 +284,4 @@ def save_comparison(out, report):
     _write(out, folder.name + '/comparison.json', report)
     _require(sum(p.stat().st_size for p in out.rglob('*') if p.is_file()) + 2 * len(data) <= RECORD_LIMIT)
     atomic_write(folder / 'comparison.md', data)
-    return {'json': folder / 'comparison.json', 'markdown': folder / 'comparison.md'}
+    return report_paths(folder)

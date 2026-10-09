@@ -82,6 +82,7 @@ jobs:
         run: >-
           python -I -S -B scripts/run_offline_tests.py
           test_diagnostic_compare
+          test_b11521_evidence
 
       - name: Bounded failure diagnostic
         if: failure()

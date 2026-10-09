@@ -3,6 +3,7 @@ import hashlib
 import io
 import json
 import unittest
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from dataclasses import asdict
 from unittest.mock import patch
 
@@ -122,7 +123,16 @@ class DiagnosticCompareTests(unittest.TestCase):
         self.assertEqual(report['new_model_calls'], 0)
         self.assertFalse(report['real_model_accuracy_measured'])
         paths = self.compare.save_comparison(self.root, report)
-        self.assertIn('scripted', paths['markdown'].read_text())
+        self.assertIn('scripted', Path(paths['markdown']).read_text())
+
+    def test_report_paths_are_json_strings_before_summary_writes(self):
+        self.prepare(); self.record()
+        paths=self.compare.save_comparison(self.root,self.compare.compare_results(self.root))
+        self.assertTrue(all(type(value) is str for value in paths.values()),'report paths must serialize without caller conversion')
+        self.assertEqual(json.loads(encoded({'comparison':paths}))['comparison'],paths)
+        for folder in [PurePosixPath('/fixture/project artifacts'),PureWindowsPath('C:/fixture/project artifacts')]:
+            refs=self.compare.report_paths(folder)
+            self.assertEqual(json.loads(encoded(refs))['json'],str(folder/'comparison.json'))
 
     def test_format_failure_with_bound_release_proof_continues_without_repair(self):
         self.prepare()
