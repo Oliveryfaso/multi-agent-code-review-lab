@@ -1,0 +1,95 @@
+name: Offline Core
+
+'on':
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  offline-core:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checkout public core
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.11'
+
+      - name: Import public modules and check CLI
+        run: |
+          python -I -S -B - <<'PY'
+          import importlib
+          from pathlib import Path
+          import sys
+          sys.path.insert(0, str(Path('src').resolve()))
+          modules = []
+          for path in sorted(Path('src/macr').rglob('*.py')):
+              if path.name.startswith('._'):
+                  continue
+              name = '.'.join(path.relative_to('src').with_suffix('').parts)
+              name = name.removesuffix('.__init__')
+              importlib.import_module(name)
+              modules.append(name)
+          print(f'Imported {len(modules)} public modules; Python {sys.version.split()[0]}')
+          PY
+          python -I -S -B cli/agent_review.py --help
+
+      - name: Contracts and fixture lifecycle
+        run: >-
+          python -I -S -B scripts/run_offline_tests.py
+          test_offline_tests test_contracts test_provider_contract test_check_results
+
+      - name: Repository graph and index
+        run: >-
+          python -I -S -B scripts/run_offline_tests.py
+          test_code_graph test_repository_scope test_repository_index
+
+      - name: Source readers and evidence
+        run: >-
+          python -I -S -B scripts/run_offline_tests.py
+          test_context_reader test_static_readers
+
+      - name: Snapshots and static facts
+        run: >-
+          python -I -S -B scripts/run_offline_tests.py
+          test_repository_snapshots
+          test_static_facts.StaticFactsTests.test_cross_file_alias_returns_are_source_facts_not_runtime_flow
+
+      - name: Persistence recovery and synthetic CLI
+        run: >-
+          python -I -S -B scripts/run_offline_tests.py
+          test_trace_store test_run_store test_run_recovery
+          test_static_baseline.StaticBaselineTests.test_real_cli_wrapper_runs_baseline_without_importing_source
+
+      - name: Bounded failure diagnostic
+        if: failure()
+        run: |
+          python -I -S -B - <<'PY'
+          from pathlib import Path
+          remaining = 64 * 1024
+          for path in sorted(Path('artifacts/test-runs').glob('*/diagnostic.txt')):
+              if remaining <= 0:
+                  break
+              print(f'\n{path}:')
+              with path.open('rb') as stream:
+                  data = stream.read(remaining)
+              print(data.decode('utf-8', errors='replace'))
+              remaining -= len(data)
+          PY
