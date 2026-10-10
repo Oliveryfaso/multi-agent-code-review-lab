@@ -37,6 +37,7 @@ OFFLINE_MODULES = frozenset({
     'test_trace_store',
     'test_diagnostic_compare',
     'test_b11521_evidence',
+    'test_diagnosis_constraints', 'test_diagnostic_review',
 })
 OFFLINE_CASES = frozenset({
     'test_orchestrator.OrchestratorTests.test_canonical_graph_edge_kind_reaches_evidence_in_both_directions',
