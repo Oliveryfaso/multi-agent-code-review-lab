@@ -38,6 +38,7 @@ def encoded(value) -> bytes:
 
 class RunStore:
     MAX_BYTES = 64 * 1024 * 1024
+    BACKEND = "json"
 
     def __init__(self, root: Path | None = None, *, snapshots: SnapshotStore | None = None, profiles: dict[str, set[str]] | None = None):
         self.allowed = (Path(__file__).resolve().parents[3] / 'artifacts').resolve()
@@ -49,6 +50,9 @@ class RunStore:
         self._failed, self._closed, self._fd = False, False, None
         self._mutex = RLock()
         self.last_usage = r.ActionUsage()
+        database = self.root / "runs.sqlite3"
+        if self.BACKEND == "json" and (database.exists() or database.is_symlink()):
+            raise StorageError("backend_mismatch")
         try:
             self.root.mkdir(parents=True, exist_ok=True)
             self._fd = os.open(self.root / 'writer.lock', os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
@@ -267,6 +271,21 @@ class RunStore:
             stream.flush()
             os.fsync(stream.fileno())
 
+    def _check_forward(self, prior, state):
+        if prior.task != state.task or prior.scope != state.scope or any(key not in state.inflight or state.inflight[key] != action for key, action in prior.inflight.items()) or any(state.completed.get(key) != result for key, result in prior.completed.items()):
+            raise ContractError('checkpoint_rewind')
+        if any(state.budget.reservations.get(key) != reservation for key, reservation in prior.budget.reservations.items()) or any(getattr(state.budget.used, field) < getattr(prior.budget.used, field) for field in FIELDS + ('active_seconds',)) or prior.budget.bounds_exceeded and not state.budget.bounds_exceeded:
+            raise ContractError('checkpoint_rewind')
+        if state.phase != prior.phase:
+            validate_transition(prior.phase, state.phase)
+        if any(state.evidence.get(key) != record for key, record in prior.evidence.items()) or not set(prior.hypotheses) <= set(state.hypotheses):
+            raise ContractError('checkpoint_rewind')
+        if len(state.messages) < len(prior.messages) or any(state.cursors.get(role, -1) < cursor for role, cursor in prior.cursors.items()):
+            raise ContractError('checkpoint_rewind')
+        for previous, current in zip(prior.messages, state.messages):
+            if asdict(previous) | {'consumption_status': current.consumption_status} != asdict(current) or previous.consumption_status == 'consumed' and current.consumption_status != 'consumed':
+                raise ContractError('checkpoint_rewind')
+
     def checkpoint(self, state: r.InvestigationState) -> r.CheckpointRef:
         with self._mutex:
             self.last_usage = r.ActionUsage(tool_calls=1)
@@ -278,20 +297,7 @@ class RunStore:
                 sequence = 0
                 if (folder / 'checkpoint.json').exists():
                     recovered, sequence = self._load(state.task.run_id)
-                    prior = recovered.state
-                    if prior.task != state.task or prior.scope != state.scope or any(key not in state.inflight or state.inflight[key] != action for key, action in prior.inflight.items()) or any(state.completed.get(key) != result for key, result in prior.completed.items()):
-                        raise ContractError('checkpoint_rewind')
-                    if any(state.budget.reservations.get(key) != reservation for key, reservation in prior.budget.reservations.items()) or any(getattr(state.budget.used, field) < getattr(prior.budget.used, field) for field in FIELDS + ('active_seconds',)) or prior.budget.bounds_exceeded and not state.budget.bounds_exceeded:
-                        raise ContractError('checkpoint_rewind')
-                    if state.phase != prior.phase:
-                        validate_transition(prior.phase, state.phase)
-                    if any(state.evidence.get(key) != record for key, record in prior.evidence.items()) or not set(prior.hypotheses) <= set(state.hypotheses):
-                        raise ContractError('checkpoint_rewind')
-                    if len(state.messages) < len(prior.messages) or any(state.cursors.get(role, -1) < cursor for role, cursor in prior.cursors.items()):
-                        raise ContractError('checkpoint_rewind')
-                    for previous, current in zip(prior.messages, state.messages):
-                        if asdict(previous) | {'consumption_status': current.consumption_status} != asdict(current) or previous.consumption_status == 'consumed' and current.consumption_status != 'consumed':
-                            raise ContractError('checkpoint_rewind')
+                    self._check_forward(recovered.state, state)
                 self._guard()
                 data = encoded({'schema_version': 1, 'sequence': sequence, 'state': asdict(state)})
                 if len(data) > self.MAX_BYTES:

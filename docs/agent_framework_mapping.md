@@ -155,6 +155,8 @@ The important engineering point is not whether a specific framework is used. The
 
 ## Future Integration Options
 
+An optional [SQLite investigation store](sqlite-run-store.md) now reuses the Python standard library's transaction machinery at the existing persistence boundary. It keeps the default JSON store and investigation contracts, and requires a new, explicitly selected storage root. This is a storage adapter; the main workflow's descriptive checkpoints do not yet provide automatic node continuation or tool replay. A LangGraph execution adapter remains a separate future integration.
+
 Recommended order:
 
 1. Add MCP server exports for tools/resources.
