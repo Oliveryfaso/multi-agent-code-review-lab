@@ -117,30 +117,20 @@ loading it. Environment changes are scoped to the operation and then restored.
 
 ## Validation and remaining boundary
 
-Run these two bounded suites in separate processes with the qualified optional
-Python environment. This uses only committed files and does not run pytest or
-its auto-loaded plugins:
+Run the public acceptance command from the canonical checkout using the qualified
+optional Python environment. It installs nothing and uses unittest without pytest
+or its auto-loaded plugins:
 
 ```sh
-for MACR_MOCK_TEST in test_langgraph_mock_recovery test_mock_recovery_cli; do
-  python -I -B - "$MACR_MOCK_TEST" <<'PYTEST'
-from pathlib import Path
-import sys, unittest
-sys.dont_write_bytecode = True
-sys.path[:0] = [str(Path(part).resolve()) for part in ("src", "tests", "scripts")]
-from run_offline_tests import run_suite
-loader = unittest.TestLoader()
-suite = loader.loadTestsFromName(sys.argv[1])
-if loader.errors:
-    raise SystemExit("\n".join(loader.errors))
-report = run_suite(suite)
-print(report)
-raise SystemExit(0 if report["status"] == "passed" else 1)
-PYTEST
-  MACR_MOCK_TEST_EXIT=$?
-  [ "$MACR_MOCK_TEST_EXIT" -eq 0 ] || exit "$MACR_MOCK_TEST_EXIT"
-done
+python -I -B scripts/check_mock_recovery.py
 ```
+
+The parent verifies every version in the complete 41-package lock, then launches
+separate children for its boundary suite, the two native suites, nine fixed CLI
+lifecycle cases and
+two CLI checks with site-packages hidden by `-S`. All child commands, inputs and
+expected counters are fixed synthetic data. The checker accepts no provider,
+model, tool, repository, replacement input or retry option.
 
 The 21 native recovery cases and 16 CLI cases cover normal completion, interrupt,
 repeat resume, unknown outcomes, corrupt/schema-conflicting/version-incompatible
@@ -156,10 +146,36 @@ The optional core and CLI tests are selected explicitly under the existing
 allowlist. Limits remain 120 seconds, 64 MiB allocated fixtures, 2 MiB records.
 Successful owned fixture tmp is cleaned; failures are retained. All tests use
 managed synthetic fixtures in the canonical checkout. Cross-process acceptance
-adds a parent-controlled 30-second child timeout and checks actual tool exit.
+has a parent-controlled 30-second child timeout, a 120-second whole-entry limit,
+64 KiB of output per child and a 2 MiB parent record. It checks actual tool exits.
+On timeout or output overflow it closes only its directly created child, stops
+the batch and retains failure fixtures. The trusted mock operations forbid
+process dispatch.
+Successful owned mock fixtures may be retained for inspection.
 A main-thread fixture alarm alone does not prove executor workers exited.
 
 Production resume, real Provider/tool effects, model/VM execution and old-data
 migration are outside this command. Existing production
 budget, identity, snapshot, evidence and grading contracts remain intact.
 Framework caching does not guarantee exactly-once external effects.
+
+## Public mock CI
+
+[Mock Recovery](../.github/workflows/mock-recovery.yml) runs this same public
+checker on pushes to main and pull requests. It selects the standard `macos-15`
+arm64 runner and CPython 3.12.10, verifies the platform before installation,
+creates a disposable virtual environment, installs the 41 pinned wheel hashes
+with `--only-binary=:all: --no-deps`, and runs `pip check`. It uses SHA-pinned
+checkout/setup-python actions, only `contents: read`, no dependency cache and no
+artifact upload. The job has a ten-minute limit and failed native suites print
+at most 64 KiB of retained diagnostic body.
+
+The original Ubuntu Offline Core workflow remains separate and unchanged. It
+uses no optional installation. The mock job does not start a model service or a
+local VM, configure telemetry credentials, execute analysed source, or perform
+production investigation work. Missing or mismatched locked packages stop the
+checker before its new fixtures are created. The CI Python patch version differs
+from the original local 3.12.13 qualification and is verified by the actual job.
+
+Runner labels and architecture follow the [official GitHub runner table](https://docs.github.com/en/actions/reference/runners/github-hosted-runners).
+The Python selection follows the [macOS 15 arm64 image manifest](https://github.com/actions/runner-images/blob/main/images/macos/macos-15-arm64-Readme.md).

@@ -1,0 +1,83 @@
+name: Mock Recovery
+
+'on':
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  native-mock:
+    runs-on: macos-15
+    timeout-minutes: 10
+    env:
+      MACR_MOCK_ENV: ${{ runner.temp }}/macr-mock-recovery
+      LANGSMITH_TRACING_V2: 'false'
+      LANGCHAIN_TRACING_V2: 'false'
+      LANGSMITH_OTEL_ENABLED: 'false'
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checkout public mock code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Select supported Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.12.10'
+          architecture: arm64
+
+      - name: Check locked platform before installation
+        run: |
+          python -I -S -B - <<'PY'
+          import platform, sys
+          assert sys.version_info[:3] == (3, 12, 10), sys.version
+          assert platform.system() == 'Darwin', platform.system()
+          assert platform.machine() == 'arm64', platform.machine()
+          assert platform.mac_ver()[0].split('.')[0] == '15', platform.mac_ver()
+          print('Qualified CI target: CPython 3.12.10 / macOS 15 / arm64')
+          PY
+
+      - name: Install the complete locked wheels in a disposable venv
+        run: |
+          python -I -S -B -m venv "$MACR_MOCK_ENV"
+          "$MACR_MOCK_ENV/bin/python" -I -B -m pip --isolated install \
+            --disable-pip-version-check --no-cache-dir --index-url https://pypi.org/simple \
+            --require-hashes --only-binary=:all: --no-deps \
+            -r requirements/mock-recovery-py312-macos-arm64.lock
+          "$MACR_MOCK_ENV/bin/python" -I -B -m pip --isolated check
+
+      - name: Verify native tasks and fresh-process mock recovery
+        run: |
+          "$MACR_MOCK_ENV/bin/python" -I -B scripts/check_mock_recovery.py
+
+      - name: Bounded failure diagnostic
+        if: failure()
+        run: |
+          python -I -S -B - <<'PY'
+          from pathlib import Path
+          remaining = 64 * 1024
+          root = Path('artifacts/test-runs').absolute()
+          if root != root.resolve():
+              raise SystemExit('Noncanonical diagnostic root refused')
+          for path in sorted(root.glob('mock-check-*/suites/*/diagnostic.txt')):
+              if remaining <= 0:
+                  break
+              if path != path.resolve():
+                  continue
+              with path.open('rb') as stream:
+                  data = stream.read(remaining)
+              print(data.decode('utf-8', errors='replace'))
+              remaining -= len(data)
+          PY
