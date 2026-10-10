@@ -34,6 +34,15 @@ def main() -> None:
     parser = argparse.ArgumentParser(prog="agent-review")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
+    mock_parser = subparsers.add_parser('mock-recovery', help='Synthetic recovery demo only; no production resume, real model, or tool execution.')
+    mock_commands = mock_parser.add_subparsers(dest='mock_operation', required=True)
+    for name in ('start', 'status', 'resume'):
+        mock_command = mock_commands.add_parser(name)
+        mock_command.add_argument('--root', required=True, type=Path)
+        if name == 'start':
+            mock_command.add_argument('--scenario', choices=('normal', 'pause', 'unknown'), default='normal')
+            mock_command.add_argument('--text', default='synthetic evidence')
+
     baseline_parser = subparsers.add_parser('static-baseline', help='Offline evaluation retrieval baseline; no model or source execution.')
     baseline_parser.add_argument('--input', required=True, type=Path)
     baseline_parser.add_argument('--out', required=True, type=Path)
@@ -101,7 +110,13 @@ def main() -> None:
     view_parser.add_argument("--patch-dir", default=Path("patches"), type=Path)
 
     args = parser.parse_args()
-    if args.command == 'static-baseline':
+    if args.command == 'mock-recovery':
+        from macr.investigation import mock_recovery
+        command = [args.mock_operation, '--root=' + str(args.root)]
+        if args.mock_operation == 'start':
+            command += ['--scenario=' + args.scenario, '--text=' + args.text]
+        raise SystemExit(mock_recovery.main(command))
+    elif args.command == 'static-baseline':
         from macr.evals.static_baseline import run_baseline
         try:
             report = run_baseline(args.input, args.out)
