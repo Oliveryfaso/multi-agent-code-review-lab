@@ -3,10 +3,11 @@ from copy import deepcopy
 import json
 import unittest
 from unittest.mock import patch
+from uuid import UUID
 
 from debugger_fixtures import fixture_root, write_files
 from macr.agents.orchestrator import Orchestrator
-from macr.evals.diagnostic_compact import restore_scope
+from macr.evals.diagnostic_compact import VERSION, restore_scope
 from macr.memory.trace_store import TraceStore
 from macr.providers.base import ModelBudget, ModelResponse, ProviderCapabilities, ProviderError
 from macr.providers.local_http import LocalHTTPProvider
@@ -19,6 +20,26 @@ SOURCE = "def authorize(staff, paid):\n    return staff or paid\n"
 QUESTION = "Does authorize enforce the stated access policy?"
 SCENARIO = "Access requires both staff and paid. Both inputs are booleans."
 
+# Sanitized development output, preserving the exact 456-byte model content.
+# This is an offline replay witness, not a new native response or acceptance case.
+RETAINED_DEV01_RAW = '''{
+  "verdict": "supported_defect",
+  "cause": "The function `allowed` incorrectly returns `staff or paid` instead of requiring both `staff` and `paid` to be `True`, violating the stated domain that access requires both staff and paid to be True.",
+  "when": "The input (True, False) leads to access being granted, which contradicts the requirement that both staff and paid must be True.",
+  "refs": ["e1"],
+  "unknowns": [],
+  "scope": "93df631e2006a56c"
+}'''
+CALLER_SOURCE = ('def allowed(staff, paid):\n'
+    '    """Permit access only when staff and paid are both true."""\n'
+    '    return staff or paid\n\n'
+    'def access_status(staff, paid):\n'
+    '    return "granted" if allowed(staff, paid) else "denied"\n\n'
+    'def mixed_access():\n    return access_status(True, False)\n')
+CALLER_QUESTION = ('allowed staff paid access_status: investigate possible access bug for boolean inputs; '
+    'access requires both staff and paid True. Explain the supplied caller path and cite only retrieved evidence.')
+CALLER_SCENARIO = 'Assess the supplied functions, their caller path, and the input domain stated in the question.'
+
 
 def candidate(request, *, verdict="supported_defect", refs=None, unknowns=None):
     payload = json.loads(request.messages[-1]["content"])
@@ -29,7 +50,7 @@ def candidate(request, *, verdict="supported_defect", refs=None, unknowns=None):
         "unknowns": (["The dependency access contract is absent."] if unknown else []) if unknowns is None else unknowns}
 
 
-def verification(request, *, changes=None, unknowns=None):
+def verification(request, *, changes=None, unknowns=None, coverage="complete"):
     payload = json.loads(request.messages[-1]["content"])
     checks = {"requirement": "established", "trigger": "reachable", "behavior": "violates",
               "protection": "absent", "counterevidence": "not_found"}
@@ -39,7 +60,7 @@ def verification(request, *, changes=None, unknowns=None):
             or name == "trigger" and checks[name] == "excluded"
             or name == "protection" and checks[name] in ("effective", "ineffective")
             or name == "counterevidence" and checks[name] == "refutes")}
-    return {"scope": payload["scope"], "checks": checks, "refs": refs,
+    return {"scope": payload["scope"], "coverage": coverage, "checks": checks, "refs": refs,
             "reason": "These explicit checks concern the stated domain.", "unknowns": unknowns or []}
 
 
@@ -118,6 +139,9 @@ class DiagnosticOrchestratorTests(unittest.TestCase):
         self.assertEqual(trace.answer.evidence[0].snippet, SOURCE)
         self.assertEqual(trace.answer.confidence, 0.0)
         self.assertFalse(trace.diagnosis["semantic_proof"])
+        self.assertTrue(trace.diagnosis["candidate_parsed"])
+        self.assertTrue(trace.diagnosis["verification_parsed"])
+        self.assertEqual(trace.diagnosis["verification"]["coverage"], "complete")
         self.assertTrue(trace.metrics["run_outcome"]["end_to_end_completed"])
         self.assertEqual(trace.metrics["diagnostic"]["automatic_retries"], 0)
         payloads = [json.loads(request.messages[-1]["content"]) for request in provider.requests]
@@ -147,6 +171,8 @@ class DiagnosticOrchestratorTests(unittest.TestCase):
         trace = agent.prepare_diagnostic(self.repo, QUESTION, scenario=SCENARIO, assumptions=[], budget=BUDGET)
         self.assertEqual(provider.requests, [])
         self.assertEqual(self.persisted(trace)["diagnosis"]["status"], "prepared")
+        self.assertFalse(trace.diagnosis["candidate_parsed"])
+        self.assertFalse(trace.diagnosis["verification_parsed"])
         agent.diagnostic_candidate(trace)
         self.assertEqual(len(provider.requests), 1)
         self.assertEqual(self.persisted(trace)["diagnosis"]["status"], "candidate_completed")
@@ -219,6 +245,8 @@ class DiagnosticOrchestratorTests(unittest.TestCase):
         self.assertEqual(trace.diagnosis["status"], "failed")
         self.assertIsNotNone(stored["diagnosis"]["candidate"])
         self.assertIsNone(stored["diagnosis"]["final"])
+        self.assertTrue(stored["diagnosis"]["candidate_parsed"])
+        self.assertFalse(stored["diagnosis"]["verification_parsed"])
         self.assertEqual(stored["llm_calls"][-1]["usage"], failed.usage)
         self.assertEqual(stored["llm_calls"][-1]["finish_reason"], "length")
         self.assertEqual(stored["llm_calls"][-1]["failure_kind"], "incomplete")
@@ -299,6 +327,177 @@ class DiagnosticOrchestratorTests(unittest.TestCase):
             capabilities=ProviderCapabilities(json_mode=True, usage=True))
         provider = LocalHTTPProvider(profile, transport=transport, token_counter=lambda request, profile: bound)
         return provider, transport
+
+    def run_semantic_development(self, files, question, terms, candidate_action, verifier_action):
+        repo = write_files(fixture_root(), files)
+        provider, transport = self.production([candidate_action, verifier_action], bound=700)
+        trace = self.orchestrator(provider).run_diagnostic(repo, question, scenario=CALLER_SCENARIO,
+            assumptions=[], budget=BUDGET, search_terms=terms)
+        self.assertEqual(len(transport.calls), 2)
+        self.assertEqual(trace.diagnosis["protocol"], VERSION)
+        self.assertEqual(trace.diagnosis["candidate_request"]["metadata"]["diagnostic_protocol"], VERSION)
+        self.assertTrue(trace.diagnosis["candidate_parsed"])
+        self.assertTrue(trace.diagnosis["verification_parsed"])
+        self.assertFalse(trace.diagnosis["semantic_proof"])
+        payloads = [json.loads(request["messages"][-1]["content"]) for request in transport.calls]
+        self.assertEqual(payloads[0]["source"], payloads[1]["source"])
+        self.assertEqual(len(payloads[0]["source"]), 3)
+        self.assertTrue(all(row["complete"] and row["citable"] for row in payloads[0]["source"]))
+        self.assertEqual(len(trace.diagnosis["candidate"]["refs"]), 3)
+        self.assertEqual(payloads[1]["candidate"]["cause"], trace.diagnosis["candidate"]["cause"])
+        self.assertEqual(payloads[1]["candidate"]["when"], trace.diagnosis["candidate"]["when"])
+        self.assertNotIn("candidate_quality_warnings", payloads[1]["candidate"])
+        self.assertEqual(trace.diagnosis["final"], trace.diagnosis["candidate"])
+        return trace
+
+    def test_three_layer_correct_boolean_caller_with_three_refs_completes(self):
+        def complete_caller(request):
+            payload = json.loads(request.messages[-1]["content"])
+            return {"verdict": "supported_defect", "scope": payload["scope"], "refs": ["e1", "e2", "e3"],
+                "cause": "allowed uses staff OR paid although access requires both boolean inputs true.",
+                "when": "mixed_access calls access_status(True,False), which calls allowed(True,False)=True and returns granted; the required result is denied.",
+                "unknowns": []}
+        def check_caller(request):
+            result = verification(request)
+            result.update(reason="OR grants the mixed caller; AND requires denial. The full supplied path is explained.",
+                refs={"behavior": ["e1"], "trigger": ["e2", "e3"]})
+            return result
+        trace = self.run_semantic_development({"access.py": CALLER_SOURCE}, CALLER_QUESTION,
+            ["allowed", "staff", "paid", "access_status"], complete_caller, check_caller)
+        self.assertEqual([row.symbol for row in trace.answer.evidence], ["allowed", "access_status", "mixed_access"])
+        self.assertIn("allowed(True,False)=True", trace.answer.answer)
+        self.assertIn("required result is denied", trace.answer.answer)
+
+    def test_healthy_nonnegative_domain_and_done_above_total_caller_completes(self):
+        source = ('def pending(done, total):\n'
+            '    """Remaining jobs; completion at or above total returns zero."""\n'
+            '    return max(0, total - done)\n\n'
+            'def job_status(done, total):\n    return pending(done, total)\n\n'
+            'def completed_count(total):\n    return job_status(total + 1, total)\n')
+        question = ('pending job_status done total: investigate possible count bug; for nonnegative integers '
+            'remaining count must be max(0, total-done), including done above total. Explain guards and caller path with retrieved citations.')
+        def healthy_caller(request):
+            payload = json.loads(request.messages[-1]["content"])
+            return {"verdict": "no_defect_supported", "scope": payload["scope"], "refs": ["e1", "e2", "e3"],
+                "cause": "pending clamps total-done at zero, so nonnegative integer inputs return the required remaining count, including done above total.",
+                "when": "completed_count(total) calls job_status(total+1,total), then pending(total+1,total); max(0,-1)=0, matching the requirement.",
+                "unknowns": []}
+        def check_domain(request):
+            result = verification(request, changes={"behavior": "satisfies"})
+            result.update(reason="Clamp covers nonnegative inputs and the above-total caller; its result is correctly zero.",
+                refs={"behavior": ["e1"], "trigger": ["e2", "e3"]})
+            return result
+        trace = self.run_semantic_development({"jobs.py": source}, question,
+            ["pending", "job_status", "done", "total"], healthy_caller, check_domain)
+        self.assertEqual(trace.diagnosis["final"]["verdict"], "no_defect_supported")
+        self.assertIn("nonnegative integer", trace.answer.answer)
+        self.assertIn("max(0,-1)=0", trace.answer.answer)
+
+    def test_unknown_covers_known_caller_and_necessary_missing_dependency_without_invention(self):
+        source = ('def lookup(key, registry):\n'
+            '    """Delegate a present string key to an external registry."""\n'
+            '    return registry.resolve(key)\n\n'
+            'def display_lookup(key, registry):\n    return lookup(key, registry)\n\n'
+            'def show_present(registry):\n    return display_lookup("present", registry)\n')
+        question = ('lookup display_lookup registry resolve: investigate whether a present key is guaranteed '
+            'to return without exception; the external registry.resolve implementation and contract are unavailable. '
+            'Cite supplied path and name missing evidence without inventing guarantees.')
+        gap = "show_present calls display_lookup('present',registry), then lookup and registry.resolve('present'); its absent contract/implementation prevents proving exception freedom."
+        def unknown_caller(request):
+            payload = json.loads(request.messages[-1]["content"])
+            return {"verdict": "unknown", "scope": payload["scope"], "refs": ["e1", "e2", "e3"],
+                    "cause": None, "when": None, "unknowns": [gap]}
+        def check_gap(request):
+            result = verification(request, changes={"trigger": "unknown", "behavior": "unknown"}, unknowns=[gap])
+            result.update(reason="The supplied path is covered, but the absent external resolve contract prevents a guarantee.")
+            return result
+        trace = self.run_semantic_development({"lookup.py": source}, question,
+            ["lookup", "display_lookup", "registry", "resolve"], unknown_caller, check_gap)
+        self.assertEqual(trace.diagnosis["final"]["verdict"], "unknown")
+        self.assertEqual(trace.diagnosis["final"]["unknowns"], [gap])
+        self.assertEqual(trace.diagnosis["candidate_quality_warnings"], [
+            {"field": "unknowns[0]", "actual_chars": len(gap), "preferred_chars": 80}])
+        self.assertEqual(trace.answer.next_steps, [gap])
+
+    def test_exact_retained_dev01_raw_enters_one_verifier_with_warnings_but_incomplete_has_no_final(self):
+        self.assertEqual(len(RETAINED_DEV01_RAW.encode()), 456)
+        original = json.loads(RETAINED_DEV01_RAW)
+        self.assertEqual((len(original["cause"]), len(original["when"])), (198, 127))
+        raw_envelope = completion(RETAINED_DEV01_RAW, usage={"prompt_tokens": 658, "completion_tokens": 128})
+        def incomplete(request):
+            payload = json.loads(request.messages[-1]["content"])
+            self.assertEqual(payload["candidate"]["cause"], original["cause"])
+            self.assertEqual(payload["candidate"]["when"], original["when"])
+            result = verification(request, coverage="incomplete")
+            result.update(reason="The candidate omits mixed_access and access_status argument propagation and result.")
+            return result
+        provider, transport = self.production([raw_envelope, incomplete], bound=700)
+        repo = write_files(fixture_root(), {"access.py": CALLER_SOURCE})
+        agent = self.orchestrator(provider)
+        with patch("macr.schemas.uuid4", return_value=UUID("438d09d6-8af2-4ae1-b875-9b757f831aa5")), \
+                patch("macr.agents.orchestrator.uuid4", return_value=UUID("41814965-0eb5-435f-a872-2182bb85341f")):
+            trace = agent.run_diagnostic(repo, CALLER_QUESTION, scenario=CALLER_SCENARIO,
+                assumptions=[], budget=BUDGET, search_terms=["allowed", "staff", "paid", "access_status"])
+        self.assertEqual(restore_scope(trace.diagnosis["scope"]).binding, original["scope"])
+        self.assertEqual(trace.diagnosis["status"], "rejected")
+        self.assertEqual(trace.diagnosis["rejection_code"], "verification_task_incomplete")
+        self.assertEqual(trace.diagnosis["candidate"]["cause"], original["cause"])
+        self.assertEqual(trace.diagnosis["candidate"]["when"], original["when"])
+        self.assertEqual(set(trace.diagnosis["candidate"]), {"verdict", "cause", "when", "refs", "unknowns"})
+        self.assertEqual(trace.diagnosis["candidate_quality_warnings"], [
+            {"field": "cause", "actual_chars": 198, "preferred_chars": 160},
+            {"field": "when", "actual_chars": 127, "preferred_chars": 80}])
+        self.assertEqual(trace.diagnosis["verification"]["coverage"], "incomplete")
+        self.assertTrue(trace.diagnosis["verification_parsed"])
+        self.assertIsNone(trace.diagnosis["final"])
+        self.assertIsNone(trace.answer)
+        self.assertFalse(trace.metrics["run_outcome"]["end_to_end_completed"])
+        self.assertFalse(trace.diagnosis["semantic_proof"])
+        self.assertEqual(len(transport.calls), 2)
+        stored = self.persisted(trace)
+        attempts = [row["payload"] for row in stored["board"]["diagnostic"] if row["kind"] == "attempt"]
+        self.assertEqual(attempts[0]["raw_output"], RETAINED_DEV01_RAW)
+        self.assertEqual(stored["llm_calls"][0]["usage"], {"input_tokens": 658, "output_tokens": 128})
+        self.assertEqual(stored["llm_calls"][0]["finish_reason"], "stop")
+        self.assertEqual(stored["llm_calls"][1]["usage"], {"input_tokens": 100, "output_tokens": 40})
+        self.assertEqual(stored["metrics"]["final_review"]["issues"], ["verification_task_incomplete"])
+
+    def test_missing_coverage_is_invalid_contract_and_preserves_candidate_and_verifier_usage(self):
+        def missing_coverage(request):
+            result = verification(request)
+            del result["coverage"]
+            return result
+        provider, transport = self.production([candidate, missing_coverage])
+        trace = self.run_agent(provider)
+        self.assertEqual(trace.diagnosis["status"], "failed")
+        self.assertEqual(trace.diagnosis["error_type"], "compact_contract_invalid")
+        self.assertEqual(trace.diagnosis["failure_kind"], "invalid_contract")
+        self.assertTrue(trace.diagnosis["candidate_parsed"])
+        self.assertFalse(trace.diagnosis["verification_parsed"])
+        self.assertIsNotNone(trace.diagnosis["candidate"])
+        self.assertIsNone(trace.diagnosis["final"])
+        self.assertEqual(len(transport.calls), 2)
+        stored = self.persisted(trace)
+        self.assertEqual(stored["llm_calls"][-1]["usage"], {"input_tokens": 100, "output_tokens": 40})
+        self.assertEqual(stored["llm_calls"][-1]["finish_reason"], "stop")
+
+    def test_v1_trace_or_request_cannot_silently_resume_under_v2_contract(self):
+        provider = FakeProvider([candidate])
+        agent = self.orchestrator(provider)
+        trace = agent.prepare_diagnostic(self.repo, QUESTION, scenario=SCENARIO, assumptions=[], budget=BUDGET)
+        trace.diagnosis["protocol"] = "diagnostic-compact-v1"
+        with self.assertRaises(ProviderError) as error:
+            agent.diagnostic_candidate(trace)
+        self.assertEqual(error.exception.code, "diagnostic_protocol_mismatch")
+        self.assertEqual(provider.requests, [])
+        trace.diagnosis["protocol"] = VERSION
+        agent.diagnostic_candidate(trace)
+        trace.diagnosis["candidate_request"]["metadata"]["diagnostic_protocol"] = "diagnostic-compact-v1"
+        with self.assertRaises(ProviderError) as error:
+            agent.verify_diagnostic(trace)
+        self.assertEqual(error.exception.code, "diagnostic_protocol_mismatch")
+        self.assertEqual(trace.diagnosis["status"], "candidate_completed")
+        self.assertEqual(len(provider.requests), 1)
 
     def test_actual_production_parser_success_through_full_entry(self):
         provider, transport = self.production([candidate, verification])

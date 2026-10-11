@@ -858,6 +858,8 @@ class Orchestrator:
             ("question", "scenario", "assumptions")}, "budget": asdict(budget),
             "status": "preparing", "candidate": None, "verification": None, "final": None,
             "candidate_request": None, "scope": None, "attempts": [], "semantic_proof": False,
+            "candidate_quality_warnings": [], "candidate_parsed": False, "verification_parsed": False,
+            "coverage_role": "model_task_coverage_not_semantic_proof",
             "confidence_role": "retrieval_description_only", "automatic_retries": 0}
         try:
             sources = self._diagnostic_sources(repo_path, evidence.items())
@@ -909,34 +911,43 @@ class Orchestrator:
         return chosen
 
     def diagnostic_candidate(self, trace: Trace) -> Trace:
-        from macr.evals.diagnostic_compact import restore_scope
+        from macr.evals.diagnostic_compact import VERSION, candidate_quality_warnings, restore_scope
         data = trace.diagnosis
         if not data or data["status"] != "prepared":
             raise ProviderError("diagnostic_stage_invalid", failure_kind="invalid_contract")
+        if data["protocol"] != VERSION:
+            raise ProviderError("diagnostic_protocol_mismatch", failure_kind="invalid_contract")
         scope = restore_scope(data["scope"])
         if scope.case_id != trace.task_id:
             raise ProviderError("compact_scope_mismatch", failure_kind="invalid_contract")
         data["status"] = "candidate_running"
         candidate, response, error, request = self.solver.diagnostic_candidate(
             scope, **data["task"], model_budget=ModelBudget(**data["budget"]))
-        data.update(candidate=candidate, candidate_request=asdict(request))
+        data.update(candidate=candidate, candidate_request=asdict(request),
+                    candidate_parsed=candidate is not None and error is None,
+                    candidate_quality_warnings=candidate_quality_warnings(candidate) if candidate is not None else [])
         self._record_diagnostic_attempt(trace, "diagnostic_candidate", response, error)
         if error:
             data.update(status="failed", **error)
         else:
             data["status"] = "candidate_completed"
         self._diagnostic_post(trace, "candidate", "Single diagnostic candidate",
-                              {"candidate": candidate, "status": data["status"], "error": error})
+                              {"candidate": candidate, "status": data["status"], "error": error,
+                               "quality_warnings": data["candidate_quality_warnings"]})
         self._diagnostic_save(trace)
         return trace
 
     def verify_diagnostic(self, trace: Trace) -> Trace:
-        from macr.evals.diagnostic_compact import restore_scope
+        from macr.evals.diagnostic_compact import VERSION, restore_scope
         data = trace.diagnosis
         if not data or data["status"] != "candidate_completed":
             raise ProviderError("diagnostic_stage_invalid", failure_kind="invalid_contract")
+        if data["protocol"] != VERSION:
+            raise ProviderError("diagnostic_protocol_mismatch", failure_kind="invalid_contract")
         scope = restore_scope(data["scope"])
         request = ModelRequest(**data["candidate_request"])
+        if request.metadata.get("diagnostic_protocol") != VERSION:
+            raise ProviderError("diagnostic_protocol_mismatch", failure_kind="invalid_contract")
         payload = json.loads(request.messages[-1]["content"])
         if scope.case_id != trace.task_id or any(payload[key] != data["task"][key]
                 for key in ("question", "scenario", "assumptions")):
@@ -945,6 +956,7 @@ class Orchestrator:
         verification, response, error = self.solver.diagnostic_verification(
             scope, request, data["candidate"], model_budget=ModelBudget(**data["budget"]))
         data["verification"] = verification
+        data["verification_parsed"] = verification is not None and error is None
         self._record_diagnostic_attempt(trace, "diagnostic_verifier", response, error)
         if error:
             data.update(status="failed", **error)

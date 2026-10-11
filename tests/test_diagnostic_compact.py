@@ -1,11 +1,13 @@
 """Inert boundary tests; neither compact acceptance nor fixtures prove accuracy."""
 import copy
 from dataclasses import FrozenInstanceError
+import hashlib
 import json
 import unittest
 
 from macr.evals.diagnostic_compact import (
-    CHECK_STATES, CompactScope, build_candidate_request, build_verification_request,
+    CHECK_STATES, VERSION, CompactScope, build_candidate_request, build_verification_request,
+    candidate_quality_warnings,
     parse_candidate, prepare_scope, protocol_schema, restore_scope, validate_verification,
 )
 from macr.providers.base import ProviderError
@@ -21,7 +23,8 @@ class DiagnosticCompactTests(unittest.TestCase):
             scenario='Every call returns 2.', assumptions=['Ordinary Python integers.'])
         self.wire = {'verdict': 'no_defect_supported', 'cause': 'The literal returned is 2.',
             'when': 'demo is called.', 'refs': ['e1'], 'unknowns': [], 'scope': self.scope.binding}
-        self.checked = {'scope': self.scope.binding, 'checks': {'requirement': 'established',
+        self.checked = {'scope': self.scope.binding, 'coverage': 'complete',
+            'checks': {'requirement': 'established',
             'trigger': 'reachable', 'behavior': 'satisfies', 'protection': 'absent',
             'counterevidence': 'refutes'}, 'refs': {'behavior': ['e1'], 'counterevidence': ['e1']},
             'reason': 'The literal return meets the complete stated domain.', 'unknowns': []}
@@ -109,7 +112,8 @@ class DiagnosticCompactTests(unittest.TestCase):
 
     def test_duplicates_do_not_increase_refs_and_all_supplied_ids_are_checked(self):
         self.assertEqual(len(self.candidate(refs=['e1', 'e1'])['refs']), 1)
-        for refs in (['e1', 'e99'], ['e1', 'e1', 'e1'], ['logic.py:10-11'], [{'file': 'logic.py'}]):
+        self.assertEqual(len(self.candidate(refs=['e1', 'e1', 'e1'])['refs']), 1)
+        for refs in (['e1', 'e99'], ['e1'] * 4, ['logic.py:10-11'], [{'file': 'logic.py'}]):
             with self.subTest(refs=refs), self.assertRaises(ProviderError):
                 self.candidate(refs=refs)
         checked = copy.deepcopy(self.checked)
@@ -118,16 +122,76 @@ class DiagnosticCompactTests(unittest.TestCase):
             self.checked_result(checked=checked)
 
     def test_compact_null_and_text_limits_are_strict_without_silent_repairs(self):
-        for changes in ({'cause': 'x' * 161}, {'when': 'x' * 81}, {'cause': ' '},
+        for changes in ({'cause': 'x' * 601}, {'when': 'x' * 301}, {'cause': ' '},
                         {'cause': None}, {'unknowns': ['Missing essential domain.']}):
             with self.subTest(changes=changes), self.assertRaises(ProviderError):
                 self.candidate(**changes)
-        self.assertEqual(len(self.candidate(cause='x' * 160, when='x' * 80)['cause']), 160)
-        for gaps in ([], ['x' * 81], ['one', 'two', 'three'], [' ']):
+        candidate = self.candidate(cause='x' * 600, when='x' * 300)
+        self.assertEqual((len(candidate['cause']), len(candidate['when'])), (600, 300))
+        verification = build_verification_request(self.request, self.scope, candidate)
+        self.assertEqual(json.loads(verification.messages[-1]['content'])['candidate']['cause'], 'x' * 600)
+        self.assertEqual(self.checked_result(candidate)['final'], candidate)
+        for gaps in ([], ['x' * 201], ['one', 'two', 'three'], [' ']):
             with self.subTest(gaps=gaps), self.assertRaises(ProviderError):
                 self.candidate(verdict='unknown', cause=None, when=None, refs=[], unknowns=gaps)
         with self.assertRaises(ProviderError):
             self.candidate(verdict='unknown', unknowns=['Required dependency absent.'])
+
+    def test_preferred_lengths_report_quality_separately_without_changing_candidate(self):
+        self.assertEqual(candidate_quality_warnings(self.candidate(cause='x' * 160, when='x' * 80)), [])
+        candidate = self.candidate(cause='x' * 161, when='x' * 81)
+        original = copy.deepcopy(candidate)
+        self.assertEqual(candidate_quality_warnings(candidate), [
+            {'field': 'cause', 'actual_chars': 161, 'preferred_chars': 160},
+            {'field': 'when', 'actual_chars': 81, 'preferred_chars': 80}])
+        self.assertEqual(candidate, original)
+        unknown = self.candidate(verdict='unknown', cause=None, when=None, refs=[], unknowns=['x' * 200])
+        self.assertEqual(candidate_quality_warnings(unknown), [
+            {'field': 'unknowns[0]', 'actual_chars': 200, 'preferred_chars': 80}])
+        checked = self.checked | {'checks': {name: 'unknown' if 'unknown' in states else 'missing'
+            for name, states in CHECK_STATES.items()}, 'refs': {}, 'unknowns': ['x' * 200]}
+        verification = build_verification_request(self.request, self.scope, unknown)
+        self.assertEqual(json.loads(verification.messages[-1]['content'])['candidate']['unknowns'], ['x' * 200])
+        self.assertEqual(self.checked_result(unknown, checked)['final'], unknown)
+
+    def test_candidate_three_refs_do_not_expand_per_check_refs_or_gap_limit(self):
+        rows = [Evidence(f'part{index}.py', 1, 1, 'Separate source.', f'v{index} = 2\n', None, 'parse_ast')
+                for index in range(3)]
+        scope = prepare_scope(rows, case_id='three', attempt_id='one')
+        candidate = parse_candidate(json.dumps(self.wire | {'refs': ['e1', 'e2', 'e3'], 'scope': scope.binding}), scope)
+        self.assertEqual(len(candidate['refs']), 3)
+        request = build_candidate_request(scope, question='What values are assigned?',
+            scenario='Each visible assignment uses 2.', assumptions=[])
+        verification = build_verification_request(request, scope, candidate)
+        payload = json.loads(verification.messages[-1]['content'])
+        self.assertEqual(payload['candidate']['refs'], ['e1', 'e2', 'e3'])
+        self.assertEqual(payload['contract']['refs']['max_per_array'], 2)
+        self.assertEqual(payload['contract']['unknowns']['max_items'], 2)
+        checked = self.checked | {'scope': scope.binding, 'refs': {'behavior': ['e1', 'e2'], 'counterevidence': ['e3']}}
+        self.assertEqual(validate_verification(json.dumps(checked), candidate, scope)['final'], candidate)
+        checked['refs']['behavior'].append('e3')
+        with self.assertRaisesRegex(ProviderError, 'compact_contract_invalid'):
+            validate_verification(json.dumps(checked), candidate, scope)
+
+    def test_coverage_is_required_and_incomplete_rejects_without_repairing_candidate(self):
+        missing = copy.deepcopy(self.checked)
+        missing.pop('coverage')
+        for checked in (missing, self.checked | {'coverage': 'unknown'}, self.checked | {'coverage': True}):
+            with self.subTest(checked=checked), self.assertRaisesRegex(ProviderError, 'compact_contract_invalid'):
+                self.checked_result(checked=checked)
+        candidate = self.candidate()
+        original = copy.deepcopy(candidate)
+        result = self.checked_result(candidate, self.checked | {'coverage': 'incomplete',
+            'reason': 'The requested caller path is omitted.'})
+        self.assertEqual((result['status'], result['error_code']), ('rejected', 'verification_task_incomplete'))
+        self.assertFalse(result['accepted'])
+        self.assertIsNone(result['final'])
+        self.assertIsNone(result['assessment'])
+        self.assertEqual(candidate, original)
+        # Coverage does not relax the source or keyed-state contracts.
+        with self.assertRaises(ProviderError):
+            self.checked_result(candidate, self.checked | {'coverage': 'incomplete',
+                'refs': {'behavior': ['e99'], 'counterevidence': ['e1']}})
 
     def test_requests_expose_the_exact_schema_and_example_enums_without_hidden_authority(self):
         candidate = self.candidate()
@@ -154,11 +218,29 @@ class DiagnosticCompactTests(unittest.TestCase):
         candidate_payload = json.loads(self.request.messages[-1]['content'])
         self.assertEqual([example['verdict'] for example in candidate_payload['shape_examples']],
                          ['supported_defect', 'no_defect_supported', 'unknown'])
-        self.assertEqual(candidate_payload['contract']['cause']['max_chars'], 160)
+        self.assertEqual(candidate_payload['contract']['cause']['max_chars'], 600)
+        self.assertEqual(candidate_payload['contract']['cause']['preferred_chars'], 160)
+        self.assertEqual(candidate_payload['contract']['when']['max_chars'], 300)
+        self.assertEqual(candidate_payload['contract']['when']['preferred_chars'], 80)
+        self.assertEqual(candidate_payload['contract']['unknowns'],
+                         {'max_items': 2, 'max_chars_each': 200, 'preferred_chars_each': 80})
+        self.assertEqual(payload['contract']['coverage'], ['complete', 'incomplete'])
+        self.assertEqual(payload['shape_example']['coverage'], 'complete')
+        self.assertIn('coverage', verification.response_schema['required'])
+        self.assertEqual(self.request.metadata['diagnostic_protocol'], VERSION)
         self.assertEqual(payload['contract']['reason_max_chars'], 96)
         self.assertEqual(payload['contract']['refs']['required_when']['behavior'], ['violates', 'satisfies'])
+        for phrase in ('caller path', 'parameters', 'actual result and expected result',
+                       'known path and necessary missing guarantee', 'Preferred lengths'):
+            self.assertIn(phrase, self.request.messages[0]['content'])
+        for phrase in ('question/scenario', 'Set incomplete', 'not proof', 'do not repair'):
+            self.assertIn(phrase, verification.messages[0]['content'])
 
     def test_request_builder_refuses_swapped_scope_table(self):
+        old_request = copy.deepcopy(self.request)
+        old_request.metadata['diagnostic_protocol'] = 'diagnostic-compact-v1'
+        with self.assertRaisesRegex(ProviderError, 'compact_protocol_mismatch'):
+            build_verification_request(old_request, self.scope, self.candidate())
         request = copy.deepcopy(self.request)
         payload = json.loads(request.messages[-1]['content'])
         payload['source'][0]['body'] = 'Hidden replacement.'
@@ -252,6 +334,119 @@ class DiagnosticCompactTests(unittest.TestCase):
                 parse_candidate(content, self.scope)
         with self.assertRaises(ProviderError):
             self.candidate(cause='\ud800')
+
+
+class DevelopmentReplayTests(unittest.TestCase):
+    """Known dev01 content only; scripted checks do not measure model accuracy."""
+
+    RAW = '''{
+  "verdict": "supported_defect",
+  "cause": "The function `allowed` incorrectly returns `staff or paid` instead of requiring both `staff` and `paid` to be `True`, violating the stated domain that access requires both staff and paid to be True.",
+  "when": "The input (True, False) leads to access being granted, which contradicts the requirement that both staff and paid must be True.",
+  "refs": ["e1"],
+  "unknowns": [],
+  "scope": "93df631e2006a56c"
+}'''
+
+    def setUp(self):
+        evidence = [
+            Evidence('access.py', 1, 3, 'Known development source.',
+                'def allowed(staff, paid):\n'
+                '    """Permit access only when staff and paid are both true."""\n'
+                '    return staff or paid\n', 'allowed', 'parse_ast'),
+            Evidence('access.py', 5, 6, 'Known development caller.',
+                'def access_status(staff, paid):\n'
+                '    return "granted" if allowed(staff, paid) else "denied"\n', 'access_status', 'parse_ast'),
+            Evidence('access.py', 8, 9, 'Known development entry.',
+                'def mixed_access():\n    return access_status(True, False)\n', 'mixed_access', 'parse_ast')]
+        self.scope = prepare_scope(evidence, case_id='438d09d6-8af2-4ae1-b875-9b757f831aa5',
+                                   attempt_id='41814965-0eb5-435f-a872-2182bb85341f')
+        self.request = build_candidate_request(self.scope,
+            question='allowed staff paid access_status: investigate possible access bug for boolean inputs; '
+                'access requires both staff and paid True. Explain the supplied caller path and cite only retrieved evidence.',
+            scenario='Assess the supplied functions, their caller path, and the input domain stated in the question.',
+            assumptions=[])
+        self.checked = {'scope': self.scope.binding, 'coverage': 'incomplete',
+            'checks': {'requirement': 'established', 'trigger': 'reachable', 'behavior': 'violates',
+                       'protection': 'absent', 'counterevidence': 'not_found'},
+            'refs': {'behavior': ['e1']}, 'reason': 'The required mixed_access and access_status caller path is omitted.',
+            'unknowns': []}
+
+    def test_retained_exact_raw_enters_verifier_with_warnings_but_incomplete_has_no_final(self):
+        self.assertEqual(len(self.RAW.encode()), 456)
+        self.assertEqual(hashlib.sha256(self.RAW.encode()).hexdigest(),
+                         'bbc7b555f32674a5ae288d585a30db5bc204696020900069bf9aab72da5a980c')
+        self.assertEqual(self.scope.scope_sha256,
+                         '93df631e2006a56c1006abc916c4c446f5fafadf6e931bbe7703527d4f01301b')
+        raw = json.loads(self.RAW)
+        candidate = parse_candidate(self.RAW, self.scope)
+        original = copy.deepcopy(candidate)
+        self.assertEqual(candidate_quality_warnings(candidate), [
+            {'field': 'cause', 'actual_chars': 198, 'preferred_chars': 160},
+            {'field': 'when', 'actual_chars': 127, 'preferred_chars': 80}])
+        verification = build_verification_request(self.request, self.scope, candidate)
+        supplied = json.loads(verification.messages[-1]['content'])['candidate']
+        self.assertEqual(supplied, raw)
+        result = validate_verification(json.dumps(self.checked), candidate, self.scope)
+        self.assertEqual((result['status'], result['error_code']), ('rejected', 'verification_task_incomplete'))
+        self.assertIsNone(result['final'])
+        self.assertEqual(candidate, original)
+        self.assertEqual(json.loads(self.RAW), raw)
+
+    def test_complete_caller_candidate_preserves_parameters_and_actual_expected_with_three_refs(self):
+        wire = json.loads(self.RAW) | {
+            'cause': 'allowed uses OR while the policy requires both staff and paid.',
+            'when': 'mixed_access calls access_status(True, False), which calls allowed(True, False)=True; '
+                    'access_status returns granted, but the policy expects denied.',
+            'refs': ['e1', 'e2', 'e3']}
+        candidate = parse_candidate(json.dumps(wire), self.scope)
+        verification = build_verification_request(self.request, self.scope, candidate)
+        self.assertEqual(json.loads(verification.messages[-1]['content'])['candidate'], wire)
+        self.assertEqual(candidate_quality_warnings(candidate), [
+            {'field': 'when', 'actual_chars': len(wire['when']), 'preferred_chars': 80}])
+        checked = self.checked | {'coverage': 'complete',
+            'reason': 'OR grants the mixed pair; the candidate explains every caller and the denied requirement.'}
+        result = validate_verification(json.dumps(checked), candidate, self.scope)
+        self.assertEqual(result['final'], candidate)
+        self.assertEqual(len(result['final']['refs']), 3)
+        self.assertFalse(result['semantic_proof'])
+
+    def test_synthetic_healthy_complete_domain_and_unknown_needed_dependency_fit_protocol(self):
+        examples = [
+            (Evidence('progress.py', 1, 2, 'Synthetic source.',
+                'def finished(done, total):\n    return done >= total\n', 'finished', 'parse_ast'),
+             'For nonnegative integers, is finished correct when done equals or exceeds total?',
+             'The completion requirement includes done > total.',
+             {'verdict': 'no_defect_supported',
+              'cause': 'The >= comparison implements the completion requirement for nonnegative integers.',
+              'when': 'finished(4, 3) returns True as expected; equality also returns True, and done < total is False.',
+              'refs': ['e1'], 'unknowns': []},
+             {'requirement': 'established', 'trigger': 'reachable', 'behavior': 'satisfies',
+              'protection': 'absent', 'counterevidence': 'refutes'},
+             {'behavior': ['e1'], 'counterevidence': ['e1']},
+             'The allowed domain includes done > total; the candidate covers both boundaries.'),
+            (Evidence('callbacks.py', 1, 2, 'Synthetic source.',
+                'def invoke(value, callback):\n    return callback(value)\n', 'invoke', 'parse_ast'),
+             'Does invoke preserve a positive integer value?',
+             'The callback implementation and its value-preservation contract are unavailable.',
+             {'verdict': 'unknown', 'cause': None, 'when': None, 'refs': ['e1'],
+              'unknowns': ['invoke(3, callback) forwards 3; the callback implementation or a preservation guarantee '
+                           'is necessary to decide whether its returned value remains 3.']},
+             {'requirement': 'established', 'trigger': 'reachable', 'behavior': 'unknown',
+              'protection': 'unknown', 'counterevidence': 'unknown'}, {},
+             'The callback return behavior is necessary and absent; the known path is stated.')]
+        for evidence, question, scenario, wire, states, refs, reason in examples:
+            with self.subTest(verdict=wire['verdict']):
+                scope = prepare_scope([evidence], case_id='synthetic', attempt_id=evidence.symbol)
+                candidate = parse_candidate(json.dumps(wire | {'scope': scope.binding}), scope)
+                request = build_candidate_request(scope, question=question, scenario=scenario, assumptions=[])
+                supplied = json.loads(build_verification_request(request, scope, candidate).messages[-1]['content'])
+                self.assertEqual(supplied['candidate'], wire | {'scope': scope.binding})
+                checked = {'scope': scope.binding, 'coverage': 'complete', 'checks': states,
+                           'refs': refs, 'reason': reason, 'unknowns': wire['unknowns']}
+                result = validate_verification(json.dumps(checked), candidate, scope)
+                self.assertEqual(result['final'], candidate)
+                self.assertFalse(result['semantic_proof'])
 
 
 if __name__ == '__main__':
