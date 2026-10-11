@@ -11,7 +11,7 @@ from uuid import uuid4
 
 from macr.investigation.scope import read_safe
 from macr.investigation.validation import ContractError, validate_identifier, validate_relative
-from macr.memory.atomic_file import atomic_write
+from macr.memory.atomic_file import atomic_write, tree_usage
 from macr.memory.run_store import encoded
 from macr.providers.base import ModelRequest, ProviderError, validate_request, validate_response
 from macr.providers.local_http import _object
@@ -54,7 +54,7 @@ def _read(root, name):
 
 def _write(root, name, value):
     data = encoded(value) + b'\n'
-    used = sum(p.stat().st_size for p in root.rglob('*') if p.is_file())
+    used = tree_usage(root)['logical_bytes']
     _require(used + 2 * len(data) <= RECORD_LIMIT, 'comparison_record_limit')
     atomic_write(root / name, data)
 
@@ -385,6 +385,6 @@ def save_comparison(out, report):
     _require(len(encoded(report)) + len(data) < RECORD_LIMIT // 2)
     folder.mkdir()
     _write(out, folder.name + '/comparison.json', report)
-    _require(sum(p.stat().st_size for p in out.rglob('*') if p.is_file()) + 2 * len(data) <= RECORD_LIMIT)
+    _require(tree_usage(out)['logical_bytes'] + 2 * len(data) <= RECORD_LIMIT)
     atomic_write(folder / 'comparison.md', data)
     return report_paths(folder)

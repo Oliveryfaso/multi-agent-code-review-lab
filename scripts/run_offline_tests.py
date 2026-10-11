@@ -36,7 +36,7 @@ OFFLINE_MODULES = frozenset({
     'test_investigation_memory', 'test_run_store', 'test_run_recovery', 'test_sqlite_run_store',
     'test_repo_map', 'test_patch_agent', 'test_patch_ranker',
     'test_trace_store', 'test_atomic_file',
-    'test_diagnostic_compare',
+    'test_diagnostic_compare', 'test_diagnostic_allocation',
     'test_b11521_evidence',
     'test_diagnosis_constraints', 'test_diagnostic_review',
     'test_diagnostic_dataset', 'test_diagnostic_holdout_cases', 'test_diagnostic_holdout_replay',

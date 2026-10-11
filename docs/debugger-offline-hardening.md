@@ -44,6 +44,10 @@ CLI response path.
 Share a same-process lock between atomic writes and strict `tree_usage` scans,
 preventing covered writes from replacing a temporary file between enumeration
 and stat. Keep allocation accounting and invalid/missing-entry failures strict.
+The comparison writer's JSON and Markdown capacity checks now call that shared
+scanner. Complete local derived owner/binding sources also wrap their actual
+`stage_usage` and `record_allocation` bodies; their existing callers, exclusions
+and budgets remain connected. Historical frozen sources and grants are unchanged.
 The lock excludes other processes and uncoordinated filesystem activity; it is
 not a transaction or power-loss guarantee. The old recovery result remains
 native success=false. A replacement race fits its ENOENT, but the historical
@@ -53,19 +57,15 @@ guard compliance remain unproven.
 ## Validation and next measurement
 
 Synthetic fixtures cover legacy candidates, insufficiency, duplicate/out-of-range
-locations, whitespace-only gaps and synchronized scans/writes. They test application
-behavior, not model quality or native guard compatibility. Use isolated development
-cases; do not tune or rescore this holdout to claim gains.
+locations, whitespace-only gaps and synchronized scans/writes through real comparison
+entry points. Three isolated new development sources check duplicate rejection and
+missing-evidence exits without promoting legal output to a semantic pass. They test
+application behavior, not model quality or native guard compatibility.
 
-Before a separately authorized model run, freeze new development/future unseen
-cases, inputs and denominators. Preregister two hypotheses:
-
-1. Generic unique/source-bounded citation guidance reduces host reference
-   rejections. Measure strict JSON and citation acceptance separately;
-   GBNF success alone does not establish citation validity.
-2. Correct mechanisms under complete bounded assumptions yield healthy verdicts
-   without invented defects. Measure healthy false alarms separately from defect
-   detection and specific missing-evidence abstention.
+The [next measurement plan](debugger-next-validation.md) freezes twelve future unseen
+examples per model, separates format and semantic outcomes, and reports category
+coverage and actual denominators. Neither the old holdout nor these development
+fixtures may be used as the new independent evaluation set.
 
 No retry, repair, verdict flip or case-specific rule is proposed. No model,
 download or VM call is needed for these changes. Model gains, cross-process protection

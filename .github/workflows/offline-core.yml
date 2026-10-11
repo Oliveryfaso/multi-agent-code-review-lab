@@ -82,7 +82,7 @@ jobs:
       - name: Diagnostic comparison with scripted responses
         run: >-
           python -I -S -B scripts/run_offline_tests.py
-          test_diagnostic_compare
+          test_diagnostic_compare test_diagnostic_allocation
           test_b11521_evidence
           test_diagnosis_constraints test_diagnostic_review
           test_diagnostic_dataset test_diagnostic_holdout_cases test_diagnostic_holdout_replay
