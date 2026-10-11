@@ -1,0 +1,1282 @@
+{
+  "acquisition_history": {
+    "approximate_remaining_io_reserve_window_seconds": 848.2011198749533,
+    "complete_get_failure": "acquisition_io_deadline_reserve",
+    "complete_get_received_bytes": 4240863473,
+    "complete_weight_sha256": "509287f78cb4d4cf6b3843734733b914b2c158e43e22a7f4bf5e963800894d3c",
+    "counted_preparation_at_attempt_seconds": 936.7988801250467,
+    "expected_complete_bytes": 4683073536,
+    "historical_prefixes_verified": 2,
+    "later_independent_complete_content_and_stable_identity_qualified": true,
+    "native_download_success": false,
+    "range_attempts": 1,
+    "range_changed_identity_field": "unknown; failed before/after stamp values not retained",
+    "range_http_status": 206,
+    "range_native_failure": "partial_changed_during_full_read",
+    "range_tail_received_bytes": 442210063
+  },
+  "allocation_snapshot_at_final_scoring_before_public_export": {
+    "nonweight_bytes": 87293952,
+    "nonweight_limit_bytes": 536870912,
+    "record_bytes": 81526784,
+    "record_limit_bytes": 536870912,
+    "reserve_bytes": 8388608,
+    "total_bytes": 4770496512
+  },
+  "cases": [
+    {
+      "case_id": "c01",
+      "contract_valid": true,
+      "diagnostic_passed": true,
+      "error_code": null,
+      "expected_verdict": "supported_defect",
+      "failure_class": null,
+      "healthy_false_alarm": null,
+      "http_latency_ms": 18188,
+      "measured_usage": {
+        "input_tokens": 250,
+        "output_tokens": 252
+      },
+      "profile_id": "qwen4b",
+      "record_sha256": "2cec7ecf2bfbcfdec17329f9d495bb7be0cd15305ad0264f41c9054f0a2fc154",
+      "review": {
+        "abstention_reason": "unknown",
+        "citation_support": "supported",
+        "evidence_refs": [
+          {
+            "end": 6,
+            "file": "logic.py",
+            "start": 1
+          }
+        ],
+        "mechanism": "supported",
+        "reason": "The diagnosis identifies the strict upper comparison in lower <= value < upper and correctly explains that contains(8, 2, 8) returns False instead of the required True. The supplied lines 1-6 include both the comparison and the demonstrated upper-endpoint call. This matches the frozen closed-interval defect mechanism and trigger. Abstention is not applicable to this supported-defect answer.",
+        "trigger": "supported"
+      },
+      "semantic_review": "reviewed",
+      "strict_json_valid": true,
+      "submitted_verdict": "supported_defect",
+      "topic": "boundary",
+      "unknown_abstention": null,
+      "verdict_correct": true
+    },
+    {
+      "case_id": "c02",
+      "contract_valid": false,
+      "diagnostic_passed": false,
+      "error_code": "eval_contract_invalid",
+      "expected_verdict": "no_defect_supported",
+      "failure_class": "format",
+      "healthy_false_alarm": null,
+      "http_latency_ms": 19059,
+      "measured_usage": {
+        "input_tokens": 262,
+        "output_tokens": 248
+      },
+      "profile_id": "qwen4b",
+      "record_sha256": "cc808b1a5575a07a674bcd3d516fbdceff18d94d56e65de6777a7b7da39bb801",
+      "review": null,
+      "semantic_review": "not_applicable",
+      "strict_json_valid": true,
+      "submitted_verdict": "no_defect_supported",
+      "topic": "boundary",
+      "unknown_abstention": null,
+      "verdict_correct": null
+    },
+    {
+      "case_id": "c03",
+      "contract_valid": false,
+      "diagnostic_passed": false,
+      "error_code": "eval_contract_invalid",
+      "expected_verdict": "unknown",
+      "failure_class": "format",
+      "healthy_false_alarm": null,
+      "http_latency_ms": 23193,
+      "measured_usage": {
+        "input_tokens": 259,
+        "output_tokens": 307
+      },
+      "profile_id": "qwen4b",
+      "record_sha256": "8db26d5da27c714714f8e5e583e8cf74f93c2f00c7ec4620569273071ec64deb",
+      "review": null,
+      "semantic_review": "not_applicable",
+      "strict_json_valid": true,
+      "submitted_verdict": "no_defect_supported",
+      "topic": "external-dependency",
+      "unknown_abstention": null,
+      "verdict_correct": null
+    },
+    {
+      "case_id": "c04",
+      "contract_valid": true,
+      "diagnostic_passed": true,
+      "error_code": null,
+      "expected_verdict": "supported_defect",
+      "failure_class": null,
+      "healthy_false_alarm": null,
+      "http_latency_ms": 21823,
+      "measured_usage": {
+        "input_tokens": 291,
+        "output_tokens": 263
+      },
+      "profile_id": "qwen4b",
+      "record_sha256": "9b1ffe489b878b9f808e101b889bf12ba37f6c850185fb4017b26e9c45f782a8",
+      "review": {
+        "abstention_reason": "unknown",
+        "citation_support": "supported",
+        "evidence_refs": [
+          {
+            "end": 9,
+            "file": "logic.py",
+            "start": 1
+          }
+        ],
+        "mechanism": "supported",
+        "reason": "The cause identifies retention of the same cart items list and explicitly explains that a later append changes saved[\"items\"]. The when includes the actual dictionary expression {\"items\": cart[\"items\"]}, so the core shared-inner-list mechanism and later-mutation trigger are supported by cited lines 1-9. The cause nevertheless inaccurately describes the function return as a list/reference to the list; it returns a new outer dictionary containing that reference. The when also incorrectly places the snapshot call at line 4 and append at line 7; the actual call and append are lines 7 and 8. These errors are retained, not repaired in the answer. They do not negate the clearly stated causal chain and triggering operation. Abstention is not applicable.",
+        "trigger": "supported"
+      },
+      "semantic_review": "reviewed",
+      "strict_json_valid": true,
+      "submitted_verdict": "supported_defect",
+      "topic": "aliasing",
+      "unknown_abstention": null,
+      "verdict_correct": true
+    },
+    {
+      "case_id": "c05",
+      "contract_valid": false,
+      "diagnostic_passed": false,
+      "error_code": "eval_contract_invalid",
+      "expected_verdict": "no_defect_supported",
+      "failure_class": "format",
+      "healthy_false_alarm": null,
+      "http_latency_ms": 22865,
+      "measured_usage": {
+        "input_tokens": 312,
+        "output_tokens": 265
+      },
+      "profile_id": "qwen4b",
+      "record_sha256": "325fc8bf05643677e8a82cde66c9e273d578a2f0165346d16953708c35f33aa6",
+      "review": null,
+      "semantic_review": "not_applicable",
+      "strict_json_valid": true,
+      "submitted_verdict": "supported_defect",
+      "topic": "aliasing",
+      "unknown_abstention": null,
+      "verdict_correct": null
+    },
+    {
+      "case_id": "c06",
+      "contract_valid": false,
+      "diagnostic_passed": false,
+      "error_code": "eval_contract_invalid",
+      "expected_verdict": "unknown",
+      "failure_class": "format",
+      "healthy_false_alarm": null,
+      "http_latency_ms": 19847,
+      "measured_usage": {
+        "input_tokens": 257,
+        "output_tokens": 239
+      },
+      "profile_id": "qwen4b",
+      "record_sha256": "d57faa6a8a638fee9b91d40bc923d477fdc622ff7ae98e977b62d7bcedca3cea",
+      "review": null,
+      "semantic_review": "not_applicable",
+      "strict_json_valid": true,
+      "submitted_verdict": "no_defect_supported",
+      "topic": "callback-contract",
+      "unknown_abstention": null,
+      "verdict_correct": null
+    },
+    {
+      "case_id": "c07",
+      "contract_valid": false,
+      "diagnostic_passed": false,
+      "error_code": "eval_citation_invalid",
+      "expected_verdict": "supported_defect",
+      "failure_class": "format",
+      "healthy_false_alarm": null,
+      "http_latency_ms": 23418,
+      "measured_usage": {
+        "input_tokens": 282,
+        "output_tokens": 272
+      },
+      "profile_id": "qwen4b",
+      "record_sha256": "eb5376ccc404e8e6d45d36a1b40422ce900dffc273495dcb4bf0e3af6f396440",
+      "review": null,
+      "semantic_review": "not_applicable",
+      "strict_json_valid": true,
+      "submitted_verdict": "supported_defect",
+      "topic": "default-args",
+      "unknown_abstention": null,
+      "verdict_correct": null
+    },
+    {
+      "case_id": "c08",
+      "contract_valid": false,
+      "diagnostic_passed": false,
+      "error_code": "eval_contract_invalid",
+      "expected_verdict": "no_defect_supported",
+      "failure_class": "format",
+      "healthy_false_alarm": null,
+      "http_latency_ms": 28386,
+      "measured_usage": {
+        "input_tokens": 317,
+        "output_tokens": 256
+      },
+      "profile_id": "qwen4b",
+      "record_sha256": "ecc1e72b313a70601bf8901382c60d52b5aa64f5dc1fa58b036aceaf572d3a2c",
+      "review": null,
+      "semantic_review": "not_applicable",
+      "strict_json_valid": true,
+      "submitted_verdict": "supported_defect",
+      "topic": "default-args",
+      "unknown_abstention": null,
+      "verdict_correct": null
+    },
+    {
+      "case_id": "c09",
+      "contract_valid": false,
+      "diagnostic_passed": false,
+      "error_code": "eval_contract_invalid",
+      "expected_verdict": "unknown",
+      "failure_class": "format",
+      "healthy_false_alarm": null,
+      "http_latency_ms": 18816,
+      "measured_usage": {
+        "input_tokens": 260,
+        "output_tokens": 124
+      },
+      "profile_id": "qwen4b",
+      "record_sha256": "71ac3f54e0f0cdd2cab320fbc3a1ddb826a7def5c432f9ec5294b4eab25891fc",
+      "review": null,
+      "semantic_review": "not_applicable",
+      "strict_json_valid": true,
+      "submitted_verdict": "unknown",
+      "topic": "config-units",
+      "unknown_abstention": null,
+      "verdict_correct": null
+    },
+    {
+      "case_id": "c10",
+      "contract_valid": true,
+      "diagnostic_passed": true,
+      "error_code": null,
+      "expected_verdict": "supported_defect",
+      "failure_class": null,
+      "healthy_false_alarm": null,
+      "http_latency_ms": 32209,
+      "measured_usage": {
+        "input_tokens": 291,
+        "output_tokens": 255
+      },
+      "profile_id": "qwen4b",
+      "record_sha256": "c6c8b808146f2521e26240c118d4f1841161c25c0022351ce19288b1848d9a52",
+      "review": {
+        "abstention_reason": "unknown",
+        "citation_support": "supported",
+        "evidence_refs": [
+          {
+            "end": 6,
+            "file": "logic.py",
+            "start": 2
+          }
+        ],
+        "mechanism": "supported",
+        "reason": "The cause correctly identifies subtracting the percentage number as an absolute amount rather than total * percent / 100. The stated call uses total=80 and percent=25 and correctly distinguishes the observed 55 from the required 60. The cited lines 2-6 contain both the subtraction and the explicit demo call. The unmatched backtick in when does not change these supported claims; abstention is not applicable to this defect verdict.",
+        "trigger": "supported"
+      },
+      "semantic_review": "reviewed",
+      "strict_json_valid": true,
+      "submitted_verdict": "supported_defect",
+      "topic": "arithmetic",
+      "unknown_abstention": null,
+      "verdict_correct": true
+    },
+    {
+      "case_id": "c11",
+      "contract_valid": false,
+      "diagnostic_passed": false,
+      "error_code": "eval_contract_invalid",
+      "expected_verdict": "no_defect_supported",
+      "failure_class": "format",
+      "healthy_false_alarm": null,
+      "http_latency_ms": 28328,
+      "measured_usage": {
+        "input_tokens": 265,
+        "output_tokens": 253
+      },
+      "profile_id": "qwen4b",
+      "record_sha256": "d4f130a35e69571fd0e49f2cc8e91130052981f4bd086127c8e6890f1058e423",
+      "review": null,
+      "semantic_review": "not_applicable",
+      "strict_json_valid": true,
+      "submitted_verdict": "no_defect_supported",
+      "topic": "separator",
+      "unknown_abstention": null,
+      "verdict_correct": null
+    },
+    {
+      "case_id": "c12",
+      "contract_valid": true,
+      "diagnostic_passed": true,
+      "error_code": null,
+      "expected_verdict": "unknown",
+      "failure_class": null,
+      "healthy_false_alarm": null,
+      "http_latency_ms": 29426,
+      "measured_usage": {
+        "input_tokens": 261,
+        "output_tokens": 279
+      },
+      "profile_id": "qwen4b",
+      "record_sha256": "1c27e6718b75af738fc9e1087149851ebf8832397e86a13d5752da313bbfaabc",
+      "review": {
+        "abstention_reason": "supported",
+        "citation_support": "supported",
+        "evidence_refs": [
+          {
+            "end": 2,
+            "file": "logic.py",
+            "start": 1
+          }
+        ],
+        "mechanism": "unknown",
+        "reason": "The unknown answer specifically identifies the unavailable host ACTIVE_REGION value or verified range and the resulting uncertainty about an in-range list access. It acknowledges that the binding is injected before the call, avoiding an invented NameError. Its fifth unknown statement completely states the member-versus-IndexError uncertainty, and the cited lines 1-2 show dependence on the host index. Several other strings end mid-clause; the fourth is not a complete string. The parenthetical valid bounds 0, 1, or 2 omits the also-valid -3, -2, and -1, and uncertainty about the host injection mechanism is unnecessary under the assumptions. These limitations are retained. The specific missing value/range reason remains supported; the frozen rubric does not require enumerating all valid indices. Null cause/when correctly leave mechanism and trigger unknown.",
+        "trigger": "unknown"
+      },
+      "semantic_review": "reviewed",
+      "strict_json_valid": true,
+      "submitted_verdict": "unknown",
+      "topic": "host-binding",
+      "unknown_abstention": true,
+      "verdict_correct": true
+    },
+    {
+      "case_id": "c01",
+      "contract_valid": true,
+      "diagnostic_passed": false,
+      "error_code": null,
+      "expected_verdict": "supported_defect",
+      "failure_class": "semantic",
+      "healthy_false_alarm": null,
+      "http_latency_ms": 29474,
+      "measured_usage": {
+        "input_tokens": 250,
+        "output_tokens": 142
+      },
+      "profile_id": "qwen25coder7b",
+      "record_sha256": "25abf6a63f77376fac00bb46aced7f6add05e6427e19f1bc01f0584290acb5b5",
+      "review": {
+        "abstention_reason": "unknown",
+        "citation_support": "contradicted",
+        "evidence_refs": [
+          {
+            "end": 6,
+            "file": "logic.py",
+            "start": 1
+          }
+        ],
+        "mechanism": "contradicted",
+        "reason": "The answer incorrectly declares the implementation healthy. Line 2 uses value < upper, so contains(8, 2, 8) returns False rather than the required True. Its when names the relevant demo call but omits the actual failing result. The cited full span directly contradicts the claimed inclusion of both endpoints. Abstention is not applicable.",
+        "trigger": "partial"
+      },
+      "semantic_review": "reviewed",
+      "strict_json_valid": true,
+      "submitted_verdict": "no_defect_supported",
+      "topic": "boundary",
+      "unknown_abstention": null,
+      "verdict_correct": false
+    },
+    {
+      "case_id": "c02",
+      "contract_valid": true,
+      "diagnostic_passed": false,
+      "error_code": null,
+      "expected_verdict": "no_defect_supported",
+      "failure_class": "semantic",
+      "healthy_false_alarm": true,
+      "http_latency_ms": 27328,
+      "measured_usage": {
+        "input_tokens": 262,
+        "output_tokens": 108
+      },
+      "profile_id": "qwen25coder7b",
+      "record_sha256": "fdb39c347e6b4fa56903689a7534a8a756b0244df4805a6c40c99de67fc72a7c",
+      "review": {
+        "abstention_reason": "unknown",
+        "citation_support": "contradicted",
+        "evidence_refs": [
+          {
+            "end": 8,
+            "file": "logic.py",
+            "start": 1
+          }
+        ],
+        "mechanism": "contradicted",
+        "reason": "The supported-defect verdict invents an obligation to return the list itself. The contract instead requires None for an empty list and the final element for a nonempty list without mutation, which lines 2-4 satisfy. The when correctly identifies the two demonstrated input shapes but establishes no failure. The cited source supports healthy behavior rather than the alleged defect. Abstention is not applicable.",
+        "trigger": "partial"
+      },
+      "semantic_review": "reviewed",
+      "strict_json_valid": true,
+      "submitted_verdict": "supported_defect",
+      "topic": "boundary",
+      "unknown_abstention": null,
+      "verdict_correct": false
+    },
+    {
+      "case_id": "c03",
+      "contract_valid": true,
+      "diagnostic_passed": true,
+      "error_code": null,
+      "expected_verdict": "unknown",
+      "failure_class": null,
+      "healthy_false_alarm": null,
+      "http_latency_ms": 24558,
+      "measured_usage": {
+        "input_tokens": 259,
+        "output_tokens": 89
+      },
+      "profile_id": "qwen25coder7b",
+      "record_sha256": "5aaf76f390b9866e33205274acfcce09f46adc4e120f091d117a9b95914a020b",
+      "review": {
+        "abstention_reason": "supported",
+        "citation_support": "supported",
+        "evidence_refs": [
+          {
+            "end": 2,
+            "file": "logic.py",
+            "start": 1
+          }
+        ],
+        "mechanism": "unknown",
+        "reason": "The unknown answer specifically identifies the missing codec implementation and its ascending lexical key-order behavior. Lines 1-2 show delegation to codec.encode(record), providing no ordering contract. This matches the frozen missing-evidence criterion without inventing either an ordering failure or a healthy deployed implementation.",
+        "trigger": "unknown"
+      },
+      "semantic_review": "reviewed",
+      "strict_json_valid": true,
+      "submitted_verdict": "unknown",
+      "topic": "external-dependency",
+      "unknown_abstention": true,
+      "verdict_correct": true
+    },
+    {
+      "case_id": "c04",
+      "contract_valid": false,
+      "diagnostic_passed": false,
+      "error_code": "eval_citation_invalid",
+      "expected_verdict": "supported_defect",
+      "failure_class": "format",
+      "healthy_false_alarm": null,
+      "http_latency_ms": 41221,
+      "measured_usage": {
+        "input_tokens": 291,
+        "output_tokens": 192
+      },
+      "profile_id": "qwen25coder7b",
+      "record_sha256": "2e34ae804a40f84e500b05377bb2d2f229efc25e4b3153d2c4b06ff9e513af05",
+      "review": null,
+      "semantic_review": "not_applicable",
+      "strict_json_valid": true,
+      "submitted_verdict": "supported_defect",
+      "topic": "aliasing",
+      "unknown_abstention": null,
+      "verdict_correct": null
+    },
+    {
+      "case_id": "c05",
+      "contract_valid": true,
+      "diagnostic_passed": false,
+      "error_code": null,
+      "expected_verdict": "no_defect_supported",
+      "failure_class": "semantic",
+      "healthy_false_alarm": true,
+      "http_latency_ms": 45407,
+      "measured_usage": {
+        "input_tokens": 312,
+        "output_tokens": 221
+      },
+      "profile_id": "qwen25coder7b",
+      "record_sha256": "12fdc4e02bafc11b9f7a92b696b257b3e2b0c2f52e33301028ec29f75235df95",
+      "review": {
+        "abstention_reason": "unknown",
+        "citation_support": "partial",
+        "evidence_refs": [
+          {
+            "end": 5,
+            "file": "logic.py",
+            "start": 4
+          },
+          {
+            "end": 7,
+            "file": "logic.py",
+            "start": 6
+          },
+          {
+            "end": 11,
+            "file": "logic.py",
+            "start": 10
+          }
+        ],
+        "mechanism": "contradicted",
+        "reason": "Two separate dict(row) calls create distinct dictionaries. With the stated immutable integer values and entry-assignment scope, copies[0][\"count\"] = 9 leaves the second copy and original at 4. The claimed alias to original and resulting modification are false. The citations locate the return, original creation, and assignment/result, but omit the two copy constructors at lines 2-3 and do not establish the alleged alias. Abstention is not applicable.",
+        "trigger": "contradicted"
+      },
+      "semantic_review": "reviewed",
+      "strict_json_valid": true,
+      "submitted_verdict": "supported_defect",
+      "topic": "aliasing",
+      "unknown_abstention": null,
+      "verdict_correct": false
+    },
+    {
+      "case_id": "c06",
+      "contract_valid": true,
+      "diagnostic_passed": false,
+      "error_code": null,
+      "expected_verdict": "unknown",
+      "failure_class": "semantic",
+      "healthy_false_alarm": null,
+      "http_latency_ms": 20389,
+      "measured_usage": {
+        "input_tokens": 257,
+        "output_tokens": 154
+      },
+      "profile_id": "qwen25coder7b",
+      "record_sha256": "8d7296fb6591ea936e5ad1d89d3241458aeae64cf23db182d1edf29d5da92ea8",
+      "review": {
+        "abstention_reason": "unknown",
+        "citation_support": "contradicted",
+        "evidence_refs": [
+          {
+            "end": 2,
+            "file": "logic.py",
+            "start": 1
+          }
+        ],
+        "mechanism": "contradicted",
+        "reason": "The answer invents order loss: ordinary built-in filter traverses the input iterable in order, and list materializes that ordered sequence. Its claimed defect therefore does not occur even under its hypothetical positive-integer predicate. The deployed predicate acceptance rule is unavailable, so the source does not establish that it selects exactly positive integers. Lines 1-2 show callback delegation, not reordering or a defective deployed sign test. The frozen verdict is unknown, rather than supported_defect. Abstention is not applicable to the submitted defect verdict.",
+        "trigger": "contradicted"
+      },
+      "semantic_review": "reviewed",
+      "strict_json_valid": true,
+      "submitted_verdict": "supported_defect",
+      "topic": "callback-contract",
+      "unknown_abstention": false,
+      "verdict_correct": false
+    },
+    {
+      "case_id": "c07",
+      "contract_valid": true,
+      "diagnostic_passed": true,
+      "error_code": null,
+      "expected_verdict": "supported_defect",
+      "failure_class": null,
+      "healthy_false_alarm": null,
+      "http_latency_ms": 19400,
+      "measured_usage": {
+        "input_tokens": 282,
+        "output_tokens": 121
+      },
+      "profile_id": "qwen25coder7b",
+      "record_sha256": "6d8d11cb527ca89e66e81c619a03f7cc47df5c9bd8a27bf963b5ad79c23d5575",
+      "review": {
+        "abstention_reason": "unknown",
+        "citation_support": "supported",
+        "evidence_refs": [
+          {
+            "end": 9,
+            "file": "logic.py",
+            "start": 1
+          }
+        ],
+        "mechanism": "supported",
+        "reason": "The answer identifies the shared labels list and explains that append retains earlier labels because it is not reset between consecutive calls omitting labels. This is the mutable-default mechanism and a concrete triggering call pattern: the later call inherits prior labels instead of returning only its current label. In context, plural labels names the optional list parameter; the required singular label is still supplied in the demonstrated calls. Lines 1-9 include the shared default, mutation, and consecutive calls. Equivalent qualitative wording is sufficient; the rubric does not require literal red/blue output spelling. Abstention is not applicable.",
+        "trigger": "supported"
+      },
+      "semantic_review": "reviewed",
+      "strict_json_valid": true,
+      "submitted_verdict": "supported_defect",
+      "topic": "default-args",
+      "unknown_abstention": null,
+      "verdict_correct": true
+    },
+    {
+      "case_id": "c08",
+      "contract_valid": true,
+      "diagnostic_passed": false,
+      "error_code": null,
+      "expected_verdict": "no_defect_supported",
+      "failure_class": "semantic",
+      "healthy_false_alarm": true,
+      "http_latency_ms": 20826,
+      "measured_usage": {
+        "input_tokens": 317,
+        "output_tokens": 115
+      },
+      "profile_id": "qwen25coder7b",
+      "record_sha256": "8a2f6a35cf6028b4d3c55aba3f58424ee8937713775ecca4ccbb73477b9f4a7e",
+      "review": {
+        "abstention_reason": "unknown",
+        "citation_support": "partial",
+        "evidence_refs": [
+          {
+            "end": 11,
+            "file": "logic.py",
+            "start": 10
+          }
+        ],
+        "mechanism": "contradicted",
+        "reason": "The allegation that attach modifies original is false. Line 2 creates a fresh empty list or list(items), and append targets that new result, so the supplied input remains unchanged under the stated immutable-string scope. Calling attach with original therefore does not trigger the alleged mutation. The cited lines 10-11 identify omitted and supplied call sites but omit the implementation that determines copy isolation; they do not support the claimed modification. The frozen verdict is no_defect_supported. Abstention is not applicable.",
+        "trigger": "contradicted"
+      },
+      "semantic_review": "reviewed",
+      "strict_json_valid": true,
+      "submitted_verdict": "supported_defect",
+      "topic": "default-args",
+      "unknown_abstention": null,
+      "verdict_correct": false
+    },
+    {
+      "case_id": "c09",
+      "contract_valid": true,
+      "diagnostic_passed": true,
+      "error_code": null,
+      "expected_verdict": "unknown",
+      "failure_class": null,
+      "healthy_false_alarm": null,
+      "http_latency_ms": 19025,
+      "measured_usage": {
+        "input_tokens": 260,
+        "output_tokens": 115
+      },
+      "profile_id": "qwen25coder7b",
+      "record_sha256": "5c4796324684cbfc70a05d93e66807dbbc0bc0e970eb63bf8955d683db1b575f",
+      "review": {
+        "abstention_reason": "supported",
+        "citation_support": "supported",
+        "evidence_refs": [
+          {
+            "end": 2,
+            "file": "logic.py",
+            "start": 1
+          }
+        ],
+        "mechanism": "unknown",
+        "reason": "The first complete unknown sentence specifically identifies the unavailable deployed ttl unit. Lines 1-2 show multiplication by 60, whose correctness depends on that unit contract, so the frozen missing-evidence criterion is satisfied. The final sentence ends at if 6 and is retained as incomplete wording; no completion is invented. The earlier complete unit statement and explicit reference to the conversion already make the abstention reason specific. Null cause/when correctly leave mechanism and trigger unknown.",
+        "trigger": "unknown"
+      },
+      "semantic_review": "reviewed",
+      "strict_json_valid": true,
+      "submitted_verdict": "unknown",
+      "topic": "config-units",
+      "unknown_abstention": true,
+      "verdict_correct": true
+    },
+    {
+      "case_id": "c10",
+      "contract_valid": true,
+      "diagnostic_passed": false,
+      "error_code": null,
+      "expected_verdict": "supported_defect",
+      "failure_class": "semantic",
+      "healthy_false_alarm": null,
+      "http_latency_ms": 23956,
+      "measured_usage": {
+        "input_tokens": 291,
+        "output_tokens": 155
+      },
+      "profile_id": "qwen25coder7b",
+      "record_sha256": "c7f36ceb0dc6e293137e0ec01037fa8a7f206e2b6bec5e6dd19d499f96aacf8a",
+      "review": {
+        "abstention_reason": "unknown",
+        "citation_support": "supported",
+        "evidence_refs": [
+          {
+            "end": 6,
+            "file": "logic.py",
+            "start": 2
+          }
+        ],
+        "mechanism": "supported",
+        "reason": "The cause correctly identifies subtracting the percent number directly instead of subtracting total multiplied by percent divided by 100. Lines 2-6 support that mechanism and the allowed total=80, percent=25 call. The when names those inputs but does not state the actual 55 versus required 60 result, so the concrete trigger explanation is partial. The no_defect_supported verdict contradicts both the frozen defect category and its own correct cause. Its additional claim that expected behavior is unclear is unsupported because the scenario explicitly defines a percentage reduction. Abstention is not applicable to the submitted healthy verdict.",
+        "trigger": "partial"
+      },
+      "semantic_review": "reviewed",
+      "strict_json_valid": true,
+      "submitted_verdict": "no_defect_supported",
+      "topic": "arithmetic",
+      "unknown_abstention": null,
+      "verdict_correct": false
+    },
+    {
+      "case_id": "c11",
+      "contract_valid": true,
+      "diagnostic_passed": false,
+      "error_code": null,
+      "expected_verdict": "no_defect_supported",
+      "failure_class": "semantic",
+      "healthy_false_alarm": true,
+      "http_latency_ms": 19211,
+      "measured_usage": {
+        "input_tokens": 265,
+        "output_tokens": 113
+      },
+      "profile_id": "qwen25coder7b",
+      "record_sha256": "89315963a00b40d5d5c94bed316b10e99c547151ea0c960c064d97cc4ae6bbfd",
+      "review": {
+        "abstention_reason": "unknown",
+        "citation_support": "contradicted",
+        "evidence_refs": [
+          {
+            "end": 6,
+            "file": "logic.py",
+            "start": 1
+          }
+        ],
+        "mechanism": "contradicted",
+        "reason": "The answer claims an explicitly empty separator falls back to the colon default. The expression left + separator + right instead uses the bound empty string exactly; the default applies only when the keyword is omitted. Thus the shown explicit-empty call returns leftright, and does not trigger the claimed colon substitution. The full citation directly contradicts the mechanism and alleged failure. The frozen verdict is no_defect_supported. Abstention is not applicable.",
+        "trigger": "contradicted"
+      },
+      "semantic_review": "reviewed",
+      "strict_json_valid": true,
+      "submitted_verdict": "supported_defect",
+      "topic": "separator",
+      "unknown_abstention": null,
+      "verdict_correct": false
+    },
+    {
+      "case_id": "c12",
+      "contract_valid": true,
+      "diagnostic_passed": true,
+      "error_code": null,
+      "expected_verdict": "unknown",
+      "failure_class": null,
+      "healthy_false_alarm": null,
+      "http_latency_ms": 16483,
+      "measured_usage": {
+        "input_tokens": 261,
+        "output_tokens": 82
+      },
+      "profile_id": "qwen25coder7b",
+      "record_sha256": "6227637359b9d206903c1b20d2f34ff57ee42866201720455fd5110bad2e69d5",
+      "review": {
+        "abstention_reason": "supported",
+        "citation_support": "supported",
+        "evidence_refs": [
+          {
+            "end": 2,
+            "file": "logic.py",
+            "start": 1
+          }
+        ],
+        "mechanism": "unknown",
+        "reason": "The unknown answer precisely names the missing value or verified range of the host-injected integer ACTIVE_REGION. Lines 1-2 show that this binding controls the list access, and the three-element-list scope does not establish an in-range index from integer type alone. This matches the frozen specific missing-evidence criterion without inventing NameError or assuming all integers are safe. Null cause/when correctly leave mechanism and trigger unknown.",
+        "trigger": "unknown"
+      },
+      "semantic_review": "reviewed",
+      "strict_json_valid": true,
+      "submitted_verdict": "unknown",
+      "topic": "host-binding",
+      "unknown_abstention": true,
+      "verdict_correct": true
+    }
+  ],
+  "configuration": {
+    "batch_tokens": 128,
+    "context_tokens": 2048,
+    "device": "CPU",
+    "grammar_bytes": 1538,
+    "grammar_sha256": "cc5ceae80ed6ffe95c7f3d75c32fb9a1f4820789ecc1962ac96fab6477dc2a40",
+    "inference_threads": 2,
+    "input_cap_tokens": 1536,
+    "native_log_verbosity": 5,
+    "output_cap_tokens": 384,
+    "parallel": 1,
+    "ubatch_tokens": 128
+  },
+  "consumption": {
+    "automatic_retry_requests": 0,
+    "comparison_generation_requests": 24,
+    "comparison_service_starts": 3,
+    "completed_cases_redispatched": 0,
+    "cumulative_actual_model_services": 20,
+    "latest_recovery_external_model_api_requests": 0,
+    "latest_recovery_generation_requests": 7,
+    "latest_recovery_new_download_attempts": 0,
+    "latest_recovery_new_vm_starts": 0,
+    "latest_recovery_service_starts": 1,
+    "retained_vm_count": 15
+  },
+  "dataset_version": "diagnostic-holdout-v1",
+  "date": "2026-10-11",
+  "evaluation_scope": "Frozen 12-case source diagnosis holdout, four defects, four healthy cases and four missing-evidence cases. Source case code was not executed.",
+  "guard_limits": {
+    "active_native_logs_mib": 9,
+    "active_service_seconds": 5340,
+    "cleanup_seconds": 60,
+    "finish_soft_reminder_seconds": 1800,
+    "free_disk_run_gib": 2,
+    "free_disk_start_gib": 7,
+    "memory_run_minimum_percent": 20,
+    "memory_start_minimum_percent": 30,
+    "nonweight_mib": 512,
+    "preparation_seconds": 7200,
+    "records_mib": 512,
+    "request_seconds": 300,
+    "rss_4b_gib": 5.5,
+    "rss_7b_gib": 8,
+    "service_seconds": 5400,
+    "total_allocation_gib": 5,
+    "total_native_logs_mib": 12,
+    "whole_observation_seconds": 21600,
+    "whole_run_budget_certified": false
+  },
+  "historical_storage_stop": {
+    "failure_code": "record_write_reserve",
+    "interpretation": "Observed ExFAT small-file and AppleDouble allocation amplification explains record overhead. The post-stop snapshot is not the allocation at the precise failing reserve check. Recorded memory minima were 53 and 34 percent, above the 20 percent floor.",
+    "observed_small_file_allocation_bytes": 131072,
+    "post_stop_appledouble_allocated_bytes": 17432576,
+    "post_stop_appledouble_files": 133,
+    "post_stop_nonweight_allocated_bytes": 39583744,
+    "post_stop_record_allocated_bytes": 33947648,
+    "post_stop_record_logical_file_bytes": 2664058,
+    "record_limit_bytes": 33554432
+  },
+  "models": [
+    {
+      "categories": {
+        "no_defect_supported": {
+          "captured_responses": 4,
+          "contract_passes": 0,
+          "contract_rate": 0.0,
+          "diagnostic_passes": 0,
+          "diagnostic_rate": 0.0,
+          "expected": 4,
+          "format": 4,
+          "infrastructure": 0,
+          "not_attempted": 0,
+          "quality_cases": 4,
+          "recorded": 4,
+          "semantic": 0,
+          "semantic_pending": 0,
+          "semantic_reviewed": 0,
+          "strict_json_passes": 4,
+          "strict_json_rate": 1.0,
+          "uncertain_cells": 0
+        },
+        "supported_defect": {
+          "captured_responses": 4,
+          "contract_passes": 3,
+          "contract_rate": 0.75,
+          "diagnostic_passes": 3,
+          "diagnostic_rate": 0.75,
+          "expected": 4,
+          "format": 1,
+          "infrastructure": 0,
+          "not_attempted": 0,
+          "quality_cases": 4,
+          "recorded": 4,
+          "semantic": 0,
+          "semantic_pending": 0,
+          "semantic_reviewed": 3,
+          "strict_json_passes": 4,
+          "strict_json_rate": 1.0,
+          "uncertain_cells": 0
+        },
+        "unknown": {
+          "captured_responses": 4,
+          "contract_passes": 1,
+          "contract_rate": 0.25,
+          "diagnostic_passes": 1,
+          "diagnostic_rate": 0.25,
+          "expected": 4,
+          "format": 3,
+          "infrastructure": 0,
+          "not_attempted": 0,
+          "quality_cases": 4,
+          "recorded": 4,
+          "semantic": 0,
+          "semantic_pending": 0,
+          "semantic_reviewed": 1,
+          "strict_json_passes": 4,
+          "strict_json_rate": 1.0,
+          "uncertain_cells": 0
+        }
+      },
+      "profile": {
+        "chat_template_version": "explicit-chatml-b11521-v1",
+        "context_limit": 2048,
+        "model_id": "qwen4b-b11521-cpu",
+        "model_revision": "a06e946bb6b655725eafa393f4a9745d460374c9",
+        "output_limit": 384,
+        "profile_id": "qwen4b",
+        "quantization": "Q4_K_M",
+        "runtime": "llama.cpp",
+        "runtime_version": "b11521",
+        "sampling": {
+          "seed": 0,
+          "temperature": 0,
+          "top_p": 1
+        },
+        "schema_version": 1,
+        "timeout_seconds": 300,
+        "tokenizer_revision": "a06e946bb6b655725eafa393f4a9745d460374c9"
+      },
+      "scores": {
+        "captured_responses": 12,
+        "contract_passes": 4,
+        "contract_rate": 0.3333333333333333,
+        "diagnostic_passes": 4,
+        "diagnostic_rate": 0.3333333333333333,
+        "expected": 12,
+        "format": 8,
+        "infrastructure": 0,
+        "not_attempted": 0,
+        "quality_cases": 12,
+        "recorded": 12,
+        "semantic": 0,
+        "semantic_pending": 0,
+        "semantic_reviewed": 4,
+        "strict_json_passes": 12,
+        "strict_json_rate": 1.0,
+        "uncertain_cells": 0
+      }
+    },
+    {
+      "categories": {
+        "no_defect_supported": {
+          "captured_responses": 4,
+          "contract_passes": 4,
+          "contract_rate": 1.0,
+          "diagnostic_passes": 0,
+          "diagnostic_rate": 0.0,
+          "expected": 4,
+          "format": 0,
+          "infrastructure": 0,
+          "not_attempted": 0,
+          "quality_cases": 4,
+          "recorded": 4,
+          "semantic": 4,
+          "semantic_pending": 0,
+          "semantic_reviewed": 4,
+          "strict_json_passes": 4,
+          "strict_json_rate": 1.0,
+          "uncertain_cells": 0
+        },
+        "supported_defect": {
+          "captured_responses": 4,
+          "contract_passes": 3,
+          "contract_rate": 0.75,
+          "diagnostic_passes": 1,
+          "diagnostic_rate": 0.25,
+          "expected": 4,
+          "format": 1,
+          "infrastructure": 0,
+          "not_attempted": 0,
+          "quality_cases": 4,
+          "recorded": 4,
+          "semantic": 2,
+          "semantic_pending": 0,
+          "semantic_reviewed": 3,
+          "strict_json_passes": 4,
+          "strict_json_rate": 1.0,
+          "uncertain_cells": 0
+        },
+        "unknown": {
+          "captured_responses": 4,
+          "contract_passes": 4,
+          "contract_rate": 1.0,
+          "diagnostic_passes": 3,
+          "diagnostic_rate": 0.75,
+          "expected": 4,
+          "format": 0,
+          "infrastructure": 0,
+          "not_attempted": 0,
+          "quality_cases": 4,
+          "recorded": 4,
+          "semantic": 1,
+          "semantic_pending": 0,
+          "semantic_reviewed": 4,
+          "strict_json_passes": 4,
+          "strict_json_rate": 1.0,
+          "uncertain_cells": 0
+        }
+      },
+      "profile": {
+        "chat_template_version": "explicit-chatml-b11521-v1",
+        "context_limit": 2048,
+        "model_id": "qwen25coder7b-b11521-cpu",
+        "model_revision": "13fb94bfda8c8cf22497dc57b78f391a9acb426a",
+        "output_limit": 384,
+        "profile_id": "qwen25coder7b",
+        "quantization": "Q4_K_M",
+        "runtime": "llama.cpp",
+        "runtime_version": "b11521",
+        "sampling": {
+          "seed": 0,
+          "temperature": 0,
+          "top_p": 1
+        },
+        "schema_version": 1,
+        "timeout_seconds": 300,
+        "tokenizer_revision": "13fb94bfda8c8cf22497dc57b78f391a9acb426a"
+      },
+      "scores": {
+        "captured_responses": 12,
+        "contract_passes": 11,
+        "contract_rate": 0.9166666666666666,
+        "diagnostic_passes": 4,
+        "diagnostic_rate": 0.3333333333333333,
+        "expected": 12,
+        "format": 1,
+        "infrastructure": 0,
+        "not_attempted": 0,
+        "quality_cases": 12,
+        "recorded": 12,
+        "semantic": 7,
+        "semantic_pending": 0,
+        "semantic_reviewed": 11,
+        "strict_json_passes": 12,
+        "strict_json_rate": 1.0,
+        "uncertain_cells": 0
+      }
+    }
+  ],
+  "performance": [
+    {
+      "continuous_service": true,
+      "http_request_latency_seconds": {
+        "maximum": 32.209,
+        "mean": 23.7965,
+        "median": 23.029,
+        "minimum": 18.188,
+        "sum": 285.558
+      },
+      "input_tokens": 3307,
+      "minimum_sampled_available_memory_percent": 53,
+      "output_tokens": 3013,
+      "profile_id": "qwen4b",
+      "sampled_peak_rss_gib": 4.3277130126953125,
+      "service_elapsed_seconds_sum": 296.6035405420698,
+      "service_windows": [
+        18
+      ]
+    },
+    {
+      "continuous_service": false,
+      "http_request_latency_seconds": {
+        "maximum": 45.407,
+        "mean": 25.6065,
+        "median": 22.391,
+        "minimum": 16.483,
+        "sum": 307.27799999999996
+      },
+      "input_tokens": 3307,
+      "minimum_sampled_available_memory_percent": 34,
+      "output_tokens": 1607,
+      "profile_id": "qwen25coder7b",
+      "sampled_peak_rss_gib": 7.08233642578125,
+      "service_elapsed_seconds_sum": 331.70740537613165,
+      "service_windows": [
+        19,
+        20
+      ]
+    }
+  ],
+  "prompt_version": "diagnostic-holdout-v1",
+  "review_acceptance": {
+    "contract_valid_rows_reviewed": 15,
+    "format_rows_not_applicable": 9,
+    "fresh_final_review_snapshot": true,
+    "initial_17_captures_unchanged": true,
+    "initial_17_formally_accepted_before_seven_case_recovery": true,
+    "native_capture_integrity_independently_audited": true,
+    "old_pending_review_preserved": true,
+    "old_process_local_review_token_restored": false,
+    "pending_rows": 0,
+    "scorer_real_model_accuracy_measured": false,
+    "scoring_new_model_calls": 0,
+    "status": "accepted_at_checkpoints",
+    "whole_run_compliance": false
+  },
+  "review_corrections": [
+    {
+      "cell": "qwen4b/c04",
+      "changed": "review reason only",
+      "correction": "Do not silently replace the answer return-type wording with an accurate outer-dictionary description. Explicitly retain the inaccurate return wording and line 4/7 claims; the actual dictionary literal is present in when, and the shared inner-list mechanism and later-append trigger remain supported."
+    },
+    {
+      "cell": "qwen4b/c12",
+      "changed": "review reason only",
+      "correction": "The old draft incorrectly called the fourth unknown string complete. It ends with The. The fifth is complete. Record missing valid negative indices -3 through -1 and unnecessary uncertainty about injection; do not add an index-enumeration requirement to the frozen specific-missing-evidence rubric."
+    },
+    {
+      "cell": "qwen25coder7b/c09",
+      "note": "The ending if 6 is incomplete; only the existing complete unit-gap statement supports abstention. No omitted words were supplied."
+    },
+    {
+      "cell": "qwen25coder7b/c10",
+      "note": "Preserve the correct mechanism alongside the conflicting healthy verdict; do not replace the verdict or add the missing 55-versus-60 trigger to the original answer."
+    }
+  ],
+  "schema_version": 1,
+  "selection_assessment": {
+    "automatic_diagnosis_supported": false,
+    "prefer_7b_for_semantic_quality": false,
+    "reason": "Both models passed 4 of 12, and neither passed a healthy case. 7B improved contract compliance and missing-evidence abstention but detected fewer supported defects, with greater sampled RSS and slightly greater mean HTTP latency.",
+    "sample_size_per_model": 12,
+    "task": "Current source diagnosis use"
+  },
+  "services": [
+    {
+      "auxiliary_observation_seconds": 2.5975662084529176,
+      "case_ids": [
+        "c01",
+        "c02",
+        "c03",
+        "c04",
+        "c05",
+        "c06",
+        "c07",
+        "c08",
+        "c09",
+        "c10",
+        "c11",
+        "c12"
+      ],
+      "closure": {
+        "cleanup_seconds": 0.1455400410341099,
+        "identity_bound_sigterm_sent": true,
+        "listener_absent": true,
+        "owned_empty_temporary_directories_absent": true,
+        "process_exit_code": 0,
+        "process_observed_absent": true,
+        "threads_completed": true
+      },
+      "elapsed_seconds": 296.6035405420698,
+      "failure_code": null,
+      "generation_requests": 12,
+      "http_request_latency_seconds": {
+        "maximum": 32.209,
+        "mean": 23.7965,
+        "median": 23.029,
+        "minimum": 18.188,
+        "sum": 285.558
+      },
+      "input_tokens": 3307,
+      "memory_samples": 58,
+      "memory_start_percent": 62,
+      "minimum_sampled_available_memory_percent": 53,
+      "monitor_failures": [],
+      "native_log_bytes": 3268257,
+      "output_tokens": 3013,
+      "profile_id": "qwen4b",
+      "qualified_native_usage_release_idle_rows": 12,
+      "rss_samples": 1064,
+      "sampled_peak_rss_bytes": 4646846464,
+      "sampled_peak_rss_gib": 4.3277130126953125,
+      "service_start_attempts": 1,
+      "window": 18,
+      "wrapper_success": true
+    },
+    {
+      "auxiliary_observation_seconds": 1.4666506238281727,
+      "case_ids": [
+        "c01",
+        "c02",
+        "c03",
+        "c04",
+        "c05"
+      ],
+      "closure": {
+        "cleanup_seconds": 0.19510954106226563,
+        "identity_bound_sigterm_sent": true,
+        "listener_absent": true,
+        "owned_empty_temporary_directories_absent": true,
+        "process_exit_code": 0,
+        "process_observed_absent": true,
+        "threads_completed": true
+      },
+      "elapsed_seconds": 182.9391166670248,
+      "failure_code": "record_write_reserve",
+      "generation_requests": 5,
+      "http_request_latency_seconds": {
+        "maximum": 45.407,
+        "mean": 33.5976,
+        "median": 29.474,
+        "minimum": 24.558,
+        "sum": 167.988
+      },
+      "input_tokens": 1374,
+      "memory_samples": 36,
+      "memory_start_percent": 59,
+      "minimum_sampled_available_memory_percent": 34,
+      "monitor_failures": [],
+      "native_log_bytes": 1144792,
+      "output_tokens": 752,
+      "profile_id": "qwen25coder7b",
+      "qualified_native_usage_release_idle_rows": 5,
+      "rss_samples": 639,
+      "sampled_peak_rss_bytes": 6769065984,
+      "sampled_peak_rss_gib": 6.3041839599609375,
+      "service_start_attempts": 1,
+      "window": 19,
+      "wrapper_success": false
+    },
+    {
+      "auxiliary_observation_seconds": 2.088012542342767,
+      "case_ids": [
+        "c06",
+        "c07",
+        "c08",
+        "c09",
+        "c10",
+        "c11",
+        "c12"
+      ],
+      "closure": {
+        "cleanup_seconds": 0.17931458307430148,
+        "identity_bound_sigterm_sent": true,
+        "listener_absent": true,
+        "owned_empty_temporary_directories_absent": true,
+        "process_exit_code": 0,
+        "process_observed_absent": true,
+        "threads_completed": true
+      },
+      "elapsed_seconds": 148.76828870910686,
+      "failure_code": null,
+      "generation_requests": 7,
+      "http_request_latency_seconds": {
+        "maximum": 23.956,
+        "mean": 19.89857142857143,
+        "median": 19.4,
+        "minimum": 16.483,
+        "sum": 139.29
+      },
+      "input_tokens": 1933,
+      "memory_samples": 29,
+      "memory_start_percent": 79,
+      "minimum_sampled_available_memory_percent": 71,
+      "monitor_failures": [
+        {
+          "cause_assessment": "Consistent with enumeration/stat racing an atomic state-file replacement; exact stack, sequence, exception monotonic time and temporary-file lifetime were not retained.",
+          "errno": 2,
+          "message": "Temporary comparison-state file was missing.",
+          "operation": "lstat during allocation monitoring"
+        }
+      ],
+      "native_log_bytes": 1256951,
+      "output_tokens": 855,
+      "profile_id": "qwen25coder7b",
+      "qualified_native_usage_release_idle_rows": 7,
+      "rss_samples": 491,
+      "sampled_peak_rss_bytes": 7604600832,
+      "sampled_peak_rss_gib": 7.08233642578125,
+      "service_start_attempts": 1,
+      "window": 20,
+      "wrapper_success": false
+    }
+  ],
+  "status": "complete_native_capture_and_accepted_captured_review_with_service_guard_failure"
+}
