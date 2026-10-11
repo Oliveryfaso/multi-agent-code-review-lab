@@ -34,3 +34,5 @@ Before scoring, an exclusive consume claim records default pending authority. Ac
 Late reports remain evidence, with `superseded_not_accepted` sidecars when persistence succeeds. If replacement, sidecar or authority persistence fails, the pending claim still prevents acceptance; a failed authority fsync leaves only an unpublished temporary file. Checkpoints do not interrupt work. `whole_run_compliance` stays `not_assessed`; authority and late evidence writes are not certified within the deadline.
 
 A future measurement must freeze inputs/scoring and change only the selected constraint. Model execution requires new approval; these APIs provide none.
+
+The [24-output attribution and offline hardening](debugger-offline-hardening.md) distinguish reference-contract rejection from semantic false alarms. The frozen generic GBNF remains unchanged; its JSON structure does not imply reference or diagnostic validity. The separate static preview API gains a legal insufficient-evidence exit tested only with synthetic responses, without a holdout rescore or a model-quality claim.

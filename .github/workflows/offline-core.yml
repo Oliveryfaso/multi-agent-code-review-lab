@@ -71,11 +71,12 @@ jobs:
           python -I -S -B scripts/run_offline_tests.py
           test_repository_snapshots
           test_static_facts.StaticFactsTests.test_cross_file_alias_returns_are_source_facts_not_runtime_flow
+          test_static_locate_abstention
 
       - name: Persistence recovery and synthetic CLI
         run: >-
           python -I -S -B scripts/run_offline_tests.py
-          test_trace_store test_run_store test_run_recovery
+          test_trace_store test_atomic_file test_run_store test_run_recovery
           test_static_baseline.StaticBaselineTests.test_real_cli_wrapper_runs_baseline_without_importing_source
 
       - name: Diagnostic comparison with scripted responses

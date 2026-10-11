@@ -23,18 +23,19 @@ sys.dont_write_bytecode = True
 PROJECT = Path(__file__).resolve().parents[1]
 sys.path[:0] = [str(PROJECT / 'src'), str(PROJECT / 'tests'), str(PROJECT / 'scripts')]
 from debugger_fixtures import RUNS_ROOT, fixture_session
+from macr.memory.atomic_file import tree_usage as shared_tree_usage
 
 MIB = 1024 * 1024
 OFFLINE_MODULES = frozenset({
     'test_offline_tests', 'test_code_graph', 'test_repository_scope',
     'test_repository_snapshots', 'test_repository_index', 'test_context_reader',
-    'test_static_readers', 'test_static_facts', 'test_contracts',
+    'test_static_readers', 'test_static_facts', 'test_static_locate_abstention', 'test_contracts',
     'test_investigation_contracts', 'test_evidence_store', 'test_provider_contract',
     'test_check_results',
     'test_local_http_provider', 'test_investigation_budget', 'test_investigation_queue',
     'test_investigation_memory', 'test_run_store', 'test_run_recovery', 'test_sqlite_run_store',
     'test_repo_map', 'test_patch_agent', 'test_patch_ranker',
-    'test_trace_store',
+    'test_trace_store', 'test_atomic_file',
     'test_diagnostic_compare',
     'test_b11521_evidence',
     'test_diagnosis_constraints', 'test_diagnostic_review',
@@ -71,19 +72,7 @@ class BoundedOutput(io.StringIO):
 
 def tree_usage(root):
     """Count only this run, including directories and AppleDouble allocation."""
-    usage = {'files': 0, 'logical_bytes': 0, 'allocated_bytes': 0}
-    for directory, directories, files in os.walk(root, followlinks=False):
-        for path in [Path(directory)] + [Path(directory) / name for name in files]:
-            entry = path.lstat()
-            if not (stat.S_ISDIR(entry.st_mode) or stat.S_ISREG(entry.st_mode)):
-                raise RuntimeError('unexpected_fixture_entry')
-            usage['allocated_bytes'] += entry.st_blocks * 512
-            if stat.S_ISREG(entry.st_mode):
-                usage['files'] += 1
-                usage['logical_bytes'] += entry.st_size
-        if any((Path(directory) / name).is_symlink() for name in directories):
-            raise RuntimeError('unexpected_fixture_link')
-    return usage
+    return shared_tree_usage(root)
 
 
 @contextmanager
