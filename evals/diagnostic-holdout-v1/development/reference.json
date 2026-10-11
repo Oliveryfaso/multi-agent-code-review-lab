@@ -1,0 +1,150 @@
+{
+  "version": "diagnostic-development-v1",
+  "cases": {
+    "d01": {
+      "category": "supported_defect",
+      "topic": "string-prefix",
+      "mechanism": "str.lstrip treats its argument as a set of removable leading characters, not one exact prefix, so it strips additional a and b characters.",
+      "trigger": "remove_marker(\"abba\") returns an empty string rather than \"ba\".",
+      "missing_evidence": [],
+      "evidence_roles": [
+        {
+          "file": "logic.py",
+          "start": 1,
+          "end": 2,
+          "role": "prefix-operation"
+        }
+      ],
+      "accepted_shape_witness": {
+        "verdict": "supported_defect",
+        "cause": "lstrip removes any leading a or b repeatedly rather than removing one exact ab marker.",
+        "when": "remove_marker(\"abba\") yields \"\" instead of \"ba\".",
+        "refs": [
+          {
+            "file": "logic.py",
+            "start": 1,
+            "end": 2
+          }
+        ],
+        "unknowns": []
+      },
+      "reject_examples": [
+        {
+          "reason": "The method does not remove exactly one prefix.",
+          "answer": {
+            "verdict": "no_defect_supported",
+            "cause": "lstrip removes the exact marker once.",
+            "when": "All allowed marker-prefixed tokens retain their suffix.",
+            "refs": [
+              {
+                "file": "logic.py",
+                "start": 1,
+                "end": 2
+              }
+            ],
+            "unknowns": []
+          }
+        }
+      ],
+      "safe_probe": null
+    },
+    "d02": {
+      "category": "no_defect_supported",
+      "topic": "ordering",
+      "mechanism": "sorted creates a new list and uses the defined integer ordering; it does not mutate the input list.",
+      "trigger": "ordered([3, 1, 2]) returns [1, 2, 3] while its input remains [3, 1, 2].",
+      "missing_evidence": [],
+      "evidence_roles": [
+        {
+          "file": "logic.py",
+          "start": 1,
+          "end": 2,
+          "role": "ordering-copy"
+        }
+      ],
+      "accepted_shape_witness": {
+        "verdict": "no_defect_supported",
+        "cause": "sorted produces a new ascending list under the ordinary integer scope without changing values.",
+        "when": "For ordinary integer lists, including [3, 1, 2].",
+        "refs": [
+          {
+            "file": "logic.py",
+            "start": 1,
+            "end": 2
+          }
+        ],
+        "unknowns": []
+      },
+      "reject_examples": [
+        {
+          "reason": "sorted does not perform an in-place sort.",
+          "answer": {
+            "verdict": "supported_defect",
+            "cause": "The input list is sorted in place.",
+            "when": "ordered([3, 1, 2]) changes the caller's list.",
+            "refs": [
+              {
+                "file": "logic.py",
+                "start": 1,
+                "end": 2
+              }
+            ],
+            "unknowns": []
+          }
+        }
+      ],
+      "safe_probe": null
+    },
+    "d03": {
+      "category": "unknown",
+      "topic": "mapping-coverage",
+      "mechanism": null,
+      "trigger": null,
+      "missing_evidence": [
+        "The deployed code and labels mapping, or a verified contract guaranteeing code is a present key."
+      ],
+      "evidence_roles": [
+        {
+          "file": "logic.py",
+          "start": 1,
+          "end": 2,
+          "role": "mapping-access"
+        }
+      ],
+      "accepted_shape_witness": {
+        "verdict": "unknown",
+        "cause": null,
+        "when": null,
+        "refs": [
+          {
+            "file": "logic.py",
+            "start": 1,
+            "end": 2
+          }
+        ],
+        "unknowns": [
+          "The deployed code and labels key set, or a verified key-membership guarantee, are missing."
+        ]
+      },
+      "reject_examples": [
+        {
+          "reason": "The absent deployment values do not prove a missing key.",
+          "answer": {
+            "verdict": "supported_defect",
+            "cause": "code is absent from labels and raises KeyError.",
+            "when": "The deployed call is made.",
+            "refs": [
+              {
+                "file": "logic.py",
+                "start": 1,
+                "end": 2
+              }
+            ],
+            "unknowns": []
+          }
+        }
+      ],
+      "safe_probe": null
+    }
+  }
+}

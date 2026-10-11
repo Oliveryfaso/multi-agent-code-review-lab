@@ -1,0 +1,229 @@
+{
+  "version": "diagnostic-holdout-v1",
+  "prompt_version": "diagnostic-holdout-v1",
+  "cases": [
+    {
+      "id": "c01",
+      "source": [
+        {
+          "file": "logic.py",
+          "start": 1,
+          "end": 6,
+          "body": "def contains(value, lower, upper):\n    return lower <= value < upper\n\n\ndef demo():\n    return contains(8, 2, 8)\n"
+        }
+      ],
+      "question": "Determine whether the code satisfies the stated behavior in this scenario. Ground the verdict in the provided source.",
+      "scenario": "contains must report membership in a closed interval, including both endpoints. The shown demo is an allowed call.",
+      "assumptions": [
+        "value, lower, and upper are ordinary built-in integers; lower <= upper.",
+        "All function definitions and named built-ins retain the shown bindings during the calls.",
+        "No concurrency, subclasses, custom numeric operators, or hidden mutations are in scope."
+      ]
+    },
+    {
+      "id": "c02",
+      "source": [
+        {
+          "file": "logic.py",
+          "start": 1,
+          "end": 8,
+          "body": "def last_or_none(items):\n    if not items:\n        return None\n    return items[-1]\n\n\ndef demo():\n    return [last_or_none([]), last_or_none([4])]\n"
+        }
+      ],
+      "question": "Determine whether the code satisfies the stated behavior in this scenario. Ground the verdict in the provided source.",
+      "scenario": "last_or_none must return None for an empty list and its final element for a nonempty list, without changing the list.",
+      "assumptions": [
+        "items is an ordinary built-in list containing only immutable built-in integers.",
+        "All function definitions and named built-ins retain the shown bindings during the calls.",
+        "No concurrency, subclasses, custom numeric operators, or hidden mutations are in scope."
+      ]
+    },
+    {
+      "id": "c03",
+      "source": [
+        {
+          "file": "logic.py",
+          "start": 1,
+          "end": 2,
+          "body": "def encode_record(record, codec):\n    return codec.encode(record)\n"
+        }
+      ],
+      "question": "Determine whether the code satisfies the stated behavior in this scenario. Ground the verdict in the provided source.",
+      "scenario": "The caller needs the deployed encoder to return text with record keys in ascending lexical order. Assess that deployed path; the codec implementation is not provided.",
+      "assumptions": [
+        "record is an ordinary built-in dict with built-in string keys and integer values.",
+        "codec is supplied by the host, has an encode method, and returns text normally; its ordering contract is unavailable.",
+        "All function definitions and named built-ins retain the shown bindings during the calls.",
+        "No concurrency, subclasses, custom numeric operators, or hidden mutations are in scope."
+      ]
+    },
+    {
+      "id": "c04",
+      "source": [
+        {
+          "file": "logic.py",
+          "start": 1,
+          "end": 9,
+          "body": "def snapshot(cart):\n    return {\"items\": cart[\"items\"]}\n\n\ndef demo():\n    cart = {\"items\": [\"pen\"]}\n    saved = snapshot(cart)\n    cart[\"items\"].append(\"book\")\n    return saved[\"items\"]\n"
+        }
+      ],
+      "question": "Determine whether the code satisfies the stated behavior in this scenario. Ground the verdict in the provided source.",
+      "scenario": "snapshot must capture an independent list of the current items. Appending a later item to the original cart must leave the captured list unchanged.",
+      "assumptions": [
+        "cart is an ordinary built-in dict with an items entry holding an ordinary built-in list of immutable strings.",
+        "All function definitions and named built-ins retain the shown bindings during the calls.",
+        "No concurrency, subclasses, custom numeric operators, or hidden mutations are in scope."
+      ]
+    },
+    {
+      "id": "c05",
+      "source": [
+        {
+          "file": "logic.py",
+          "start": 1,
+          "end": 11,
+          "body": "def duplicate_row(row):\n    first = dict(row)\n    second = dict(row)\n    return [first, second]\n\n\ndef demo():\n    original = {\"count\": 4}\n    copies = duplicate_row(original)\n    copies[0][\"count\"] = 9\n    return [copies[1][\"count\"], original[\"count\"]]\n"
+        }
+      ],
+      "question": "Determine whether the code satisfies the stated behavior in this scenario. Ground the verdict in the provided source.",
+      "scenario": "duplicate_row must return two dictionaries whose entry assignments are independent of one another and of the input dictionary.",
+      "assumptions": [
+        "row is an ordinary built-in dict from immutable built-in strings to immutable built-in integers.",
+        "Only dictionary entry assignment is evaluated, with no nested mutable values.",
+        "All function definitions and named built-ins retain the shown bindings during the calls.",
+        "No concurrency, subclasses, custom numeric operators, or hidden mutations are in scope."
+      ]
+    },
+    {
+      "id": "c06",
+      "source": [
+        {
+          "file": "logic.py",
+          "start": 1,
+          "end": 2,
+          "body": "def selected(values, predicate):\n    return list(filter(predicate, values))\n"
+        }
+      ],
+      "question": "Determine whether the code satisfies the stated behavior in this scenario. Ground the verdict in the provided source.",
+      "scenario": "The caller expects selected to retain exactly the positive integers, in input order, for the deployed predicate. The deployed predicate is not included.",
+      "assumptions": [
+        "values is an ordinary built-in list of built-in integers.",
+        "predicate is supplied by the host and returns a built-in bool normally for each input; its implementation and sign test are unavailable.",
+        "All function definitions and named built-ins retain the shown bindings during the calls.",
+        "No concurrency, subclasses, custom numeric operators, or hidden mutations are in scope."
+      ]
+    },
+    {
+      "id": "c07",
+      "source": [
+        {
+          "file": "logic.py",
+          "start": 1,
+          "end": 9,
+          "body": "def collect(label, labels=[]):\n    labels.append(label)\n    return list(labels)\n\n\ndef demo():\n    first = collect(\"red\")\n    second = collect(\"blue\")\n    return [first, second]\n"
+        }
+      ],
+      "question": "Determine whether the code satisfies the stated behavior in this scenario. Ground the verdict in the provided source.",
+      "scenario": "Each call that omits labels must return a list containing only that call's label. Consecutive omitted-argument calls are allowed.",
+      "assumptions": [
+        "label is an ordinary immutable built-in string.",
+        "Only calls omitting labels are evaluated; the function is defined once before the consecutive calls.",
+        "All function definitions and named built-ins retain the shown bindings during the calls.",
+        "No concurrency, subclasses, custom numeric operators, or hidden mutations are in scope."
+      ]
+    },
+    {
+      "id": "c08",
+      "source": [
+        {
+          "file": "logic.py",
+          "start": 1,
+          "end": 12,
+          "body": "def attach(item, items=None):\n    result = [] if items is None else list(items)\n    result.append(item)\n    return result\n\n\ndef demo():\n    original = [\"x\"]\n    first = attach(\"a\")\n    second = attach(\"b\")\n    supplied = attach(\"c\", original)\n    return [first, second, supplied, original]\n"
+        }
+      ],
+      "question": "Determine whether the code satisfies the stated behavior in this scenario. Ground the verdict in the provided source.",
+      "scenario": "attach must return a new list with item appended, using an empty list when items is omitted, without modifying a supplied input list or carrying omitted-call state forward.",
+      "assumptions": [
+        "item is an immutable built-in string; items is None or an ordinary built-in list of immutable strings.",
+        "All function definitions and named built-ins retain the shown bindings during the calls.",
+        "No concurrency, subclasses, custom numeric operators, or hidden mutations are in scope."
+      ]
+    },
+    {
+      "id": "c09",
+      "source": [
+        {
+          "file": "logic.py",
+          "start": 1,
+          "end": 2,
+          "body": "def ttl_seconds(config):\n    return config[\"ttl\"] * 60\n"
+        }
+      ],
+      "question": "Determine whether the code satisfies the stated behavior in this scenario. Ground the verdict in the provided source.",
+      "scenario": "The caller needs a number of seconds equal to the deployed configuration's time-to-live. The deployed value and its unit declaration are not provided.",
+      "assumptions": [
+        "config is an ordinary built-in dict with a ttl entry holding a nonnegative built-in integer.",
+        "The configuration schema's time unit is unavailable; the entry exists and remains unchanged during the call.",
+        "All function definitions and named built-ins retain the shown bindings during the calls.",
+        "No concurrency, subclasses, custom numeric operators, or hidden mutations are in scope."
+      ]
+    },
+    {
+      "id": "c10",
+      "source": [
+        {
+          "file": "logic.py",
+          "start": 1,
+          "end": 6,
+          "body": "def discount(total, percent=10):\n    return total - percent\n\n\ndef demo():\n    return discount(80, percent=25)\n"
+        }
+      ],
+      "question": "Determine whether the code satisfies the stated behavior in this scenario. Ground the verdict in the provided source.",
+      "scenario": "discount must return total after removing percent percent of total. The shown demo is an allowed call, and only inputs with an integral mathematical result are evaluated.",
+      "assumptions": [
+        "total is a built-in integer from 0 to 10000; percent is a built-in integer from 0 to 100.",
+        "Currency rounding, floating-point edge cases, and custom numeric types are outside this scenario.",
+        "All function definitions and named built-ins retain the shown bindings during the calls.",
+        "No concurrency, subclasses, custom numeric operators, or hidden mutations are in scope."
+      ]
+    },
+    {
+      "id": "c11",
+      "source": [
+        {
+          "file": "logic.py",
+          "start": 1,
+          "end": 6,
+          "body": "def join_pair(left, right, *, separator=\":\"):\n    return left + separator + right\n\n\ndef demo():\n    return join_pair(\"left\", \"right\", separator=\"\")\n"
+        }
+      ],
+      "question": "Determine whether the code satisfies the stated behavior in this scenario. Ground the verdict in the provided source.",
+      "scenario": "join_pair must concatenate left, the exact supplied separator, and right in that order. The omitted separator must be a colon; an explicitly empty separator is valid.",
+      "assumptions": [
+        "left, right, and separator are ordinary immutable built-in strings.",
+        "All function definitions and named built-ins retain the shown bindings during the calls.",
+        "No concurrency, subclasses, custom numeric operators, or hidden mutations are in scope."
+      ]
+    },
+    {
+      "id": "c12",
+      "source": [
+        {
+          "file": "logic.py",
+          "start": 1,
+          "end": 2,
+          "body": "def active_region(regions):\n    return regions[ACTIVE_REGION]\n"
+        }
+      ],
+      "question": "Determine whether the code satisfies the stated behavior in this scenario. Ground the verdict in the provided source.",
+      "scenario": "The deployed path must return a member of regions without IndexError. The host's ACTIVE_REGION binding is not provided.",
+      "assumptions": [
+        "regions is an ordinary built-in list containing exactly three immutable built-in strings.",
+        "Before the call the host injects ACTIVE_REGION as a built-in integer; its value or range contract is unavailable, and the binding does not change during the call.",
+        "All function definitions and named built-ins retain the shown bindings during the calls.",
+        "No concurrency, subclasses, custom numeric operators, or hidden mutations are in scope."
+      ]
+    }
+  ]
+}

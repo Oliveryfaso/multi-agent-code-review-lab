@@ -4,7 +4,7 @@ import io
 import json
 import unittest
 from pathlib import Path, PurePosixPath, PureWindowsPath
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from unittest.mock import patch
 
 from debugger_fixtures import fixture_root
@@ -83,13 +83,29 @@ class DiagnosticCompareTests(unittest.TestCase):
         self.assertNotIn('reference', json.dumps(manifest['cases']))
         self.assertEqual(json.loads((self.root / 'reference.json').read_text()), self.reference)
         changed = copy.deepcopy(self.profiles[1].sampling); changed['temperature'] = 0.2
-        from dataclasses import replace
         self.profiles[1] = replace(self.profiles[1], sampling=changed)
         new_root = fixture_root() / 'invalid'
         with self.assertRaises(ValueError):
             self.compare.prepare_comparison(new_root, self.cases, self.profiles,
                 prompt_version='fixture-prompt-v1', dataset_version='v1', reference=self.reference)
         self.assertFalse(new_root.exists())
+
+    def test_offline_timeout_is_bounded_by_180_seconds_and_each_profile(self):
+        self.profiles = [replace(profile, timeout_seconds=180) for profile in self.profiles]
+        for case in self.cases:
+            case['request']['timeout_seconds'] = 180
+        self.assertEqual(self.prepare()['new_model_calls'], 0)
+        self.root = fixture_root() / 'timeout-too-long'
+        self.cases[0]['request']['timeout_seconds'] = 181
+        with self.assertRaises(ValueError):
+            self.prepare()
+        self.assertFalse(self.root.exists())
+        self.cases[0]['request']['timeout_seconds'] = 180
+        self.profiles = [replace(profile, timeout_seconds=60) for profile in self.profiles]
+        self.root = fixture_root() / 'timeout-exceeds-profile'
+        with self.assertRaises(ValueError):
+            self.prepare()
+        self.assertFalse(self.root.exists())
 
     def test_real_provider_adapter_is_reused_with_inert_transport(self):
         self.prepare()
@@ -164,6 +180,86 @@ class DiagnosticCompareTests(unittest.TestCase):
         self.assertEqual((model['captured_responses'],model['quality_cases']),(2,2))
         self.assertEqual(model['diagnostic_rate'],0)
 
+    def test_categories_keep_structure_semantics_infrastructure_and_unattempted_separate(self):
+        names = ('passed', 'semantic-failed', 'pending', 'syntax', 'contract', 'citation', 'infra', 'unattempted')
+        verdicts = ('supported_defect', 'no_defect_supported', 'unknown', 'supported_defect',
+                    'no_defect_supported', 'unknown', 'supported_defect', 'no_defect_supported')
+        self.cases = [dict(copy.deepcopy(self.cases[index % 3]), id=name) for index, name in enumerate(names)]
+        self.profiles = self.profiles[:1]
+        self.reference['cases'] = dict(zip(names, verdicts))
+        self.reference['topics'] = dict(zip(names, ('boundary', 'boundary', 'mutation', 'mutation',
+            'mutation', 'missing-dependency', 'missing-dependency', 'boundary')))
+        self.prepare()
+        passed = self.record(response=self.response())
+        failed = self.record(case=1, response=self.response('no_defect_supported'))
+        self.record(case=2, response=self.response('unknown'))
+        self.record(case=3, response=self.response(content='{"verdict":'))
+        self.record(case=4, response=self.response(content='[]'))
+        self.record(case=5, response=self.response('unknown',
+            content=self.response('unknown').content.replace('"end": 2', '"end": 99')))
+        self.record(case=6, response=self.response(content='malformed'), proof={'http_status': 200})
+        report = self.compare.compare_results(self.root, reviews={'model-a/passed': self.review(passed),
+            'model-a/semantic-failed': self.review(failed, mechanism='partial')})
+        model = report['models'][0]
+        self.assertEqual((model['expected'], model['recorded'], model['captured_responses'],
+            model['not_attempted'], model['quality_cases']), (8, 7, 7, 1, 6))
+        self.assertEqual((model['strict_json_passes'], model['contract_passes'], model['semantic_reviewed'],
+            model['diagnostic_passes'], model['semantic_pending'], model['format'], model['infrastructure']),
+            (5, 3, 2, 1, 1, 3, 1))
+        self.assertEqual((model['strict_json_rate'], model['contract_rate']), (5 / 6, 3 / 6))
+        self.assertIsNone(model['diagnostic_rate'])
+        defect = model['categories']['expected_verdict']['supported_defect']
+        self.assertEqual((defect['quality_cases'], defect['diagnostic_rate'], defect['infrastructure']), (2, .5, 1))
+        unknown = model['categories']['expected_verdict']['unknown']
+        self.assertEqual((unknown['contract_passes'], unknown['semantic_pending']), (1, 1))
+        self.assertIsNone(unknown['diagnostic_rate'])
+        boundary = model['categories']['topic']['boundary']
+        self.assertEqual((boundary['expected'], boundary['not_attempted'], boundary['diagnostic_rate']), (3, 1, .5))
+        self.assertEqual(report['cases'][4]['strict_json_valid'], True)
+        self.assertEqual(report['cases'][4]['contract_valid'], False)
+        self.assertIsNone(report['cases'][6]['strict_json_valid'])
+        self.assertEqual(report['cases'][6]['semantic_review'], 'not_applicable')
+        markdown = Path(self.compare.save_comparison(self.root, report)['markdown']).read_text()
+        self.assertIn('expected_verdict:unknown', markdown)
+        self.assertIn('topic:missing-dependency', markdown)
+
+    def test_topics_are_complete_validated_and_bound_only_to_the_reference(self):
+        for topics in ({'defect': 'boundary'},
+            {'defect': 'boundary', 'healthy': 'boundary', 'unknown': 'dependency', 'dangling': 'boundary'},
+            {'defect': 'boundary', 'healthy': 'boundary', 'unknown': '../dependency'}):
+            self.root = fixture_root() / 'bad-topics'
+            self.reference['topics'] = topics
+            with self.assertRaises(ValueError):
+                self.prepare()
+            self.assertFalse(self.root.exists())
+        self.root = fixture_root() / 'valid-topics'
+        self.reference['topics'] = {'defect': 'mutation', 'healthy': 'boundary', 'unknown': 'dependency'}
+        self.prepare()
+        manifest = json.loads((self.root / 'manifest.json').read_text())
+        self.assertEqual(manifest['cases'], self.cases)
+        self.assertNotIn('topics', json.dumps(manifest['cases']))
+        self.record()
+        reference = json.loads((self.root / 'reference.json').read_text())
+        reference['topics']['defect'] = 'boundary'
+        (self.root / 'reference.json').write_text(json.dumps(reference))
+        with self.assertRaises(ValueError):
+            self.compare.compare_results(self.root)
+
+    def test_old_captures_keep_hashes_and_get_strict_json_metrics_from_raw_content(self):
+        self.prepare()
+        row = self.record(response=self.response(content='{}'))
+        stored = json.loads((self.root / 'model-a--defect.json').read_text())
+        self.assertNotIn('strict_json_valid', stored)
+        report = self.compare.compare_results(self.root)
+        self.assertEqual(report['cases'][0]['record_sha256'], row['record_sha256'])
+        self.assertTrue(report['cases'][0]['strict_json_valid'])
+        self.assertFalse(report['cases'][0]['contract_valid'])
+        self.assertNotIn('topic', report['models'][0]['categories'])
+        self.assertEqual(report['models'][0]['diagnostic_rate'], 0)
+        self.assertEqual(report['models'][1]['not_attempted'], 3)
+        for content in ('{"x":1,"x":2}', '{"x":NaN}', 'true trailing'):
+            self.assertFalse(self.compare._strict_json(content))
+
     def test_format_failure_with_bound_release_proof_continues_without_repair(self):
         self.prepare()
         row = self.record(response=self.response(content='{"verdict":'))
@@ -228,6 +324,7 @@ class DiagnosticCompareTests(unittest.TestCase):
         with self.assertRaises(ValueError): self.record()
         report = self.compare.compare_results(self.root)
         self.assertEqual(report['uncertain_cell'], 'model-a/defect')
+        self.assertEqual((report['models'][0]['not_attempted'], report['models'][0]['uncertain_cells']), (2, 1))
 
     def test_initial_state_write_failure_and_unretained_adapter_output_stop(self):
         self.prepare()
@@ -289,3 +386,48 @@ class DiagnosticCompareTests(unittest.TestCase):
         report = json.loads(output.getvalue())
         self.assertEqual((report['recorded_responses'], report['new_model_calls'], report['diagnostic_passes']), (6, 0, 0))
         self.assertFalse(report['real_model_accuracy_measured'])
+
+    def test_dataset_command_only_prepares_and_never_records_responses(self):
+        import compare_diagnostics
+        root = fixture_root()
+        profiles = root / 'profiles.json'
+        profiles.write_text(json.dumps([asdict(profile) for profile in self.profiles]))
+        cases_path, reference_path = root / 'cases.json', root / 'reference.json'
+        arguments = ['compare_diagnostics', '--dataset', str(cases_path), '--reference', str(reference_path),
+            '--profiles', str(profiles), '--out', str(self.root)]
+        output = io.StringIO()
+        with patch('macr.evals.diagnostic_dataset.load_dataset', return_value=(self.cases, self.reference)) as load, \
+                patch('sys.argv', arguments), patch('sys.stdout', output), \
+                patch.object(compare_diagnostics, 'record_response', side_effect=AssertionError('no response authority')):
+            self.assertEqual(compare_diagnostics.main(), 0)
+        load.assert_called_once_with(cases_path, reference_path, timeout_seconds=self.profiles[0].timeout_seconds)
+        result = json.loads(output.getvalue())
+        self.assertEqual((result['prepared'], result['cells'], result['new_model_calls']), (True, 6, 0))
+        self.assertEqual(json.loads((self.root / 'state.json').read_text())['rows'], [])
+        self.assertEqual(json.loads((self.root / 'manifest.json').read_text())['cases'], self.cases)
+
+    def test_dataset_command_requires_separate_reference_and_profiles(self):
+        import compare_diagnostics
+        for arguments in (['--dataset', 'cases.json'], ['--input', 'bundle.json', '--profiles', 'profiles.json'],
+            ['--input', 'bundle.json', '--dataset', 'cases.json']):
+            with patch('sys.argv', ['compare_diagnostics', *arguments, '--out', str(self.root)]), \
+                    patch('sys.stderr', io.StringIO()):
+                with self.assertRaises(SystemExit) as failure:
+                    compare_diagnostics.main()
+            self.assertEqual(failure.exception.code, 2)
+            self.assertFalse(self.root.exists())
+
+    def test_dataset_command_rejects_profile_json_duplicates_and_trailing_fields(self):
+        import compare_diagnostics
+        profiles = fixture_root() / 'profiles.json'
+        values = json.dumps([asdict(profile) for profile in self.profiles])
+        for malformed in (values.replace('"profile_id": "model-a"',
+            '"profile_id": "model-a", "profile_id": "model-a"'), values + ', "extra": 1'):
+            profiles.write_text(malformed)
+            with patch('macr.evals.diagnostic_dataset.load_dataset', return_value=(self.cases, self.reference)), \
+                    patch('sys.argv', ['compare_diagnostics', '--dataset', 'cases.json', '--reference', 'reference.json',
+                        '--profiles', str(profiles), '--out', str(self.root)]), patch('sys.stderr', io.StringIO()):
+                with self.assertRaises(SystemExit) as failure:
+                    compare_diagnostics.main()
+            self.assertEqual(failure.exception.code, 2)
+            self.assertFalse(self.root.exists())

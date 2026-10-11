@@ -1,4 +1,4 @@
-"""Compare explicit captured/scripted responses offline; never contact a provider."""
+"""Prepare a dataset or compare captured responses offline; never contact a provider."""
 import argparse
 import json
 from pathlib import Path
@@ -15,26 +15,58 @@ from macr.providers.local_http import _object
 from macr.providers.profiles import ModelProfile
 
 
+def _input_bytes(path, limit):
+    path = path.absolute()
+    if path.suffix != '.json' or not path.is_relative_to(PROJECT) or path != path.resolve():
+        raise ValueError('input_path_invalid')
+    relative = path.relative_to(PROJECT)
+    if any(exclusion(part, ScopeProfile()) in ('secret_path', 'appledouble') for part in relative.parts):
+        raise ValueError('input_path_invalid')
+    return read_safe(PROJECT, relative.as_posix(), limit)
+
+
+def _profiles(raws):
+    if type(raws) is not list or not 1 <= len(raws) <= 4:
+        raise ValueError('profile_list_invalid')
+    profiles = []
+    for raw in raws:
+        if set(raw['capabilities']) != {'json_mode', 'usage', 'cancel', 'health'}:
+            raise ValueError('profile_capabilities_invalid')
+        profiles.append(ModelProfile(**(raw | {'capabilities': ProviderCapabilities(**raw['capabilities'])})))
+    return profiles
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--input', type=Path, required=True, help='explicit project-local JSON replay bundle')
+    mode = parser.add_mutually_exclusive_group(required=True)
+    mode.add_argument('--input', type=Path, help='explicit project-local JSON replay bundle')
+    mode.add_argument('--dataset', type=Path, help='project-local cases JSON; freeze only, no responses')
+    parser.add_argument('--reference', type=Path, help='separate dataset reference JSON')
+    parser.add_argument('--profiles', type=Path, help='project-local JSON list of frozen profiles')
     parser.add_argument('--out', type=Path, required=True, help='new directory under project artifacts')
     args = parser.parse_args()
+    if args.dataset is not None and (args.reference is None or args.profiles is None):
+        parser.error('--dataset requires --reference and --profiles')
+    if args.input is not None and (args.reference is not None or args.profiles is not None):
+        parser.error('--reference and --profiles require --dataset')
     try:
-        path = args.input.absolute()
-        if path.suffix != '.json' or not path.is_relative_to(PROJECT) or path != path.resolve():
-            raise ValueError('input_path_invalid')
-        relative = path.relative_to(PROJECT)
-        if any(exclusion(part, ScopeProfile()) in ('secret_path', 'appledouble') for part in relative.parts):
-            raise ValueError('input_path_invalid')
-        bundle = _object(read_safe(PROJECT, relative.as_posix(), 1024 * 1024))
+        if args.dataset is not None:
+            from macr.evals.diagnostic_dataset import load_dataset
+            # The existing strict decoder also checks nested duplicates in a JSON list.
+            profile_document = _object(b'{"profiles":' + _input_bytes(args.profiles, 64 * 1024) + b'}')
+            if set(profile_document) != {'profiles'}:
+                raise ValueError('profile_list_invalid')
+            profiles = _profiles(profile_document['profiles'])
+            cases, reference = load_dataset(args.dataset, args.reference, timeout_seconds=profiles[0].timeout_seconds)
+            result = prepare_comparison(args.out, cases, profiles,
+                prompt_version=cases[0]['request']['metadata']['prompt_version'],
+                dataset_version=reference['version'], reference=reference)
+            print(json.dumps({'prepared': True, **result}))
+            return 0
+        bundle = _object(_input_bytes(args.input, 1024 * 1024))
         if set(bundle) != {'cases', 'profiles', 'prompt_version', 'dataset_version', 'reference', 'results', 'reviews'}:
             raise ValueError('replay_fields_invalid')
-        profiles = []
-        for raw in bundle['profiles']:
-            if set(raw['capabilities']) != {'json_mode', 'usage', 'cancel', 'health'}:
-                raise ValueError('profile_capabilities_invalid')
-            profiles.append(ModelProfile(**(raw | {'capabilities': ProviderCapabilities(**raw['capabilities'])})))
+        profiles = _profiles(bundle['profiles'])
         if type(bundle['results']) is not list or len(bundle['results']) > 48:
             raise ValueError('replay_result_limit')
         prepare_comparison(args.out, bundle['cases'], profiles,

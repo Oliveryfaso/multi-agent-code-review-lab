@@ -127,8 +127,12 @@ class OfflineLifecycleTests(unittest.TestCase):
         runner = self.runner()
         base = fixtures.fixture_root()
         called = []
-        report = runner.run_suite(synthetic_suite(lambda case: called.append(True)),
-                                  runs_root=base / 'runs', max_allocated_bytes=1)
+        # Empty-directory st_blocks may be zero on APFS. Inject a measured usage
+        # above the cap so this guard test does not depend on filesystem layout.
+        with patch.object(runner, 'tree_usage', return_value={
+                'files': 0, 'logical_bytes': 0, 'allocated_bytes': 2}):
+            report = runner.run_suite(synthetic_suite(lambda case: called.append(True)),
+                                      runs_root=base / 'runs', max_allocated_bytes=1)
         self.assertEqual(report['status'], 'failed')
         self.assertEqual(report['error'], 'allocated_bytes_limit')
         self.assertFalse(called)

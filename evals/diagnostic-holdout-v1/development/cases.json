@@ -1,0 +1,61 @@
+{
+  "version": "diagnostic-development-v1",
+  "prompt_version": "diagnostic-holdout-v1",
+  "cases": [
+    {
+      "id": "d01",
+      "source": [
+        {
+          "file": "logic.py",
+          "start": 1,
+          "end": 2,
+          "body": "def remove_marker(token):\n    return token.lstrip(\"ab\")\n"
+        }
+      ],
+      "question": "Determine whether the code satisfies the stated behavior in this scenario. Ground the verdict in the provided source.",
+      "scenario": "remove_marker must remove one exact leading marker ab, leaving the rest unchanged. For token abba, the required result is ba.",
+      "assumptions": [
+        "token is an ordinary immutable built-in string beginning with the exact marker ab.",
+        "All function definitions and named built-ins retain the shown bindings during the calls.",
+        "No concurrency, subclasses, custom numeric operators, or hidden mutations are in scope."
+      ]
+    },
+    {
+      "id": "d02",
+      "source": [
+        {
+          "file": "logic.py",
+          "start": 1,
+          "end": 2,
+          "body": "def ordered(values):\n    return sorted(values)\n"
+        }
+      ],
+      "question": "Determine whether the code satisfies the stated behavior in this scenario. Ground the verdict in the provided source.",
+      "scenario": "ordered must return a new list of the same integers in ascending order without modifying its input list.",
+      "assumptions": [
+        "values is an ordinary built-in list of built-in integers; comparisons use their normal bindings.",
+        "All function definitions and named built-ins retain the shown bindings during the calls.",
+        "No concurrency, subclasses, custom numeric operators, or hidden mutations are in scope."
+      ]
+    },
+    {
+      "id": "d03",
+      "source": [
+        {
+          "file": "logic.py",
+          "start": 1,
+          "end": 2,
+          "body": "def label_for(code, labels):\n    return labels[code]\n"
+        }
+      ],
+      "question": "Determine whether the code satisfies the stated behavior in this scenario. Ground the verdict in the provided source.",
+      "scenario": "The deployed call must return the user-facing label for its code. The deployed code and labels mapping are not included.",
+      "assumptions": [
+        "labels is an ordinary built-in dict with immutable string keys and values; code is an ordinary built-in string.",
+        "The deployed key set, actual code, and membership guarantee are unavailable.",
+        "All function definitions and named built-ins retain the shown bindings during the calls.",
+        "No concurrency, subclasses, custom numeric operators, or hidden mutations are in scope."
+      ]
+    }
+  ]
+}

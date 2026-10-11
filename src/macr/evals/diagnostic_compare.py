@@ -5,6 +5,7 @@ not independently authenticated by this offline reader.
 """
 from dataclasses import asdict
 import hashlib
+import json
 from pathlib import Path
 from uuid import uuid4
 
@@ -67,7 +68,8 @@ def prepare_comparison(out, cases, profiles, *, prompt_version, dataset_version,
     _require(type(cases) is list and 1 <= len(cases) <= 12 and type(profiles) is list and 1 <= len(profiles) <= 4)
     configured = [asdict(validate_profile(profile)) for profile in profiles]
     _require(len({p['profile_id'] for p in configured}) == len(configured))
-    common = ('runtime', 'runtime_version', 'context_limit', 'output_limit', 'sampling', 'timeout_seconds')
+    common = ('runtime', 'runtime_version', 'chat_template_version',
+              'context_limit', 'output_limit', 'sampling', 'timeout_seconds')
     _require(all(all(p[key] == configured[0][key] for key in common) for p in configured), 'comparison_parameters_differ')
     ids = []
     for case in cases:
@@ -76,9 +78,10 @@ def prepare_comparison(out, cases, profiles, *, prompt_version, dataset_version,
         request = ModelRequest(**case['request']); validate_request(request)
         _require(request.response_schema == OUTPUT_SCHEMA and not request.tools
             and request.metadata.get('prompt_version') == prompt_version
-            and request.max_input_tokens <= 1536 and request.max_output_tokens <= 384 and request.timeout_seconds <= 60)
+            and request.max_input_tokens <= 1536 and request.max_output_tokens <= 384 and request.timeout_seconds <= 180)
         _require(all(request.max_output_tokens <= p['output_limit']
-            and request.max_input_tokens + request.max_output_tokens <= p['context_limit'] for p in configured))
+            and request.max_input_tokens + request.max_output_tokens <= p['context_limit']
+            and request.timeout_seconds <= p['timeout_seconds'] for p in configured))
         source = _object(request.messages[-1]['content']).get('source')
         _require(type(source) is list and 1 <= len(source) <= 12)
         for snippet in source:
@@ -87,9 +90,25 @@ def prepare_comparison(out, cases, profiles, *, prompt_version, dataset_version,
             _require(type(snippet['start']) is type(snippet['end']) is int
                 and 1 <= snippet['start'] <= snippet['end'] and type(snippet['body']) is str)
     _require(len(set(ids)) == len(ids))
-    _require(type(reference) is dict and set(reference) == {'version', 'cases'}
+    _require(type(reference) is dict and {'version', 'cases'} <= set(reference) <= {'version', 'cases', 'topics', 'rubric'}
         and type(reference['cases']) is dict and set(reference['cases']) == set(ids)
         and all(v in VERDICTS for v in reference['cases'].values()))
+    if 'topics' in reference:
+        _require(type(reference['topics']) is dict and set(reference['topics']) == set(ids))
+        for topic in reference['topics'].values():
+            validate_identifier(topic)
+    if 'rubric' in reference:
+        # Retain the complete human scoring basis in the same reference binding.
+        # It is opaque to semantic scoring and never enters a ModelRequest.
+        rubric = reference['rubric']
+        fields = {'category', 'topic', 'mechanism', 'trigger', 'missing_evidence',
+                  'evidence_roles', 'accepted_shape_witness', 'reject_examples', 'safe_probe'}
+        _require('topics' in reference and type(rubric) is dict and set(rubric) == set(ids)
+            and len(encoded(rubric)) <= 64 * 1024, 'comparison_rubric_invalid')
+        for key, row in rubric.items():
+            _require(type(row) is dict and set(row) == fields
+                and row['category'] == reference['cases'][key]
+                and row['topic'] == reference['topics'][key], 'comparison_rubric_invalid')
     validate_identifier(reference['version'])
     manifest = {'schema_version': 1, 'prompt_version': prompt_version, 'dataset_version': dataset_version,
                 'cases': cases, 'profiles': configured, 'reference_sha256': _digest(reference),
@@ -213,6 +232,43 @@ def record_response(out, profile_id, case_id, *, response=None, error=None, proo
     return row | {'record_sha256': digest}
 
 
+def _strict_json(content):
+    def unique(items):
+        value = {}
+        for key, item in items:
+            _require(key not in value)
+            value[key] = item
+        return value
+
+    def invalid(value):
+        raise ValueError()
+
+    try:
+        content.encode('utf-8')
+        json.loads(content, object_pairs_hook=unique, parse_constant=invalid)
+        return True
+    except (ValueError, TypeError, UnicodeError, RecursionError):
+        return False
+
+
+def _metrics(rows, expected, *, uncertain=False):
+    quality = [row for row in rows if row['response'] is not None and row['failure_class'] != 'infrastructure']
+    passes = sum(row['diagnostic_passed'] for row in quality)
+    pending = sum(row['failure_class'] == 'semantic_pending' for row in quality)
+    strict = sum(row['strict_json_valid'] is True for row in quality)
+    contract = sum(row['contract_valid'] is True for row in quality)
+    return {'expected': expected, 'recorded': len(rows),
+        'captured_responses': sum(row['response'] is not None for row in rows),
+        'not_attempted': expected - len(rows) - int(uncertain), 'uncertain_cells': int(uncertain),
+        'quality_cases': len(quality), 'strict_json_passes': strict,
+        'strict_json_rate': strict / len(quality) if quality else None,
+        'contract_passes': contract, 'contract_rate': contract / len(quality) if quality else None,
+        'semantic_reviewed': sum(row['semantic_review'] == 'reviewed' for row in quality),
+        'diagnostic_passes': passes, 'diagnostic_rate': passes / len(quality) if quality and not pending else None,
+        **{name: sum(row['failure_class'] == name for row in rows)
+           for name in ('infrastructure', 'format', 'semantic', 'semantic_pending')}}
+
+
 def compare_results(out, *, reviews=None):
     """Independent human dimensions; JSON parsing never awards a semantic pass."""
     _, manifest, reference, state, rows = _load(out)
@@ -220,8 +276,13 @@ def compare_results(out, *, reviews=None):
     _require(type(reviews) is dict and set(reviews) <= {r['cell'] for r in rows})
     for row in rows:
         answer, review = row['answer'], reviews.get(row['cell'])
-        row['semantic_review'] = 'pending' if review is None else 'reviewed'
+        infrastructure = row['failure_class'] == 'infrastructure'
+        row['strict_json_valid'] = None if infrastructure else _strict_json(row['response']['content'])
+        row['contract_valid'] = None if infrastructure else answer is not None
+        row['semantic_review'] = 'not_applicable' if answer is None else 'pending' if review is None else 'reviewed'
         row['expected_verdict'] = reference['cases'][row['case_id']]
+        if 'topics' in reference:
+            row['topic'] = reference['topics'][row['case_id']]
         row['verdict_correct'] = answer['verdict'] == row['expected_verdict'] if answer else None
         row['healthy_false_alarm'] = answer['verdict'] == 'supported_defect' if answer and row['expected_verdict'] == 'no_defect_supported' else None
         row['unknown_abstention'] = answer['verdict'] == 'unknown' if answer and row['expected_verdict'] == 'unknown' else None
@@ -246,15 +307,19 @@ def compare_results(out, *, reviews=None):
     models = []
     for profile in manifest['profiles']:
         selected = [r for r in rows if r['profile_id'] == profile['profile_id']]
-        captured=sum(r['response'] is not None for r in selected)
-        quality=sum(r['response'] is not None and r['failure_class']!='infrastructure' for r in selected)
-        passes=sum(r['diagnostic_passed'] for r in selected)
-        pending=any(r['failure_class']=='semantic_pending' for r in selected)
-        models.append({'profile': profile, 'expected': len(manifest['cases']), 'recorded': len(selected),
-            'captured_responses':captured,'quality_cases':quality,'diagnostic_passes':passes,
-            'diagnostic_rate':passes/quality if quality and not pending else None,
-            **{name: sum(r['failure_class'] == name for r in selected)
-               for name in ('infrastructure', 'format', 'semantic', 'semantic_pending')}})
+        prefix = profile['profile_id'] + '/'
+        uncertain = state['pending'][len(prefix):] if state['pending'] and state['pending'].startswith(prefix) else None
+        categories = {'expected_verdict': {verdict: _metrics(
+            [r for r in selected if r['expected_verdict'] == verdict],
+            sum(value == verdict for value in reference['cases'].values()),
+            uncertain=uncertain is not None and reference['cases'][uncertain] == verdict) for verdict in VERDICTS}}
+        if 'topics' in reference:
+            categories['topic'] = {topic: _metrics([r for r in selected if r['topic'] == topic],
+                sum(value == topic for value in reference['topics'].values()),
+                uncertain=uncertain is not None and reference['topics'][uncertain] == topic)
+                for topic in sorted(set(reference['topics'].values()))}
+        models.append({'profile': profile, **_metrics(selected, len(manifest['cases']), uncertain=uncertain is not None),
+            'categories': categories})
     return {'schema_version': 1, 'prompt_version': manifest['prompt_version'], 'dataset_version': manifest['dataset_version'],
         'manifest_sha256': state['manifest_sha256'], 'reference_sha256': manifest['reference_sha256'],
         'cases': rows, 'models': models, 'stopped': state['stopped'], 'uncertain_cell': state['pending'],
@@ -298,6 +363,21 @@ def save_comparison(out, report):
         score='pending' if model['semantic_pending'] else 'N/A' if model['diagnostic_rate'] is None else str(model['diagnostic_passes'])+'/'+str(model['quality_cases'])
         lines.append('| ' + ' | '.join(str(value) for value in [model['profile']['profile_id'], model['recorded'],
             model['captured_responses'],model['quality_cases'],score,model['infrastructure'],model['format'],model['semantic'],model['semantic_pending']]) + ' |')
+    lines += ['', 'Rates use captured quality cases, including failed structure/contract. Infrastructure is excluded; pending semantic review has no semantic rate.', '',
+        '| Model | Category | Expected | Recorded | Captured | Not attempted | Uncertain | Quality | Strict JSON | Contract | Reviewed | Semantic pass | Infrastructure | Format | Semantic fail | Pending |',
+        '| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- | ---: | --- | ---: | ---: | ---: | ---: |']
+    for model in report['models']:
+        for dimension, categories in model['categories'].items():
+            for category, metrics in categories.items():
+                quality = metrics['quality_cases']
+                strict = f"{metrics['strict_json_passes']}/{quality}" if quality else 'N/A'
+                contract = f"{metrics['contract_passes']}/{quality}" if quality else 'N/A'
+                score = 'pending' if metrics['semantic_pending'] else f"{metrics['diagnostic_passes']}/{quality}" if quality else 'N/A'
+                lines.append('| ' + ' | '.join(str(value) for value in [model['profile']['profile_id'],
+                    dimension + ':' + category, metrics['expected'], metrics['recorded'], metrics['captured_responses'],
+                    metrics['not_attempted'], metrics['uncertain_cells'], quality, strict, contract,
+                    metrics['semantic_reviewed'], score, metrics['infrastructure'], metrics['format'],
+                    metrics['semantic'], metrics['semantic_pending']]) + ' |')
     lines += ['', '| Cell | Origin | Outcome | Error |', '| --- | --- | --- | --- |']
     for row in report['cases']:
         lines.append(f"| {row['cell']} | {row['provenance']} | {row['failure_class'] or 'reviewed pass'} | {row['error_code'] or ''} |")
