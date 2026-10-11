@@ -1,0 +1,41 @@
+[
+  {
+    "id": "e2e-defect",
+    "files": {
+      "access.py": "def allowed(staff, paid):\n    \"\"\"Permit access only when staff and paid are both true.\"\"\"\n    return staff or paid\n\ndef access_status(staff, paid):\n    return \"granted\" if allowed(staff, paid) else \"denied\"\n\ndef mixed_access():\n    return access_status(True, False)\n"
+    },
+    "query": "allowed staff paid access_status: investigate possible access bug for boolean inputs; access requires both staff and paid True. Explain the supplied caller path and cite only retrieved evidence.",
+    "search_terms": [
+      "allowed",
+      "staff",
+      "paid",
+      "access_status"
+    ]
+  },
+  {
+    "id": "e2e-healthy",
+    "files": {
+      "jobs.py": "def pending(done, total):\n    \"\"\"Remaining jobs; completion at or above total returns zero.\"\"\"\n    return max(0, total - done)\n\ndef job_status(done, total):\n    return pending(done, total)\n\ndef completed_count(total):\n    return job_status(total + 1, total)\n"
+    },
+    "query": "pending job_status done total: investigate possible count bug; for nonnegative integers remaining count must be max(0, total-done), including done above total. Explain guards and caller path with retrieved citations.",
+    "search_terms": [
+      "pending",
+      "job_status",
+      "done",
+      "total"
+    ]
+  },
+  {
+    "id": "e2e-unknown",
+    "files": {
+      "lookup.py": "def lookup(key, registry):\n    \"\"\"Delegate a present string key to an external registry.\"\"\"\n    return registry.resolve(key)\n\ndef display_lookup(key, registry):\n    return lookup(key, registry)\n\ndef show_present(registry):\n    return display_lookup(\"present\", registry)\n"
+    },
+    "query": "lookup display_lookup registry resolve: investigate whether a present key is guaranteed to return without exception; the external registry.resolve implementation and contract are unavailable. Cite supplied path and name missing evidence without inventing guarantees.",
+    "search_terms": [
+      "lookup",
+      "display_lookup",
+      "registry",
+      "resolve"
+    ]
+  }
+]

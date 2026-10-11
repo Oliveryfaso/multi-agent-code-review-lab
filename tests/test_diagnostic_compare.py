@@ -274,6 +274,107 @@ class DiagnosticCompareTests(unittest.TestCase):
         self.record(case=1)
         with self.assertRaises(ValueError): self.record(case=1)
 
+    def test_parser_stably_deduplicates_only_complete_citation_positions(self):
+        answer = json.loads(self.response().content)
+        first = answer['refs'][0]
+        distinct = dict(first, start=2)
+        answer['refs'] = [first, distinct, dict(first)]
+        content = json.dumps(answer)
+        source = json.loads(self.cases[0]['request']['messages'][-1]['content'])['source']
+        normalized = self.compare._parse(content, source)
+        self.assertEqual(normalized['refs'], [first, distinct])
+        self.assertEqual(json.loads(content)['refs'], answer['refs'])
+        with self.assertRaises(ProviderError) as caught:
+            self.compare._parse(content, source, normalize_refs=False)
+        self.assertEqual(caught.exception.code, 'eval_contract_invalid')
+
+    def test_every_original_citation_is_checked_before_duplicate_normalization(self):
+        answer = json.loads(self.response().content)
+        source = json.loads(self.cases[0]['request']['messages'][-1]['content'])['source']
+        invalids = [({'file': 'foreign.py', 'start': 1, 'end': 2}, 'eval_citation_invalid'),
+            ({'file': '../logic.py', 'start': 1, 'end': 2}, 'eval_citation_invalid'),
+            ({'file': 'logic.py', 'start': 1, 'end': 3}, 'eval_citation_invalid'),
+            ({'file': 'logic.py', 'start': 2, 'end': 1}, 'eval_contract_invalid'),
+            ({'file': 'logic.py', 'start': True, 'end': 2}, 'eval_contract_invalid'),
+            ({'file': 'logic.py', 'start': 1, 'end': 2, 'tool': 'invented'}, 'eval_contract_invalid')]
+        for invalid, code in invalids:
+            for normalize in (True, False):
+                with self.subTest(invalid=invalid, normalize=normalize):
+                    content = json.dumps(dict(answer, refs=answer['refs'] * 2 + [invalid]))
+                    with self.assertRaises(ProviderError) as caught:
+                        self.compare._parse(content, source, normalize_refs=normalize)
+                    self.assertEqual(caught.exception.code, code)
+        with self.assertRaises(ProviderError) as caught:
+            self.compare._parse(json.dumps(dict(answer, refs=answer['refs'] * 4)), source)
+        self.assertEqual(caught.exception.code, 'eval_contract_invalid')
+
+    def test_normalized_contract_and_semantics_never_replace_raw_scores(self):
+        self.prepare()
+        answer = json.loads(self.response().content)
+        response = self.response(content=json.dumps(dict(answer, refs=answer['refs'] * 2)))
+        row = self.record(response=response)
+        self.assertEqual(row['response']['content'], response.content)
+        self.assertEqual(row['answer']['refs'], answer['refs'])
+        self.assertEqual((row['raw_contract_valid'], row['normalized_contract_valid']), (False, True))
+        self.assertEqual((row['failure_class'], row['normalized_failure_class']), ('format', 'semantic_pending'))
+        pending = self.compare.compare_results(self.root)['models'][0]
+        self.assertEqual((pending['contract_passes'], pending['raw_contract_passes'],
+            pending['normalized_contract_passes']), (0, 0, 1))
+        self.assertEqual(pending['diagnostic_rate'], 0)
+        self.assertIsNone(pending['normalized_diagnostic_rate'])
+        report = self.compare.compare_results(self.root, reviews={'model-a/defect': self.review(row)})
+        scored, model = report['cases'][0], report['models'][0]
+        self.assertEqual((model['diagnostic_passes'], model['normalized_diagnostic_passes']), (0, 1))
+        self.assertEqual((model['semantic_reviewed'], model['normalized_semantic_reviewed']), (0, 1))
+        self.assertEqual((scored['failure_class'], scored['normalized_failure_class']), ('format', None))
+        self.assertIsNone(scored['verdict_correct'])
+        self.assertTrue(scored['normalized_verdict_correct'])
+        markdown = Path(self.compare.save_comparison(self.root, report)['markdown']).read_text()
+        self.assertIn('Raw contract | Normalized contract', markdown)
+        self.assertIn('Raw semantic pass | Normalized semantic pass', markdown)
+
+    def test_legacy_duplicate_capture_gets_derived_scores_without_record_rewrites(self):
+        self.prepare()
+        answer = json.loads(self.response().content)
+        row = self.record(response=self.response(content=json.dumps(dict(answer, refs=answer['refs'] * 2))))
+        path = self.root / 'model-a--defect.json'
+        legacy = json.loads(path.read_text())
+        for field in ('raw_contract_valid', 'normalized_contract_valid', 'normalized_failure_class',
+            'normalized_error_code', 'normalized_diagnostic_passed'):
+            legacy.pop(field)
+        legacy['answer'] = None
+        path.write_bytes(encoded(legacy) + b'\n')
+        digest = hashlib.sha256(encoded(legacy)).hexdigest()
+        state_path = self.root / 'state.json'
+        state = json.loads(state_path.read_text())
+        state['rows'][0]['record_sha256'] = digest
+        state_path.write_bytes(encoded(state) + b'\n')
+        before = path.read_bytes(), state_path.read_bytes()
+        review = self.review(row, record_sha256=digest)
+        report = self.compare.compare_results(self.root, reviews={'model-a/defect': review})
+        captured, model = report['cases'][0], report['models'][0]
+        self.assertEqual(captured['record_sha256'], digest)
+        self.assertIsNone(captured['answer'])
+        self.assertEqual(captured['normalized_answer']['refs'], answer['refs'])
+        self.assertEqual((model['contract_passes'], model['normalized_contract_passes'],
+            model['diagnostic_passes'], model['normalized_diagnostic_passes']), (0, 1, 0, 1))
+        self.assertEqual((path.read_bytes(), state_path.read_bytes()), before)
+
+    def test_normalization_does_not_recover_invalid_citations_or_truncated_responses(self):
+        self.prepare()
+        answer = json.loads(self.response().content)
+        invalid = dict(answer['refs'][0], end=99)
+        row = self.record(response=self.response(content=json.dumps(dict(answer, refs=[invalid, invalid]))))
+        self.assertEqual(row['error_code'], 'eval_citation_invalid')
+        self.assertIsNone(row['answer'])
+        self.record(case=1, response=self.response(finish_reason='length'))
+        report = self.compare.compare_results(self.root)
+        for captured in report['cases']:
+            self.assertFalse(captured['raw_contract_valid'])
+            self.assertFalse(captured['normalized_contract_valid'])
+            self.assertIsNone(captured['normalized_answer'])
+        self.assertEqual(report['cases'][1]['normalized_error_code'], 'model_output_incomplete')
+
     def test_contract_citation_and_truncation_failures_remain_distinct(self):
         self.prepare()
         cases = [self.response(content='{}'),

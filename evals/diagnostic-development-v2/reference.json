@@ -1,0 +1,167 @@
+{
+  "version": "diagnostic-development-v2",
+  "cases": {
+    "dv01": {
+      "category": "supported_defect",
+      "topic": "boolean-policy",
+      "mechanism": "OR admits mixed true/false pairs although policy requires AND.",
+      "trigger": "Either staff or paid is True while the other is False.",
+      "missing_evidence": [],
+      "evidence_roles": [
+        {
+          "file": "access.py",
+          "start": 1,
+          "end": 2,
+          "role": "Implementation and decision expression"
+        }
+      ],
+      "accepted_shape_witness": {
+        "verdict": "supported_defect",
+        "cause": "OR admits mixed true/false pairs although policy requires AND.",
+        "when": "Either staff or paid is True while the other is False.",
+        "refs": [
+          {
+            "file": "access.py",
+            "start": 1,
+            "end": 2
+          }
+        ],
+        "unknowns": []
+      },
+      "reject_examples": [],
+      "safe_probe": null
+    },
+    "dv02": {
+      "category": "no_defect_supported",
+      "topic": "immutable-input",
+      "mechanism": "reversed iterates without writing items and tuple constructs the reversed result.",
+      "trigger": "For every allowed tuple the result has the reversed values and the input remains unchanged.",
+      "missing_evidence": [],
+      "evidence_roles": [
+        {
+          "file": "view.py",
+          "start": 1,
+          "end": 2,
+          "role": "Implementation and decision expression"
+        }
+      ],
+      "accepted_shape_witness": {
+        "verdict": "no_defect_supported",
+        "cause": "reversed iterates without writing items and tuple constructs the reversed result.",
+        "when": "For every allowed tuple the result has the reversed values and the input remains unchanged.",
+        "refs": [
+          {
+            "file": "view.py",
+            "start": 1,
+            "end": 2
+          }
+        ],
+        "unknowns": []
+      },
+      "reject_examples": [],
+      "safe_probe": null
+    },
+    "dv03": {
+      "category": "unknown",
+      "topic": "missing-unit",
+      "mechanism": null,
+      "trigger": null,
+      "missing_evidence": [
+        "The body or return unit of clock is absent."
+      ],
+      "evidence_roles": [],
+      "accepted_shape_witness": {
+        "verdict": "unknown",
+        "cause": null,
+        "when": null,
+        "refs": [],
+        "unknowns": [
+          "The body or return unit of clock is absent."
+        ]
+      },
+      "reject_examples": [],
+      "safe_probe": null
+    },
+    "dv04": {
+      "category": "supported_defect",
+      "topic": "percentage-unit",
+      "mechanism": "percent is used as a unit fraction without dividing by 100, causing wrong and negative prices.",
+      "trigger": "price > 0 and percent > 0 in the declared percentage domain.",
+      "missing_evidence": [],
+      "evidence_roles": [
+        {
+          "file": "price.py",
+          "start": 1,
+          "end": 2,
+          "role": "Implementation and decision expression"
+        }
+      ],
+      "accepted_shape_witness": {
+        "verdict": "supported_defect",
+        "cause": "percent is used as a unit fraction without dividing by 100, causing wrong and negative prices.",
+        "when": "price > 0 and percent > 0 in the declared percentage domain.",
+        "refs": [
+          {
+            "file": "price.py",
+            "start": 1,
+            "end": 2
+          }
+        ],
+        "unknowns": []
+      },
+      "reject_examples": [],
+      "safe_probe": null
+    },
+    "dv05": {
+      "category": "no_defect_supported",
+      "topic": "existing-guard",
+      "mechanism": "max clamps total - done to zero and otherwise retains the remaining count.",
+      "trigger": "For done below, equal to or greater than total the required clamped remainder is returned.",
+      "missing_evidence": [],
+      "evidence_roles": [
+        {
+          "file": "count.py",
+          "start": 1,
+          "end": 2,
+          "role": "Implementation and decision expression"
+        }
+      ],
+      "accepted_shape_witness": {
+        "verdict": "no_defect_supported",
+        "cause": "max clamps total - done to zero and otherwise retains the remaining count.",
+        "when": "For done below, equal to or greater than total the required clamped remainder is returned.",
+        "refs": [
+          {
+            "file": "count.py",
+            "start": 1,
+            "end": 2
+          }
+        ],
+        "unknowns": []
+      },
+      "reject_examples": [],
+      "safe_probe": null
+    },
+    "dv06": {
+      "category": "unknown",
+      "topic": "missing-callback",
+      "mechanism": null,
+      "trigger": null,
+      "missing_evidence": [
+        "The implementation or return/exception contract of registry.resolve is absent."
+      ],
+      "evidence_roles": [],
+      "accepted_shape_witness": {
+        "verdict": "unknown",
+        "cause": null,
+        "when": null,
+        "refs": [],
+        "unknowns": [
+          "The implementation or return/exception contract of registry.resolve is absent."
+        ]
+      },
+      "reject_examples": [],
+      "safe_probe": null
+    }
+  }
+}

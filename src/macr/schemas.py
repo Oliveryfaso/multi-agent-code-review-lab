@@ -90,6 +90,10 @@ class AgentAnswer:
     evidence: list[Evidence]
     confidence: float
     next_steps: list[str]
+    status: str = "completed"
+    error_type: str | None = None
+    failure_kind: str | None = None
+    retryable: bool = False
 
 
 @dataclass

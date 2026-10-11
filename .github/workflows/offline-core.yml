@@ -70,6 +70,8 @@ jobs:
         run: >-
           python -I -S -B scripts/run_offline_tests.py
           test_final_reviewer
+          test_evidence_store
+          test_agent_evidence_integration
           test_orchestrator.OrchestratorTests.test_final_review_receives_store_evidence_after_recovery
 
       - name: Snapshots and static facts
@@ -91,6 +93,7 @@ jobs:
           test_diagnostic_compare test_diagnostic_allocation
           test_b11521_evidence
           test_diagnosis_constraints test_diagnostic_review
+          test_diagnostic_verification test_diagnostic_prompt_variants test_diagnostic_pipeline_cli
           test_diagnostic_dataset test_diagnostic_holdout_cases test_diagnostic_holdout_replay
 
       - name: Bounded kernel loopback lifecycle fixtures

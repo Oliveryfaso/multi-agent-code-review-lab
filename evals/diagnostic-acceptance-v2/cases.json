@@ -1,0 +1,109 @@
+{
+  "version": "diagnostic-acceptance-v2",
+  "prompt_version": "diagnostic-acceptance-v2",
+  "cases": [
+    {
+      "id": "av01",
+      "source": [
+        {
+          "file": "batches.py",
+          "start": 1,
+          "end": 3,
+          "body": "def batches(items, width):\n    return [items[start:start + width]\n            for start in range(0, len(items) - width, width)]\n"
+        }
+      ],
+      "question": "Determine whether batches preserves the complete input sequence.",
+      "scenario": "Return consecutive chunks of at most width elements; concatenating the returned chunks must equal items. Keep a shorter final chunk when needed. Cover empty and nonempty tuples.",
+      "assumptions": [
+        "items is a tuple of integers.",
+        "width is an exact positive integer."
+      ]
+    },
+    {
+      "id": "av02",
+      "source": [
+        {
+          "file": "mapping.py",
+          "start": 1,
+          "end": 4,
+          "body": "def with_value(original, key, value):\n    updated = dict(original)\n    updated[key] = value\n    return updated\n"
+        }
+      ],
+      "question": "Determine whether with_value meets its mapping update contract.",
+      "scenario": "Return a fresh dictionary containing the original entries with key assigned value. Preserve the original dictionary, including when key already exists. No recursive copying is required.",
+      "assumptions": [
+        "original is an exact dictionary with string keys and integer values.",
+        "key is a string and value is an integer."
+      ]
+    },
+    {
+      "id": "av03",
+      "source": [
+        {
+          "file": "digest.py",
+          "start": 1,
+          "end": 2,
+          "body": "def digest_text(payload, codec):\n    return codec.calculate(payload)\n"
+        }
+      ],
+      "question": "Determine whether digest_text returns the required digest representation.",
+      "scenario": "The required result is the lowercase 64-character hexadecimal SHA-256 digest of payload. The supplied source delegates the operation to codec.calculate.",
+      "assumptions": [
+        "payload is an exact bytes object.",
+        "codec.calculate is callable, but its implementation and return format contract are not supplied."
+      ]
+    },
+    {
+      "id": "av04",
+      "source": [
+        {
+          "file": "number.py",
+          "start": 1,
+          "end": 2,
+          "body": "def decimal_value(raw):\n    return int(raw, 16)\n"
+        }
+      ],
+      "question": "Determine whether decimal_value decodes the stated number representation.",
+      "scenario": "Decode raw as a base-10 nonnegative integer. The string 10 must produce integer 10; allowed strings may contain multiple decimal digits.",
+      "assumptions": [
+        "raw is a nonempty exact str containing only ASCII characters 0 through 9.",
+        "No hexadecimal prefixes, signs or whitespace occur."
+      ]
+    },
+    {
+      "id": "av05",
+      "source": [
+        {
+          "file": "minimum.py",
+          "start": 1,
+          "end": 2,
+          "body": "def smallest_or_none(values):\n    return min(values) if values else None\n"
+        }
+      ],
+      "question": "Determine whether smallest_or_none meets its empty and nonempty input contract.",
+      "scenario": "Return the numerically smallest element of a nonempty tuple. For an empty tuple return None without raising. Cover positive, zero and negative integer elements.",
+      "assumptions": [
+        "values is an exact tuple containing exact integers.",
+        "The empty tuple is an allowed input."
+      ]
+    },
+    {
+      "id": "av06",
+      "source": [
+        {
+          "file": "counter.py",
+          "start": 1,
+          "end": 5,
+          "body": "def bump(counter, locks, pause):\n    with locks.for_key(counter.key):\n        before = counter.value\n        pause()\n        counter.value = before + 1\n"
+        }
+      ],
+      "question": "Determine whether concurrent bump calls preserve every increment.",
+      "scenario": "Two workers can call bump on the same counter. After both calls, counter.value must have increased by exactly two without losing an update. pause may schedule another worker between the read and write.",
+      "assumptions": [
+        "counter.key is a stable string and counter.value starts as an integer.",
+        "pause does not modify the counter or locks and may yield execution to another worker.",
+        "locks.for_key returns a context manager, but its shared-lock identity and mutual-exclusion contract are not supplied."
+      ]
+    }
+  ]
+}

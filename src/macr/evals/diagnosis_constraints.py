@@ -2,8 +2,9 @@
 
 The existing answer parser remains the contract authority. These constraints
 cover field shape and verdict-dependent requirements, not source or semantic
-validity. Callers must still check stripped text, relative paths, unique refs,
-ordered/source-bounded line ranges and the diagnosis itself.
+validity. Callers must still check stripped text, relative paths,
+ordered/source-bounded line ranges and the diagnosis itself before normalizing
+complete duplicate citation positions.
 
 String bounds here apply before stripping, so this is a deliberately narrower
 generation language than the parser's strip-then-bound checks. The GBNF also
@@ -64,13 +65,14 @@ def build_optional_response_format():
     return {'type': 'json_schema', 'json_schema': {'schema': diagnosis_schema()}}
 
 
-def diagnosis_gbnf():
+def diagnosis_gbnf(*, evidence_first=False):
     """Return a bounded structural candidate with canonical field order.
 
     This hand-authored grammar is not a replacement for host validation or an
     attestation that schema conversion produces an equivalent native grammar.
     Whitespace between JSON tokens is allowed; positive integers exclude a
-    minus sign, decimal point, exponent and leading zero.
+    minus sign, decimal point, exponent and leading zero. The opt-in evidence
+    order moves only verdict after cause, when, refs and unknowns.
     """
     literal = lambda value: json.dumps(value, ensure_ascii=True)
     member = lambda name, value: literal(json.dumps(name)) + ' ws ":" ws ' + value
@@ -84,6 +86,8 @@ def diagnosis_gbnf():
             member('refs', 'optional-refs' if unknown else 'required-refs'),
             member('unknowns', 'required-gaps' if unknown else 'optional-gaps'),
         ]
+        if evidence_first:
+            values = values[1:] + values[:1]
         rules.append(verdict.replace('_', '-') + ' ::= "{" ws '
                      + ' ws "," ws '.join(values) + ' ws "}"')
     reference = [member('file', 'file-string'), member('start', 'positive-integer'),

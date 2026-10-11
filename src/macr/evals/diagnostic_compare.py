@@ -140,7 +140,7 @@ def _load(out):
     return out, manifest, reference, state, rows
 
 
-def _parse(content, source):
+def _parse(content, source, *, normalize_refs=True):
     try:
         _require(len(content.encode('utf-8')) <= 8192)
         answer = _object(content)
@@ -159,7 +159,6 @@ def _parse(content, source):
         for ref in refs:
             _require(type(ref) is dict and set(ref) == {'file', 'start', 'end'} and type(ref['file']) is str
                 and type(ref['start']) is type(ref['end']) is int and 1 <= ref['start'] <= ref['end'])
-        _require(len({_digest(ref) for ref in refs}) == len(refs))
     except (ValueError, TypeError, KeyError):
         raise ProviderError('eval_contract_invalid') from None
     for ref in refs:
@@ -168,6 +167,16 @@ def _parse(content, source):
             _require(any(ref['file'] == s['file'] and s['start'] <= ref['start'] <= ref['end'] <= s['end'] for s in source))
         except (ContractError, ValueError):
             raise ProviderError('eval_citation_invalid') from None
+    # Validate every original citation before applying set semantics.
+    unique, seen = [], set()
+    for ref in refs:
+        key = (ref['file'], ref['start'], ref['end'])
+        if key not in seen:
+            unique.append(ref)
+            seen.add(key)
+    if not normalize_refs and len(unique) != len(refs):
+        raise ProviderError('eval_contract_invalid')
+    answer['refs'] = unique
     return answer
 
 
@@ -187,7 +196,10 @@ def record_response(out, profile_id, case_id, *, response=None, error=None, proo
     row = {'cell': cell, 'profile_id': profile_id, 'case_id': case_id, 'provenance': provenance,
         'request_sha256': _digest(request), 'profile_sha256': _digest(profile),
         'response': raw, 'proof': proof, 'answer': None, 'error_code': None,
-        'failure_class': 'semantic_pending', 'diagnostic_passed': False}
+        'failure_class': 'semantic_pending', 'diagnostic_passed': False,
+        'raw_contract_valid': None, 'normalized_contract_valid': None,
+        'normalized_failure_class': 'semantic_pending', 'normalized_error_code': None,
+        'normalized_diagnostic_passed': False}
     try:
         if error is not None:
             _require(isinstance(error, ProviderError))
@@ -214,10 +226,20 @@ def record_response(out, profile_id, case_id, *, response=None, error=None, proo
             raise ProviderError('provider_contract')
         if response.finish_reason == 'length':
             raise ProviderError('model_output_incomplete')
-        row['answer'] = _parse(response.content, _object(request['messages'][-1]['content'])['source'])
+        source = _object(request['messages'][-1]['content'])['source']
+        row['answer'] = _parse(response.content, source)
+        row['normalized_contract_valid'] = True
+        try:
+            _parse(response.content, source, normalize_refs=False)
+            row['raw_contract_valid'] = True
+        except ProviderError as failure:
+            row.update(raw_contract_valid=False, error_code=failure.code, failure_class='format')
     except ProviderError as failure:
-        row.update(error_code=failure.code, failure_class='format'
-            if response is not None and failure.code in FORMAT_ERRORS else 'infrastructure')
+        kind = 'format' if response is not None and failure.code in FORMAT_ERRORS else 'infrastructure'
+        row.update(error_code=failure.code, failure_class=kind,
+            raw_contract_valid=False if kind == 'format' else None,
+            normalized_contract_valid=False if kind == 'format' else None,
+            normalized_failure_class=kind, normalized_error_code=failure.code)
     _require(len(encoded(row)) <= 128 * 1024, 'comparison_cell_limit')
     # Exclusive marker also survives failure of the first pending-state write.
     with (out / (cell.replace('/', '--') + '.claim')).open('xb'):
@@ -257,15 +279,26 @@ def _metrics(rows, expected, *, uncertain=False):
     pending = sum(row['failure_class'] == 'semantic_pending' for row in quality)
     strict = sum(row['strict_json_valid'] is True for row in quality)
     contract = sum(row['contract_valid'] is True for row in quality)
+    normalized_contract = sum(row['normalized_contract_valid'] is True for row in quality)
+    normalized_passes = sum(row['normalized_diagnostic_passed'] for row in quality)
+    normalized_pending = sum(row['normalized_failure_class'] == 'semantic_pending' for row in quality)
     return {'expected': expected, 'recorded': len(rows),
         'captured_responses': sum(row['response'] is not None for row in rows),
         'not_attempted': expected - len(rows) - int(uncertain), 'uncertain_cells': int(uncertain),
         'quality_cases': len(quality), 'strict_json_passes': strict,
         'strict_json_rate': strict / len(quality) if quality else None,
         'contract_passes': contract, 'contract_rate': contract / len(quality) if quality else None,
+        'raw_contract_passes': contract, 'raw_contract_rate': contract / len(quality) if quality else None,
+        'normalized_contract_passes': normalized_contract,
+        'normalized_contract_rate': normalized_contract / len(quality) if quality else None,
         'semantic_reviewed': sum(row['semantic_review'] == 'reviewed' for row in quality),
         'diagnostic_passes': passes, 'diagnostic_rate': passes / len(quality) if quality and not pending else None,
+        'normalized_semantic_reviewed': sum(row['normalized_semantic_review'] == 'reviewed' for row in quality),
+        'normalized_diagnostic_passes': normalized_passes,
+        'normalized_diagnostic_rate': normalized_passes / len(quality) if quality and not normalized_pending else None,
         **{name: sum(row['failure_class'] == name for row in rows)
+           for name in ('infrastructure', 'format', 'semantic', 'semantic_pending')},
+        **{'normalized_' + name: sum(row['normalized_failure_class'] == name for row in rows)
            for name in ('infrastructure', 'format', 'semantic', 'semantic_pending')}}
 
 
@@ -275,17 +308,36 @@ def compare_results(out, *, reviews=None):
     reviews = {} if reviews is None else reviews
     _require(type(reviews) is dict and set(reviews) <= {r['cell'] for r in rows})
     for row in rows:
-        answer, review = row['answer'], reviews.get(row['cell'])
+        review = reviews.get(row['cell'])
         infrastructure = row['failure_class'] == 'infrastructure'
         row['strict_json_valid'] = None if infrastructure else _strict_json(row['response']['content'])
-        row['contract_valid'] = None if infrastructure else answer is not None
-        row['semantic_review'] = 'not_applicable' if answer is None else 'pending' if review is None else 'reviewed'
+        row['raw_contract_valid'] = row.get('raw_contract_valid', None if infrastructure else row['answer'] is not None)
+        row['contract_valid'] = row['raw_contract_valid']
+        answer = None
+        row['normalized_contract_valid'] = None if infrastructure else False
+        row['normalized_failure_class'] = row['failure_class']
+        row['normalized_error_code'] = row['error_code']
+        if not infrastructure and row['error_code'] != 'model_output_incomplete':
+            source = _object(next(c['request'] for c in manifest['cases']
+                if c['id'] == row['case_id'])['messages'][-1]['content'])['source']
+            try:
+                answer = _parse(row['response']['content'], source)
+                row.update(normalized_contract_valid=True, normalized_failure_class='semantic_pending',
+                    normalized_error_code=None)
+            except ProviderError as failure:
+                row['normalized_error_code'] = failure.code
+        row['normalized_answer'] = answer
+        row['normalized_diagnostic_passed'] = False
+        row['semantic_review'] = 'not_applicable' if not row['contract_valid'] else 'pending' if review is None else 'reviewed'
+        row['normalized_semantic_review'] = 'not_applicable' if answer is None else 'pending' if review is None else 'reviewed'
         row['expected_verdict'] = reference['cases'][row['case_id']]
         if 'topics' in reference:
             row['topic'] = reference['topics'][row['case_id']]
-        row['verdict_correct'] = answer['verdict'] == row['expected_verdict'] if answer else None
-        row['healthy_false_alarm'] = answer['verdict'] == 'supported_defect' if answer and row['expected_verdict'] == 'no_defect_supported' else None
-        row['unknown_abstention'] = answer['verdict'] == 'unknown' if answer and row['expected_verdict'] == 'unknown' else None
+        row['normalized_verdict_correct'] = answer['verdict'] == row['expected_verdict'] if answer else None
+        row['normalized_healthy_false_alarm'] = answer['verdict'] == 'supported_defect' if answer and row['expected_verdict'] == 'no_defect_supported' else None
+        row['normalized_unknown_abstention'] = answer['verdict'] == 'unknown' if answer and row['expected_verdict'] == 'unknown' else None
+        for field in ('verdict_correct', 'healthy_false_alarm', 'unknown_abstention'):
+            row[field] = row['normalized_' + field] if row['contract_valid'] else None
         if review is None:
             continue
         dimensions = ('mechanism', 'trigger', 'citation_support', 'abstention_reason')
@@ -302,8 +354,11 @@ def compare_results(out, *, reviews=None):
             citation = review['citation_support'] == 'unknown'
         semantic = (review['abstention_reason'] == 'supported' if answer['verdict'] == 'unknown'
                     else review['mechanism'] == review['trigger'] == 'supported')
-        row.update(review=review, diagnostic_passed=bool(row['verdict_correct'] and citation and semantic))
-        row['failure_class'] = None if row['diagnostic_passed'] else 'semantic'
+        passed = bool(row['normalized_verdict_correct'] and citation and semantic)
+        row.update(review=review, diagnostic_passed=bool(row['contract_valid'] and passed),
+            normalized_diagnostic_passed=passed, normalized_failure_class=None if passed else 'semantic')
+        if row['contract_valid']:
+            row['failure_class'] = None if passed else 'semantic'
     models = []
     for profile in manifest['profiles']:
         selected = [r for r in rows if r['profile_id'] == profile['profile_id']]
@@ -357,26 +412,30 @@ def save_comparison(out, report):
     folder = out / ('report-' + str(uuid4()))
     lines = ['# Diagnostic comparison', '', report['measurement'], '',
              f"Prompt: {report['prompt_version']}; dataset: {report['dataset_version']}", '',
-             '| Model | Records | Captured | Quality cases | Score | Infrastructure | Format/contract | Semantic | Pending |',
-             '| --- | ---: | ---: | ---: | --- | ---: | ---: | ---: | ---: |']
+             '| Model | Records | Captured | Quality cases | Raw score | Normalized score | Infrastructure | Format/contract | Semantic | Pending |',
+             '| --- | ---: | ---: | ---: | --- | --- | ---: | ---: | ---: | ---: |']
     for model in report['models']:
         score='pending' if model['semantic_pending'] else 'N/A' if model['diagnostic_rate'] is None else str(model['diagnostic_passes'])+'/'+str(model['quality_cases'])
+        normalized_score='pending' if model['normalized_semantic_pending'] else 'N/A' if model['normalized_diagnostic_rate'] is None else str(model['normalized_diagnostic_passes'])+'/'+str(model['quality_cases'])
         lines.append('| ' + ' | '.join(str(value) for value in [model['profile']['profile_id'], model['recorded'],
-            model['captured_responses'],model['quality_cases'],score,model['infrastructure'],model['format'],model['semantic'],model['semantic_pending']]) + ' |')
+            model['captured_responses'],model['quality_cases'],score,normalized_score,model['infrastructure'],model['format'],model['semantic'],model['semantic_pending']]) + ' |')
     lines += ['', 'Rates use captured quality cases, including failed structure/contract. Infrastructure is excluded; pending semantic review has no semantic rate.', '',
-        '| Model | Category | Expected | Recorded | Captured | Not attempted | Uncertain | Quality | Strict JSON | Contract | Reviewed | Semantic pass | Infrastructure | Format | Semantic fail | Pending |',
-        '| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- | ---: | --- | ---: | ---: | ---: | ---: |']
+        'Contract and semantic scores retain the raw strict contract. Normalized scores use only fully validated, stably deduplicated citation positions; original captures and record hashes are unchanged.', '',
+        '| Model | Category | Expected | Recorded | Captured | Not attempted | Uncertain | Quality | Strict JSON | Raw contract | Normalized contract | Reviewed | Raw semantic pass | Normalized semantic pass | Infrastructure | Format | Semantic fail | Pending |',
+        '| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- | --- | ---: | --- | --- | ---: | ---: | ---: | ---: |']
     for model in report['models']:
         for dimension, categories in model['categories'].items():
             for category, metrics in categories.items():
                 quality = metrics['quality_cases']
                 strict = f"{metrics['strict_json_passes']}/{quality}" if quality else 'N/A'
                 contract = f"{metrics['contract_passes']}/{quality}" if quality else 'N/A'
+                normalized_contract = f"{metrics['normalized_contract_passes']}/{quality}" if quality else 'N/A'
                 score = 'pending' if metrics['semantic_pending'] else f"{metrics['diagnostic_passes']}/{quality}" if quality else 'N/A'
+                normalized_score = 'pending' if metrics['normalized_semantic_pending'] else f"{metrics['normalized_diagnostic_passes']}/{quality}" if quality else 'N/A'
                 lines.append('| ' + ' | '.join(str(value) for value in [model['profile']['profile_id'],
                     dimension + ':' + category, metrics['expected'], metrics['recorded'], metrics['captured_responses'],
-                    metrics['not_attempted'], metrics['uncertain_cells'], quality, strict, contract,
-                    metrics['semantic_reviewed'], score, metrics['infrastructure'], metrics['format'],
+                    metrics['not_attempted'], metrics['uncertain_cells'], quality, strict, contract, normalized_contract,
+                    metrics['semantic_reviewed'], score, normalized_score, metrics['infrastructure'], metrics['format'],
                     metrics['semantic'], metrics['semantic_pending']]) + ' |')
     lines += ['', '| Cell | Origin | Outcome | Error |', '| --- | --- | --- | --- |']
     for row in report['cases']:

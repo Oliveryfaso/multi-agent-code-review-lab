@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from collections import Counter
+from dataclasses import replace
 
 from macr.providers.base import LLMProvider, LLMResponse, ModelRequest, ProviderError, invoke
 from macr.prompts import system_prompt
@@ -9,10 +10,38 @@ from macr.schemas import AgentAnswer, Evidence, Plan
 
 
 class SolverAgent:
+    OUTPUT_SCHEMA = {
+        "type": "object",
+        "additionalProperties": False,
+        "required": ["answer", "evidence", "next_steps"],
+        "properties": {
+            "answer": {"type": "string", "minLength": 1},
+            "evidence": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "required": ["file", "line_start", "line_end", "symbol", "source_tool"],
+                    "properties": {
+                        "file": {"type": "string"},
+                        "line_start": {"type": "integer", "minimum": 1},
+                        "line_end": {"type": "integer", "minimum": 1},
+                        "symbol": {"type": ["string", "null"]},
+                        "source_tool": {"type": "string"},
+                    },
+                },
+            },
+            "next_steps": {"type": "array", "items": {"type": "string"}},
+        },
+    }
+
     def __init__(self, provider: LLMProvider | None = None) -> None:
         self.provider = provider
 
-    def solve(self, query: str, plan: Plan, evidence: list[Evidence]) -> tuple[AgentAnswer, LLMResponse | None]:
+    def solve(
+        self, query: str, plan: Plan, evidence: list[Evidence],
+        *, validation_feedback: list[str] | None = None,
+    ) -> tuple[AgentAnswer, LLMResponse | None]:
         if not evidence:
             return AgentAnswer(
                 answer=(
@@ -22,6 +51,8 @@ class SolverAgent:
                 evidence=[],
                 confidence=0.2,
                 next_steps=["try semantic_search after an embedding index is available"],
+                status="incomplete", error_type="missing_context",
+                failure_kind="missing_context", retryable=True,
             ), None
 
         ranked_evidence = sorted(
@@ -50,30 +81,34 @@ class SolverAgent:
         fallback = AgentAnswer(
             answer=answer,
             evidence=ranked_evidence[:12],
-            confidence=min(0.9, 0.45 + len(ranked_evidence[:12]) * 0.05),
+            confidence=self._evidence_confidence(ranked_evidence[:12]),
             next_steps=next_steps,
         )
         if not self.provider:
             return fallback, None
+        # Select from the full evidence set before clipping the provider context.
+        # The deterministic answer keeps its original ranking and twelve-item limit.
+        visible_evidence = self._compact_evidence(sorted(ranked_evidence, key=lambda item: not item.snippet.strip()))
+        provider_context = replace(fallback, evidence=visible_evidence)
         try:
-            llm_response = self._generate_with_llm(query, plan, fallback)
-        except Exception as exc:
-            fallback.answer = (
-                f"{fallback.answer} LLM Provider 调用失败，已使用确定性 fallback。"
-                f"错误类型：{type(exc).__name__}。"
-            )
-            fallback.next_steps.insert(0, "check the configured local model profile; no remote fallback is enabled")
-            return fallback, None
-        if not llm_response.content.strip():
-            return fallback, llm_response
-        return AgentAnswer(
-            answer=llm_response.content.strip(),
-            evidence=fallback.evidence,
-            confidence=fallback.confidence,
-            next_steps=fallback.next_steps,
-        ), llm_response
+            llm_response = self._generate_with_llm(query, plan, provider_context, validation_feedback=validation_feedback)
+        except ProviderError as exc:
+            kind, retryable = self._failure_classification(exc.code)
+            return self._failure(exc.code, kind, retryable), None
+        if not isinstance(llm_response.finish_reason, str):
+            return self._failure("provider_contract", "provider_error", False), llm_response
+        if llm_response.finish_reason not in {"stop", "end_turn"}:
+            return self._failure("model_output_incomplete", "model_invalid", True), llm_response
+        try:
+            answer = self._parse_answer(llm_response.content, visible_evidence)
+        except ValueError as exc:
+            return self._failure(str(exc), "model_invalid", True), llm_response
+        return answer, llm_response
 
-    def _generate_with_llm(self, query: str, plan: Plan, answer: AgentAnswer) -> LLMResponse:
+    def _generate_with_llm(
+        self, query: str, plan: Plan, answer: AgentAnswer,
+        *, validation_feedback: list[str] | None = None,
+    ) -> LLMResponse:
         evidence_payload = [
             {
                 "file": item.file,
@@ -92,8 +127,9 @@ class SolverAgent:
                 "role": "system",
                 "content": system_prompt(
                     "你是代码审查 Agent 的 Solver。只能基于给定 evidence 回答，"
-                    "必须引用文件路径和行号；证据不足时明确说明不确定。"
-                    "回答要简洁，适合工程师阅读。"
+                    "返回符合给定 schema 的 JSON；evidence 必须逐项复制所用证据的五个引用字段，"
+                    "不得借用未引用的检索证据。证据不足时明确说明不确定，并允许 evidence 为空。"
+                    "不要提供自报置信度。回答要简洁，适合工程师阅读。"
                 ),
             },
             {
@@ -103,23 +139,95 @@ class SolverAgent:
                         "query": query,
                         "intent": plan.intent,
                         "evidence": evidence_payload,
-                        "required_format": {
-                            "summary": "one paragraph",
-                            "evidence": "cite file:line",
-                            "next_steps": "short actionable list",
-                        },
+                        "required_format": self.OUTPUT_SCHEMA,
+                        "validation_feedback": validation_feedback or [],
                     },
                     ensure_ascii=False,
                 ),
             },
         ]
-        return invoke(self.provider, ModelRequest(messages))
+        return invoke(self.provider, ModelRequest(messages, response_schema=self.OUTPUT_SCHEMA))
+
+    def _parse_answer(self, content: str, evidence: list[Evidence]) -> AgentAnswer:
+        def unique_object(pairs):
+            result = {}
+            for key, value in pairs:
+                if key in result:
+                    raise ValueError("solver_duplicate_json_key")
+                result[key] = value
+            return result
+
+        try:
+            content.encode("utf-8")
+            payload = json.loads(content, object_pairs_hook=unique_object)
+        except (json.JSONDecodeError, UnicodeError, RecursionError):
+            raise ValueError("solver_output_invalid") from None
+        try:
+            json.dumps(payload, ensure_ascii=False, allow_nan=False).encode("utf-8")
+        except (ValueError, UnicodeError, RecursionError):
+            raise ValueError("solver_output_invalid") from None
+        if not isinstance(payload, dict) or set(payload) != {"answer", "evidence", "next_steps"}:
+            raise ValueError("solver_output_invalid")
+        if not isinstance(payload["answer"], str) or not payload["answer"].strip():
+            raise ValueError("solver_output_invalid")
+        if not isinstance(payload["evidence"], list) or not isinstance(payload["next_steps"], list):
+            raise ValueError("solver_output_invalid")
+        if not all(isinstance(step, str) for step in payload["next_steps"]):
+            raise ValueError("solver_output_invalid")
+        authority = {self._citation_key(item): item for item in evidence}
+        bound: list[Evidence] = []
+        fields = {"file", "line_start", "line_end", "symbol", "source_tool"}
+        # Validate every raw reference before deduplication; no repair or dropping foreign references.
+        for citation in payload["evidence"]:
+            if not isinstance(citation, dict) or set(citation) != fields:
+                raise ValueError("solver_citation_invalid")
+            if (not isinstance(citation["file"], str) or not isinstance(citation["source_tool"], str)
+                    or type(citation["line_start"]) is not int or type(citation["line_end"]) is not int
+                    or citation["line_start"] < 1 or citation["line_end"] < citation["line_start"]
+                    or citation["symbol"] is not None and not isinstance(citation["symbol"], str)):
+                raise ValueError("solver_citation_invalid")
+            key = (citation["file"], citation["line_start"], citation["line_end"],
+                   citation["symbol"], citation["source_tool"])
+            if key not in authority:
+                raise ValueError("solver_citation_outside_context")
+            bound.append(authority[key])
+        unique: list[Evidence] = []
+        seen = set()
+        for item in bound:
+            key = self._citation_key(item)
+            if key not in seen:
+                seen.add(key)
+                unique.append(item)
+        return AgentAnswer(payload["answer"].strip(), unique,
+                           self._evidence_confidence(unique) if unique else 0.2, payload["next_steps"])
+
+    def _failure(self, code: str, kind: str, retryable: bool) -> AgentAnswer:
+        return AgentAnswer(
+            f"模型步骤未完成（{code}）。该结果不构成代码诊断。", [], 0.0,
+            ["retry the failed model step within the run budget" if retryable
+             else "check the configured provider and inspect the recorded failure"],
+            status="failed", error_type=code, failure_kind=kind, retryable=retryable,
+        )
+
+    def _failure_classification(self, code: str) -> tuple[str, bool]:
+        if code in {"model_timeout", "model_transport", "model_busy"}:
+            return "transient", True
+        if code in {"model_output_invalid", "model_output_incomplete"}:
+            return "model_invalid", True
+        return "provider_error", False
+
+    def _citation_key(self, item: Evidence) -> tuple[str, int, int, str | None, str]:
+        return (item.file, item.line_start, item.line_end, item.symbol, item.source_tool)
+
+    def _evidence_confidence(self, evidence: list[Evidence]) -> float:
+        positions = {(item.file, item.line_start, item.line_end) for item in evidence}
+        return min(0.9, 0.45 + len(positions) * 0.05)
 
     def _compact_evidence(self, evidence: list[Evidence]) -> list[Evidence]:
         compacted: list[Evidence] = []
-        seen: set[tuple[str, int, str | None, str]] = set()
+        seen: set[tuple[str, int, int, str | None, str]] = set()
         for item in evidence:
-            key = (item.file, item.line_start, item.symbol, item.source_tool)
+            key = self._citation_key(item)
             if key in seen:
                 continue
             seen.add(key)

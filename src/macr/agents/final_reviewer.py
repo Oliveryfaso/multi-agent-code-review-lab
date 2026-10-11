@@ -25,13 +25,13 @@ class FinalReviewAgent:
         answer_confidence = answer.confidence if answer else 0.0
         answer_evidence = answer.evidence if answer else []
         authority = {
-            (item.file, item.line_start, item.line_end, item.symbol or "", item.source_tool or ""): item
+            (item.file, item.line_start, item.line_end, item.symbol, item.source_tool): item
             for item in evidence
         }
         cited_evidence: list[Evidence] = []
         unknown_references = 0
         for item in answer_evidence:
-            key = (item.file, item.line_start, item.line_end, item.symbol or "", item.source_tool or "")
+            key = (item.file, item.line_start, item.line_end, item.symbol, item.source_tool)
             source = authority.get(key)
             if source is None:
                 unknown_references += 1
@@ -47,6 +47,9 @@ class FinalReviewAgent:
         if not answer:
             issues.append("solver did not produce an answer")
             questions.append("Can you provide the target file, function name, or failing test?")
+        elif answer.status != "completed":
+            issues.append(f"solver step {answer.status}: {answer.error_type or 'unspecified_failure'}")
+            questions.append("Can the recorded solver failure be resolved before accepting this run?")
         if answer_confidence < 0.55:
             issues.append(f"answer confidence too low: {answer_confidence:.2f}")
             questions.append("Which file, function, endpoint, or error log should be prioritized?")
@@ -84,12 +87,15 @@ class FinalReviewAgent:
                 questions.append("Should the failing tests be treated as expected, or should the patch be regenerated?")
 
         ok = not issues
+        retry_recommended = bool(issues) and retry_count == 0 and (
+            answer is None or answer.status == "completed" or answer.retryable
+        )
         return FinalReviewReport(
             ok=ok,
             confidence=self._confidence(answer_confidence, evidence_count, issues),
             issues=issues,
-            retry_recommended=bool(issues) and retry_count == 0,
-            human_review_required=bool(issues) and retry_count > 0,
+            retry_recommended=retry_recommended,
+            human_review_required=bool(issues) and not retry_recommended,
             questions=list(dict.fromkeys(questions))[:4],
         )
 

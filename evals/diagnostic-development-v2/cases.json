@@ -1,0 +1,107 @@
+{
+  "version": "diagnostic-development-v2",
+  "prompt_version": "diagnostic-development-v2",
+  "cases": [
+    {
+      "id": "dv01",
+      "source": [
+        {
+          "file": "access.py",
+          "start": 1,
+          "end": 2,
+          "body": "def allowed(staff, paid):\n    return staff or paid\n"
+        }
+      ],
+      "question": "Determine whether access implements the stated policy.",
+      "scenario": "Calls cover all four boolean pairs. Access is permitted only when both staff and paid are True.",
+      "assumptions": [
+        "staff and paid are exact bool values."
+      ]
+    },
+    {
+      "id": "dv02",
+      "source": [
+        {
+          "file": "view.py",
+          "start": 1,
+          "end": 2,
+          "body": "def reverse_view(items):\n    return tuple(reversed(items))\n"
+        }
+      ],
+      "question": "Determine whether reverse_view meets its contract.",
+      "scenario": "The function returns elements in reverse order without mutating the caller sequence. Inputs include empty, singleton and multiple-element tuples.",
+      "assumptions": [
+        "items is a tuple of integers.",
+        "No identity preservation requirement exists for the returned tuple."
+      ]
+    },
+    {
+      "id": "dv03",
+      "source": [
+        {
+          "file": "cache.py",
+          "start": 1,
+          "end": 2,
+          "body": "def expired(age, limit, clock):\n    return age >= clock(limit)\n"
+        }
+      ],
+      "question": "Determine whether expiry matches the declared age policy.",
+      "scenario": "Expiry should compare age with the limit in seconds; the supplied snippet delegates the threshold conversion to clock.",
+      "assumptions": [
+        "age and limit are nonnegative finite numbers in seconds.",
+        "The implementation and documented return unit of clock are not supplied."
+      ]
+    },
+    {
+      "id": "dv04",
+      "source": [
+        {
+          "file": "price.py",
+          "start": 1,
+          "end": 2,
+          "body": "def discounted(price, percent):\n    return price * (1 - percent)\n"
+        }
+      ],
+      "question": "Determine whether discounted implements percentage discounts.",
+      "scenario": "A percentage input of 25 must reduce a price of 80 to 60. Percent ranges from 0 to 100.",
+      "assumptions": [
+        "price is a nonnegative finite float.",
+        "percent is a finite float in the inclusive range 0 through 100."
+      ]
+    },
+    {
+      "id": "dv05",
+      "source": [
+        {
+          "file": "count.py",
+          "start": 1,
+          "end": 2,
+          "body": "def pending(done, total):\n    return max(0, total - done)\n"
+        }
+      ],
+      "question": "Determine whether pending implements the count requirement.",
+      "scenario": "Return the remaining number of jobs, clamped to zero when completed count equals or exceeds total.",
+      "assumptions": [
+        "done and total are nonnegative integers.",
+        "A negative remainder must become zero."
+      ]
+    },
+    {
+      "id": "dv06",
+      "source": [
+        {
+          "file": "lookup.py",
+          "start": 1,
+          "end": 2,
+          "body": "def lookup(key, registry):\n    return registry.resolve(key)\n"
+        }
+      ],
+      "question": "Determine whether lookup returns a present key without an exception.",
+      "scenario": "A present string key is passed to registry.resolve.",
+      "assumptions": [
+        "key is a string known to be present.",
+        "No implementation or behavioral contract for registry.resolve is available."
+      ]
+    }
+  ]
+}

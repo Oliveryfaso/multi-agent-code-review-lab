@@ -1,0 +1,167 @@
+{
+  "version": "diagnostic-acceptance-v2",
+  "cases": {
+    "av01": {
+      "category": "supported_defect",
+      "topic": "chunk-coverage",
+      "mechanism": "The range stop subtracts width from the input length, so it excludes the final required chunk start and drops a trailing portion of every nonempty input.",
+      "trigger": "A nonempty tuple, for example items=(3, 4, 5) and width=2: only (3, 4) is returned and 5 is dropped.",
+      "missing_evidence": [],
+      "evidence_roles": [
+        {
+          "file": "batches.py",
+          "start": 1,
+          "end": 3,
+          "role": "The comprehension and its range stop determine which source slices are returned."
+        }
+      ],
+      "accepted_shape_witness": {
+        "verdict": "supported_defect",
+        "cause": "The range stop subtracts width from the input length, so it excludes the final required chunk start and drops a trailing portion of every nonempty input.",
+        "when": "A nonempty tuple, for example items=(3, 4, 5) and width=2: only (3, 4) is returned and 5 is dropped.",
+        "refs": [
+          {
+            "file": "batches.py",
+            "start": 1,
+            "end": 3
+          }
+        ],
+        "unknowns": []
+      },
+      "reject_examples": [],
+      "safe_probe": null
+    },
+    "av02": {
+      "category": "no_defect_supported",
+      "topic": "copy-before-update",
+      "mechanism": "dict(original) creates a separate dictionary; assignment changes only that copy, retaining other entries while replacing or adding the requested key.",
+      "trigger": "For any allowed original dictionary, including an empty dictionary and an existing target key, the returned copy has the requested value and original remains unchanged.",
+      "missing_evidence": [],
+      "evidence_roles": [
+        {
+          "file": "mapping.py",
+          "start": 1,
+          "end": 4,
+          "role": "The separate dictionary construction precedes the assignment and return."
+        }
+      ],
+      "accepted_shape_witness": {
+        "verdict": "no_defect_supported",
+        "cause": "dict(original) creates a separate dictionary; assignment changes only that copy, retaining other entries while replacing or adding the requested key.",
+        "when": "For any allowed original dictionary, including an empty dictionary and an existing target key, the returned copy has the requested value and original remains unchanged.",
+        "refs": [
+          {
+            "file": "mapping.py",
+            "start": 1,
+            "end": 4
+          }
+        ],
+        "unknowns": []
+      },
+      "reject_examples": [],
+      "safe_probe": null
+    },
+    "av03": {
+      "category": "unknown",
+      "topic": "missing-digest-contract",
+      "mechanism": null,
+      "trigger": null,
+      "missing_evidence": [
+        "The implementation and digest algorithm/return format contract of codec.calculate are absent."
+      ],
+      "evidence_roles": [],
+      "accepted_shape_witness": {
+        "verdict": "unknown",
+        "cause": null,
+        "when": null,
+        "refs": [],
+        "unknowns": [
+          "The implementation and digest algorithm/return format contract of codec.calculate are absent."
+        ]
+      },
+      "reject_examples": [],
+      "safe_probe": null
+    },
+    "av04": {
+      "category": "supported_defect",
+      "topic": "radix-mismatch",
+      "mechanism": "The explicit radix 16 interprets the decimal digit string as hexadecimal, so place values are powers of 16 rather than powers of 10.",
+      "trigger": "A permitted multi-digit decimal string whose radix values differ, for example raw='10', produces 16 instead of the required 10.",
+      "missing_evidence": [],
+      "evidence_roles": [
+        {
+          "file": "number.py",
+          "start": 1,
+          "end": 2,
+          "role": "The int call explicitly supplies radix 16."
+        }
+      ],
+      "accepted_shape_witness": {
+        "verdict": "supported_defect",
+        "cause": "The explicit radix 16 interprets the decimal digit string as hexadecimal, so place values are powers of 16 rather than powers of 10.",
+        "when": "A permitted multi-digit decimal string whose radix values differ, for example raw='10', produces 16 instead of the required 10.",
+        "refs": [
+          {
+            "file": "number.py",
+            "start": 1,
+            "end": 2
+          }
+        ],
+        "unknowns": []
+      },
+      "reject_examples": [],
+      "safe_probe": null
+    },
+    "av05": {
+      "category": "no_defect_supported",
+      "topic": "guarded-empty-minimum",
+      "mechanism": "Tuple truth tests emptiness, so the conditional avoids min on an empty tuple and returns None; min selects the smallest integer for each nonempty tuple.",
+      "trigger": "For the empty tuple the false branch returns None, and for every nonempty allowed tuple the true branch returns its minimum.",
+      "missing_evidence": [],
+      "evidence_roles": [
+        {
+          "file": "minimum.py",
+          "start": 1,
+          "end": 2,
+          "role": "The conditional guards min with the tuple emptiness check."
+        }
+      ],
+      "accepted_shape_witness": {
+        "verdict": "no_defect_supported",
+        "cause": "Tuple truth tests emptiness, so the conditional avoids min on an empty tuple and returns None; min selects the smallest integer for each nonempty tuple.",
+        "when": "For the empty tuple the false branch returns None, and for every nonempty allowed tuple the true branch returns its minimum.",
+        "refs": [
+          {
+            "file": "minimum.py",
+            "start": 1,
+            "end": 2
+          }
+        ],
+        "unknowns": []
+      },
+      "reject_examples": [],
+      "safe_probe": null
+    },
+    "av06": {
+      "category": "unknown",
+      "topic": "missing-lock-identity",
+      "mechanism": null,
+      "trigger": null,
+      "missing_evidence": [
+        "The shared identity and mutual-exclusion contract of locks.for_key for the same key across workers are absent."
+      ],
+      "evidence_roles": [],
+      "accepted_shape_witness": {
+        "verdict": "unknown",
+        "cause": null,
+        "when": null,
+        "refs": [],
+        "unknowns": [
+          "The shared identity and mutual-exclusion contract of locks.for_key for the same key across workers are absent."
+        ]
+      },
+      "reject_examples": [],
+      "safe_probe": null
+    }
+  }
+}

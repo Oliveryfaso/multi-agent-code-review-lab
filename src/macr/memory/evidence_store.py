@@ -13,7 +13,7 @@ class EvidenceStore:
 
     def __init__(self, snapshot: SnapshotRef | None = None) -> None:
         self._items: list[Evidence] = []
-        self._index: dict[tuple[str, int, int, str, str], int] = {}
+        self._index: dict[tuple[str, int, int, str | None, str], int] = {}
         self.snapshot = snapshot
         self._records: dict[str, EvidenceRecord] = {}
 
@@ -102,11 +102,11 @@ class EvidenceStore:
     def __repr__(self) -> str:
         return f"EvidenceStore({[asdict(item) for item in self._items]!r})"
 
-    def _key(self, evidence: Evidence) -> tuple[str, int, int, str, str]:
+    def _key(self, evidence: Evidence) -> tuple[str, int, int, str | None, str]:
         return (
             evidence.file,
             evidence.line_start,
             evidence.line_end,
-            evidence.symbol or "",
-            evidence.source_tool or "",
+            evidence.symbol,
+            evidence.source_tool,
         )

@@ -1,6 +1,7 @@
 """Synthetic structural checks; these tests do not attest native compatibility."""
 
 import copy
+import hashlib
 import json
 import unittest
 
@@ -145,7 +146,6 @@ class DiagnosisConstraintTests(unittest.TestCase):
                     self.answer() | {'refs': [{'file': '/outside.py', 'start': 1, 'end': 2}]},
                     self.answer() | {'refs': [{'file': 'logic.py', 'start': 2, 'end': 1}]},
                     self.answer() | {'refs': [{'file': 'logic.py', 'start': 1.0, 'end': 2}]},
-                    self.answer() | {'refs': self.answer()['refs'] * 2},
                     self.answer() | {'refs': [{'file': 'logic.py', 'start': 1, 'end': 999999}]}]
         from macr.evals.diagnostic_compare import _parse
         from macr.providers.base import ProviderError
@@ -163,6 +163,9 @@ class DiagnosisConstraintTests(unittest.TestCase):
             answer = self.answer(verdict)
             self.assertTrue(matches(diagnosis_schema(), answer))
             self.assertEqual(_parse(json.dumps(answer), source), answer)
+            repeated = answer | {'refs': answer['refs'] * 2}
+            self.assertTrue(matches(diagnosis_schema(), repeated))
+            self.assertEqual(_parse(json.dumps(repeated), source), answer)
 
     def test_optional_wrapper_is_fresh_serializable_and_not_enabled_by_default(self):
         from macr.evals.diagnostic_compare import OUTPUT_SCHEMA
@@ -186,6 +189,24 @@ class DiagnosisConstraintTests(unittest.TestCase):
         self.assertIn('positive-integer ::= [1-9] [0-9]*', grammar)
         self.assertNotIn('expected_verdict', grammar)
         self.assertEqual(diagnosis_gbnf(), grammar)
+
+    def test_evidence_first_changes_only_branch_field_order_and_default_bytes_stay_frozen(self):
+        grammar = diagnosis_gbnf()
+        self.assertEqual(hashlib.sha256(grammar.encode()).hexdigest(),
+            'cc5ceae80ed6ffe95c7f3d75c32fb9a1f4820789ecc1962ac96fab6477dc2a40')
+        self.assertEqual(diagnosis_gbnf(evidence_first=False), grammar)
+        default, evidence = grammar.splitlines(), diagnosis_gbnf(evidence_first=True).splitlines()
+        self.assertEqual(default[:1] + default[4:], evidence[:1] + evidence[4:])
+        fields = ('cause', 'when', 'refs', 'unknowns', 'verdict')
+        for before, after in zip(default[1:4], evidence[1:4]):
+            with self.subTest(rule=after.split(' ::= ')[0]):
+                body = before.split(' ::= "{" ws ', 1)[1].removesuffix(' ws "}"')
+                members = body.split(' ws "," ws ')
+                expected = before.split(' ::= ', 1)[0] + ' ::= "{" ws '
+                expected += ' ws "," ws '.join(members[1:] + members[:1]) + ' ws "}"'
+                self.assertEqual(after, expected)
+                positions = [after.index(json.dumps(json.dumps(field))) for field in fields]
+                self.assertEqual(positions, sorted(positions))
 
 
 if __name__ == '__main__':

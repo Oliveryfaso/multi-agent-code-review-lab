@@ -1,0 +1,1 @@
+Development-only six cases; two defects, two healthy implementations and two missing contracts. This set is isolated from the old holdout and new-samples v1. The reference never enters model prompts. Mechanism and complete domain/trigger must be independently checked; verdict matches alone are insufficient. No dynamic source execution is required.

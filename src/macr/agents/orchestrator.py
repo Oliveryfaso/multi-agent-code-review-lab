@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict
+import json
 from pathlib import Path
 
 from macr.agents.code_smell import CodeSmellAgent
@@ -549,58 +550,71 @@ class Orchestrator:
             },
         )
         solver = self.solver if policy.use_llm_solver else SolverAgent()
+        solver_attempts: list[dict] = []
+        request_attempted = bool(solver.provider and evidence)
         trace.answer, llm_response = solver.solve(query, plan, evidence.items())
-        if llm_response:
-            trace.llm_calls.append(self._llm_record(llm_response, role="solver"))
+        self._record_solver_attempt(trace, board, solver, llm_response, "solver", request_attempted, solver_attempts)
         retry_count = 0
         preliminary_review = self.final_reviewer.review(query, plan, trace.answer, evidence.items(), trace.tool_calls, retry_count=retry_count)
         if preliminary_review.retry_recommended:
             retry_count = 1
-            recovery_terms = self.final_reviewer.recovery_terms(query, plan, preliminary_review.issues)
+            failure_kind = trace.answer.failure_kind if trace.answer else None
+            recovery_action = "model_retry" if failure_kind == "transient" else (
+                "model_repair" if failure_kind == "model_invalid" else "evidence_recovery"
+            )
+            recovery_terms = self.final_reviewer.recovery_terms(query, plan, preliminary_review.issues) if recovery_action == "evidence_recovery" else []
             self._state(
                 trace,
                 "recovery",
                 "running",
-                "Final Review Agent requested evidence recovery",
-                {"issues": preliminary_review.issues, "terms": recovery_terms},
+                "Final Review Agent requested bounded recovery",
+                {"issues": preliminary_review.issues, "terms": recovery_terms, "action": recovery_action},
             )
             board.post(
                 "recovery",
                 "final_review_agent",
                 "recovery_request",
-                "Evidence recovery requested",
-                {"issues": preliminary_review.issues, "terms": recovery_terms, "questions": preliminary_review.questions},
+                "Bounded solver recovery requested",
+                {"issues": preliminary_review.issues, "terms": recovery_terms, "questions": preliminary_review.questions, "action": recovery_action},
             )
-            self._recover_evidence(repo_path, recovery_terms, plan, trace, board, candidate_files, file_match_lines, evidence)
-            trace.answer, llm_response = solver.solve(query, plan, evidence.items())
-            if llm_response:
-                trace.llm_calls.append(self._llm_record(llm_response, role="solver_retry"))
+            if recovery_action == "evidence_recovery":
+                self._recover_evidence(repo_path, recovery_terms, plan, trace, board, candidate_files, file_match_lines, evidence)
+            request_attempted = bool(solver.provider and evidence)
+            if recovery_action == "model_repair":
+                trace.answer, llm_response = solver.solve(query, plan, evidence.items(), validation_feedback=preliminary_review.issues)
+            else:
+                trace.answer, llm_response = solver.solve(query, plan, evidence.items())
+            self._record_solver_attempt(trace, board, solver, llm_response, "solver_retry", request_attempted, solver_attempts)
             board.post(
                 "recovery",
                 "orchestrator",
                 "recovery_result",
-                "Evidence recovery completed",
-                {"evidence_count": len(evidence), "answer_confidence": trace.answer.confidence if trace.answer else 0},
+                "Bounded solver recovery attempted",
+                {"evidence_count": len(evidence), "answer_confidence": trace.answer.confidence if trace.answer else 0,
+                 "action": recovery_action, "solver_status": trace.answer.status if trace.answer else "failed"},
             )
             self._state(
                 trace,
                 "recovery",
-                "completed",
-                "Evidence recovery and solver retry completed",
-                {"evidence_count": len(evidence), "answer_confidence": trace.answer.confidence if trace.answer else 0},
+                "completed" if trace.answer and trace.answer.status == "completed" else "failed",
+                "Bounded solver recovery finished",
+                {"evidence_count": len(evidence), "answer_confidence": trace.answer.confidence if trace.answer else 0,
+                 "action": recovery_action, "solver_status": trace.answer.status if trace.answer else "failed"},
             )
         self._state(
             trace,
             "solved",
-            "completed",
-            "Solver produced evidence-backed review",
-            {"answer_evidence_count": len(trace.answer.evidence) if trace.answer else 0},
+            "completed" if trace.answer and trace.answer.status == "completed" else "failed",
+            "Solver step finished",
+            {"answer_evidence_count": len(trace.answer.evidence) if trace.answer else 0,
+             "solver_status": trace.answer.status if trace.answer else "failed",
+             "error_type": trace.answer.error_type if trace.answer else "missing_answer"},
         )
         checkpoints.append(
             self._workflow_checkpoint(
                 "solver",
-                "completed",
-                "Solver checkpoint captured the evidence-backed answer.",
+                "completed" if trace.answer and trace.answer.status == "completed" else "failed",
+                "Solver checkpoint captured answer or explicit failure.",
                 trace,
                 board,
                 next_nodes=["final_review", "patch" if generate_patch else "monitor"],
@@ -627,9 +641,16 @@ class Orchestrator:
                 "answer": trace.answer.answer if trace.answer else "",
                 "confidence": trace.answer.confidence if trace.answer else 0,
                 "next_steps": trace.answer.next_steps if trace.answer else [],
+                "status": trace.answer.status if trace.answer else "failed",
+                "error_type": trace.answer.error_type if trace.answer else "missing_answer",
+                "failure_kind": trace.answer.failure_kind if trace.answer else "missing_context",
             },
         )
-        if generate_patch:
+        patch_allowed = bool(trace.answer and trace.answer.status == "completed" and not preliminary_review.issues)
+        if generate_patch and retry_count and trace.answer and trace.answer.status == "completed":
+            # Audit the recovered answer before it can feed patch generation.
+            patch_allowed = self.final_reviewer.review(query, plan, trace.answer, evidence.items(), trace.tool_calls, retry_count=retry_count).ok
+        if generate_patch and patch_allowed:
             self._state(trace, "patching", "running", "Patch Agent generating candidates")
             patch_candidates, patch_response = self.patcher.propose_candidates(
                 repo_path,
@@ -690,6 +711,8 @@ class Orchestrator:
                     metrics={"candidate_count": len(patch_candidates), "selected_source": trace.patch.source},
                 )
             )
+        elif generate_patch:
+            self._state(trace, "patching", "skipped", "Solver audit did not authorize patch generation")
         pre_monitor_board = board.to_dict()
         contract_report = self.contracts.validate(pre_monitor_board, generate_patch=generate_patch)
         self._state(
@@ -714,9 +737,10 @@ class Orchestrator:
         )
         if final_report.human_review_required and trace.answer:
             trace.answer.next_steps = list(dict.fromkeys([*final_report.questions, *trace.answer.next_steps]))
-            trace.answer.answer = (
-                f"{trace.answer.answer} 最终审核仍发现不确定点，建议人工确认后再采纳。"
-            )
+            if trace.answer.status == "completed":
+                trace.answer.answer = (
+                    f"{trace.answer.answer} 最终审核仍发现不确定点，建议人工确认后再采纳。"
+                )
         board.post(
             "final_review",
             "final_review_agent",
@@ -742,18 +766,66 @@ class Orchestrator:
         )
         trace.metrics["code_smell"] = smell_report
         trace.metrics["workflow"] = workflow_summary
+        solver_execution = {
+            "status": trace.answer.status if trace.answer else "failed",
+            "error_type": trace.answer.error_type if trace.answer else "missing_answer",
+            "failure_kind": trace.answer.failure_kind if trace.answer else "missing_context",
+            "retry_count": retry_count,
+            "attempted_requests": sum(item["request_attempted"] for item in solver_attempts),
+            "attempts": solver_attempts,
+        }
+        run_status = "completed" if final_report.ok else (
+            "failed" if trace.answer and trace.answer.status == "failed" else "needs_review"
+        )
         trace.metrics = self.monitor.summarize(trace)
         trace.metrics["code_smell"] = smell_report
         trace.metrics["contract_validation"] = contract_report.to_dict()
         trace.metrics["final_review"] = asdict(final_report)
         trace.metrics["workflow"] = workflow_summary
+        trace.metrics["solver_execution"] = solver_execution
+        trace.metrics["run_outcome"] = {"status": run_status, "end_to_end_completed": final_report.ok}
         board.post("monitor", "monitor", "run_metrics", "Monitor summary", trace.metrics)
         trace.board = board.to_dict()
         self._post_workflow_checkpoints(board, checkpoints)
         trace.board = board.to_dict()
-        self._state(trace, "completed", "completed", "Trace saved with metrics and board artifacts")
+        self._state(trace, "completed", run_status, "Trace saved with metrics and board artifacts")
         self.trace_store.save(trace)
         return trace
+
+    def _record_solver_attempt(
+        self, trace: Trace, board: AgentBoard, solver: SolverAgent,
+        response: LLMResponse | None, role: str, request_attempted: bool, attempts: list[dict],
+    ) -> None:
+        answer = trace.answer
+        attempt = {
+            "role": role,
+            "status": answer.status if answer else "failed",
+            "error_type": answer.error_type if answer else "missing_answer",
+            "failure_kind": answer.failure_kind if answer else "missing_context",
+            "retryable": answer.retryable if answer else False,
+            "request_attempted": request_attempted,
+        }
+        attempts.append(attempt)
+        raw_output, raw_encoding = (response.content, "utf8") if response else (None, None)
+        if raw_output is not None:
+            try:
+                raw_output.encode("utf-8")
+            except UnicodeError:
+                raw_output, raw_encoding = json.dumps(raw_output, ensure_ascii=True), "json_escaped"
+        board.post("solver_attempts", "solver", "solver_attempt", "Solver attempt outcome", {
+            **attempt, "raw_output": raw_output, "raw_output_encoding": raw_encoding,
+        })
+        if response:
+            trace.llm_calls.append({**self._llm_record(response, role=role), **attempt})
+        elif request_attempted:
+            # A provider exception still consumed an attempt; token usage/cost are unknown.
+            trace.llm_calls.append({
+                **attempt, "provider": getattr(solver.provider, "name", "unknown"),
+                "model": getattr(solver.provider, "model", "unknown"),
+                "usage": {}, "usage_kind": "unknown", "latency_ms": None,
+                "cost": {"estimated_cost_usd": None, "reason": "provider failure; usage unavailable"},
+                "finish_reason": None, "tool_call_count": 0,
+            })
 
     def _execute_text_search(
         self,
@@ -935,6 +1007,8 @@ class Orchestrator:
             "model": response.model,
             "latency_ms": response.latency_ms,
             "usage": response.usage,
+            "usage_kind": response.usage_kind,
+            "metrics": response.metrics,
             "cost": estimate_llm_cost(response),
             "finish_reason": response.finish_reason,
             "tool_call_count": len(response.tool_calls),

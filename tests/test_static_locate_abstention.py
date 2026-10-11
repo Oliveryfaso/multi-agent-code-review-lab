@@ -93,10 +93,8 @@ class StaticLocateAbstentionTests(unittest.TestCase):
                 source = self.development_source(case_id)
                 self.assertEqual(diagnostic_compare._parse(json.dumps(answer), source), answer)
                 duplicate = {**answer, 'refs': answer['refs'] * 2}
-                with self.assertRaises(ProviderError) as caught:
-                    diagnostic_compare._parse(json.dumps(duplicate), source)
-                self.assertEqual(caught.exception.code, 'eval_contract_invalid')
-                self.assertEqual(len(duplicate['refs']), 2, 'reject rather than deduplicate')
+                self.assertEqual(diagnostic_compare._parse(json.dumps(duplicate), source), answer)
+                self.assertEqual(len(duplicate['refs']), 2, 'original output remains unchanged')
                 proposal = {'claim': cause, 'trigger_conditions': [answer['when']],
                             'locations': duplicate['refs'], 'gaps': []}
                 report, _, _ = self.preview(proposal, body=DEVELOPMENT_SOURCES[case_id],
