@@ -90,17 +90,22 @@ class DiagnosticCompareTests(unittest.TestCase):
                 prompt_version='fixture-prompt-v1', dataset_version='v1', reference=self.reference)
         self.assertFalse(new_root.exists())
 
-    def test_offline_timeout_is_bounded_by_180_seconds_and_each_profile(self):
+    def test_offline_timeout_is_bounded_by_300_seconds_and_each_profile(self):
         self.profiles = [replace(profile, timeout_seconds=180) for profile in self.profiles]
         for case in self.cases:
             case['request']['timeout_seconds'] = 180
         self.assertEqual(self.prepare()['new_model_calls'], 0)
+        self.root = fixture_root() / 'timeout-five-minutes'
+        self.profiles = [replace(profile, timeout_seconds=300) for profile in self.profiles]
+        for case in self.cases:
+            case['request']['timeout_seconds'] = 300
+        self.assertEqual(self.prepare()['new_model_calls'], 0)
         self.root = fixture_root() / 'timeout-too-long'
-        self.cases[0]['request']['timeout_seconds'] = 181
+        self.cases[0]['request']['timeout_seconds'] = 301
         with self.assertRaises(ValueError):
             self.prepare()
         self.assertFalse(self.root.exists())
-        self.cases[0]['request']['timeout_seconds'] = 180
+        self.cases[0]['request']['timeout_seconds'] = 300
         self.profiles = [replace(profile, timeout_seconds=60) for profile in self.profiles]
         self.root = fixture_root() / 'timeout-exceeds-profile'
         with self.assertRaises(ValueError):

@@ -49,12 +49,17 @@ def _exclusive_record(out, name, record):
         os.fsync(stream.fileno())
 
 
-def begin_finish_review(out):
+def begin_finish_review(out, *, soft_reminder_seconds=None):
     """Issue one non-resettable origin using the process's time.monotonic.
 
     An existing start/consume marker refuses another origin, including after
     failure or another turn. The on-disk marker cannot reconstruct the token.
+    The default deadline is 300 seconds; an explicit soft reminder never rejects
+    a review for elapsed time. Origin and persistence checks remain mandatory.
     """
+    comparison._require(soft_reminder_seconds is None or
+        (type(soft_reminder_seconds) in (int, float) and math.isfinite(soft_reminder_seconds)
+         and soft_reminder_seconds > 0), 'finish_soft_reminder_invalid')
     started = _clock_value()
     out, _, _, _, _ = comparison._load(out)
     if (out / CONSUME_RECORD).exists():
@@ -63,6 +68,9 @@ def begin_finish_review(out):
               'pid': os.getpid(), 'nonce': str(uuid4()), 'start_monotonic_seconds': started,
               'clock_source': 'time.monotonic' if monotonic is _PROCESS_MONOTONIC else 'patched_clock_fixture',
               'resumable': False}
+    if soft_reminder_seconds is not None:
+        record.update(budget_seconds=None, deadline_mode='soft',
+                      soft_reminder_seconds=soft_reminder_seconds)
     try:
         _exclusive_record(out, START_RECORD, record)
     except FileExistsError:
@@ -78,11 +86,12 @@ def save_finish_review(out, *, reviews=None, phase=None):
     Before scoring, exclusively persist a consume claim with pending authority.
     Missing, copied, reconstructed, consumed or cross-process tokens save only
     reviews={} pending comparisons. A late reviewed report remains evidence but
-    is unaccepted even if saving its replacement/sidecar fails: without a valid
+    is unaccepted in default hard mode even if saving its replacement/sidecar fails: without a valid
     authority naming that report, the durable consume claim remains pending.
 
     Authority accepts comparison/sidecar checkpoints only. Its own write and
-    late evidence writes are not certified within 300 seconds. No caller clock
+    late evidence writes are not certified within the default 300 seconds.
+    Opt-in soft mode records late reminders without rejecting valid reviews. No caller clock
     or compliance flag is accepted. Later calls cannot replace a sealed first
     authority or accept new reviews; their returned comparison is pending.
     """
@@ -106,6 +115,10 @@ def save_finish_review(out, *, reviews=None, phase=None):
              'nonce': str(uuid4()), 'default_authority': 'pending', 'review_acceptance': 'not_accepted',
              'accepted_authority_file': AUTHORITY_RECORD,
              'rule': 'Only a matching accepted_at_checkpoints authority naming a comparison accepts its reviews; every other reviewed report is unaccepted.'}
+    soft = state is not None and state['record'].get('deadline_mode') == 'soft'
+    if soft:
+        claim.update(budget_seconds=None, deadline_mode='soft',
+                     soft_reminder_seconds=state['record']['soft_reminder_seconds'])
     try:
         _exclusive_record(out, CONSUME_RECORD, claim)
     except FileExistsError:
@@ -128,9 +141,12 @@ def save_finish_review(out, *, reviews=None, phase=None):
             else:
                 state['last'] = now
                 elapsed = now - state['record']['start_monotonic_seconds']
-                if elapsed >= FINISH_SECONDS:
+                if not soft and elapsed >= FINISH_SECONDS:
                     reason = 'finish_deadline_reached'
-        checkpoints.append({'name': name, 'elapsed_seconds': elapsed})
+        point = {'name': name, 'elapsed_seconds': elapsed}
+        if soft:
+            point['soft_reminder_reached'] = elapsed is not None and elapsed >= state['record']['soft_reminder_seconds']
+        checkpoints.append(point)
 
     checkpoint('before_review')
     accepted = reviews if reason is None and reviews is not None else {}
@@ -148,7 +164,7 @@ def save_finish_review(out, *, reviews=None, phase=None):
     def sidecar(paths, status, authoritative):
         folder = Path(paths['json']).parent
         name = folder.name + '/finish-phase.json'
-        comparison._write(out, name, {
+        record = {
             'schema_version': 1, 'phase': 'finish_review', 'budget_seconds': FINISH_SECONDS,
             'status': status, 'pending_reason': reason,
             'origin': state['record']['clock_source'] if state is not None else 'missing',
@@ -159,7 +175,12 @@ def save_finish_review(out, *, reviews=None, phase=None):
             'review_acceptance': 'not_accepted_without_matching_authority',
             'timing_record_persistence_within_budget': None, 'whole_run_compliance': 'not_assessed',
             'new_model_calls': 0,
-            'scope': 'Only named comparison checkpoints can be accepted. Authority write and late evidence writes are not certified within the deadline.'})
+            'scope': 'Only named comparison checkpoints can be accepted. Authority write and late evidence writes are not certified within the deadline.'}
+        if soft:
+            record.update(budget_seconds=None, deadline_mode='soft',
+                          soft_reminder_seconds=state['record']['soft_reminder_seconds'],
+                          scope='Soft reminders never reject late reviews; origin and persistence checks remain mandatory.')
+        comparison._write(out, name, record)
         return str(out / name)
 
     if reason is not None and accepted:

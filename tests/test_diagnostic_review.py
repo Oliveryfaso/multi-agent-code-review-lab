@@ -81,6 +81,33 @@ class DiagnosticReviewTests(unittest.TestCase):
         _, report, timing = self.save(phase)
         self.assert_pending(report, timing, 'finish_claim_already_consumed')
 
+    def test_explicit_soft_reminder_keeps_late_reviews_and_first_authority(self):
+        phase = diagnostic_review.begin_finish_review(self.root, soft_reminder_seconds=1800)
+        self.clock.advance(1801)
+        result, report, timing = self.save(phase)
+        self.assertEqual(result['finish_status'], 'reviews_accepted_at_checkpoints')
+        self.assertTrue(report['cases'][0]['diagnostic_passed'])
+        self.assertEqual(timing['deadline_mode'], 'soft')
+        self.assertIsNone(timing['budget_seconds'])
+        self.assertEqual(timing['soft_reminder_seconds'], 1800)
+        authority = json.loads(Path(result['authority']).read_text())
+        self.assertTrue(all(point['soft_reminder_reached'] for point in authority['checkpoints']))
+        first_authority = Path(result['authority']).read_bytes()
+        _, report, timing = self.save(phase)
+        self.assert_pending(report, timing, 'finish_claim_already_consumed')
+        self.assertEqual(Path(result['authority']).read_bytes(), first_authority)
+
+    def test_soft_reminder_rejects_invalid_values_and_clock_rollback(self):
+        for value in (True, 0, -1, float('nan'), float('inf')):
+            with self.subTest(value=value), self.assertRaisesRegex(ValueError, 'finish_soft_reminder_invalid'):
+                diagnostic_review.begin_finish_review(self.root, soft_reminder_seconds=value)
+        self.clock.advance(100)
+        phase = diagnostic_review.begin_finish_review(self.root, soft_reminder_seconds=1800)
+        self.clock.now = 99
+        _, report, timing = self.save(phase)
+        self.assert_pending(report, timing, 'monotonic_went_backwards')
+        self.assert_durable_pending()
+
     def test_missing_or_serialized_origin_is_pending_and_cannot_restart(self):
         _, report, timing = self.save({'start_monotonic_seconds': 0, 'fully_compliant': True})
         self.assert_pending(report, timing, 'finish_token_missing_or_consumed')

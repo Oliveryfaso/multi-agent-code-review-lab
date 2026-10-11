@@ -142,7 +142,9 @@ class DiagnosticDatasetTests(unittest.TestCase):
         self.assertEqual(cases[0]['request']['timeout_seconds'], 60)
         cases, _ = load_dataset(self.root / 'cases.json', self.root / 'reference.json', timeout_seconds=180)
         self.assertEqual(cases[0]['request']['timeout_seconds'], 180)
-        for timeout in (True, 0, 181, float('nan'), float('inf')):
+        cases, _ = load_dataset(self.root / 'cases.json', self.root / 'reference.json', timeout_seconds=300)
+        self.assertEqual(cases[0]['request']['timeout_seconds'], 300)
+        for timeout in (True, 0, 301, float('nan'), float('inf')):
             with self.subTest(timeout=timeout), self.assertRaises(ValueError):
                 load_dataset(self.root / 'cases.json', self.root / 'reference.json', timeout_seconds=timeout)
 

@@ -48,7 +48,7 @@ def load_dataset(cases_path, reference_path, *, timeout_seconds=60):
     References check known field/source consistency, not semantic equivalence.
     The caller must obtain actual tokenizer admission before live generation.
     """
-    _require(type(timeout_seconds) in (int, float) and 0 < timeout_seconds <= 180,
+    _require(type(timeout_seconds) in (int, float) and 0 < timeout_seconds <= 300,
              'dataset_timeout_invalid')
     data, reference = _read(cases_path), _read(reference_path)
     _require(set(data) == {'version', 'prompt_version', 'cases'} and

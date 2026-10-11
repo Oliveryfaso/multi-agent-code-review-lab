@@ -78,7 +78,7 @@ def prepare_comparison(out, cases, profiles, *, prompt_version, dataset_version,
         request = ModelRequest(**case['request']); validate_request(request)
         _require(request.response_schema == OUTPUT_SCHEMA and not request.tools
             and request.metadata.get('prompt_version') == prompt_version
-            and request.max_input_tokens <= 1536 and request.max_output_tokens <= 384 and request.timeout_seconds <= 180)
+            and request.max_input_tokens <= 1536 and request.max_output_tokens <= 384 and request.timeout_seconds <= 300)
         _require(all(request.max_output_tokens <= p['output_limit']
             and request.max_input_tokens + request.max_output_tokens <= p['context_limit']
             and request.timeout_seconds <= p['timeout_seconds'] for p in configured))
