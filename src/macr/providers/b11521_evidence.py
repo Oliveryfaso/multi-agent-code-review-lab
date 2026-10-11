@@ -12,6 +12,56 @@ LOG_LIMIT=4*1024*1024
 def _require(ok,code):
     if not ok:raise ValueError(code)
 
+def _otool_lines(capture,path):
+    """Keep diagnostic stderr separate from the Mach-O output being parsed."""
+    _require(type(capture) is dict and type(capture.get('returncode')) is int
+        and type(capture.get('stdout')) is str and type(capture.get('stderr')) is str,'dependency_capture')
+    _require(len(capture['stdout'].encode())+len(capture['stderr'].encode())<=1024**2,'dependency_output_cap')
+    _require(capture['returncode']==0,'dependency_command_failed')
+    warning="otool: warning: confstr() failed with code 5: couldn't get path of DARWIN_USER_TEMP_DIR; using /tmp instead\n"
+    _require(capture['stderr'] in ('',warning),'dependency_diagnostic_unknown')
+    output=capture['stdout']
+    _require(type(path) is str and path and not any(c in path for c in '\x00\r\n')
+        and output.endswith('\n'),'dependency_output_format')
+    lines=output.splitlines()
+    _require(lines and lines[0]==path+':','dependency_output_header')
+    return lines[1:]
+
+def otool_dependencies(capture,*,path):
+    """Return every declared dependency; the caller checks the pinned closure."""
+    dependencies=[]
+    for line in _otool_lines(capture,path):
+        match=re.fullmatch(r'\t([^\x00\r\n]+) \(compatibility version [0-9]+\.[0-9]+\.[0-9]+, current version [0-9]+\.[0-9]+\.[0-9]+(?:, weak)?\)',line)
+        _require(match is not None and match[1]==match[1].strip(),'dependency_output_format')
+        dependencies.append(match[1])
+    return dependencies
+
+def otool_rpaths(capture,*,path):
+    """Validate declared LC_RPATH fields without interpreting other load commands."""
+    lines=_otool_lines(capture,path);rpaths=[]
+    starts=[i for i,line in enumerate(lines) if line.startswith('Load command ')]
+    _require(starts and starts[0]==0 and
+        all(lines[start]=='Load command '+str(index) for index,start in enumerate(starts)),'rpath_output_format')
+    # The fixed b11521 arm64 archive is checked by full SHA before this capture.
+    commands={'LC_SEGMENT_64','LC_DYLD_CHAINED_FIXUPS','LC_DYLD_EXPORTS_TRIE','LC_DYLD_INFO_ONLY',
+        'LC_SYMTAB','LC_DYSYMTAB','LC_LOAD_DYLINKER','LC_UUID','LC_RPATH','LC_BUILD_VERSION','LC_MAIN',
+        'LC_LOAD_DYLIB','LC_LOAD_WEAK_DYLIB','LC_FUNCTION_STARTS','LC_DATA_IN_CODE','LC_CODE_SIGNATURE',
+        'LC_ID_DYLIB','LC_SOURCE_VERSION','LC_VERSION_MIN_MACOSX'}
+    for index,start in enumerate(starts):
+        block=lines[start+1:starts[index+1] if index+1<len(starts) else len(lines)]
+        _require(len(block)>=2,'rpath_output_format')
+        cmd=re.fullmatch(r'\s+cmd (LC_[A-Z0-9_]+)',block[0])
+        size=re.fullmatch(r'\s+cmdsize ([0-9]+)',block[1])
+        _require(cmd is not None and cmd[1] in commands and size is not None
+            and int(size[1])>=8,'rpath_output_format')
+        if cmd[1]!='LC_RPATH':continue
+        _require(len(block)==3,'rpath_output_format')
+        value=re.fullmatch(r'\s+path ([^\x00\r\n]+) \(offset ([0-9]+)\)',block[2])
+        _require(value is not None and value[1]==value[1].strip()
+            and 12<=int(value[2])<int(size[1]) and len(value[1].encode())+int(value[2])<int(size[1]),'rpath_output_format')
+        rpaths.append(value[1])
+    return rpaths
+
 def validate_preflight(version,help_text,argv,*,port_mode='fixed'):
     """Reject the old verbosity1 argv before an owner can spawn a model."""
     _require(type(version) is str and re.match(r'^version: 0\.6\.0-dev \(build 11521, commit b42b7e6d3\)(?:\r?\n|$)',version),'runtime_version')

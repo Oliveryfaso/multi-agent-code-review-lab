@@ -14,12 +14,98 @@ LOG=(b'res  add_waiting_: add task 7 to waiting list. current waiting = 0 (befor
     b'slot      release: id  0 | task 7 | stop processing: n_tokens = 12, truncated = 0\n'
     b'res  remove_waiti: remove task 7 from waiting list. current waiting = 1 (before remove)\n'
     b'srv  update_slots: all slots are idle\n')
+OTOOL_PATH='/fixture/llama-server'
+OTOOL_WARNING="otool: warning: confstr() failed with code 5: couldn't get path of DARWIN_USER_TEMP_DIR; using /tmp instead\n"
+OTOOL_DEPENDENCIES=(OTOOL_PATH+':\n'
+    '\t@rpath/libllama.dylib (compatibility version 0.0.0, current version 0.0.0)\n'
+    '\t/usr/lib/libSystem.B.dylib (compatibility version 1.0.0, current version 1351.0.0, weak)\n')
+OTOOL_RPATHS=(OTOOL_PATH+':\nLoad command 0\n'
+    '      cmd LC_SEGMENT_64\n  cmdsize 72\n  segname __PAGEZERO\n'
+    'Load command 1\n      cmd LC_RPATH\n  cmdsize 32\n'
+    '     path @loader_path (offset 12)\n'
+    'Load command 2\n      cmd LC_RPATH\n  cmdsize 32\n'
+    '     path @executable_path (offset 12)\n')
 
 class B11521EvidenceTests(unittest.TestCase):
     def adapter(self):
         name='macr.providers.b11521_evidence'
         self.assertIsNotNone(importlib.util.find_spec(name),'version-specific evidence adapter is missing')
         return __import__(name,fromlist=['unused'])
+
+    def test_otool_clean_and_known_warning_keep_every_dependency_and_raw_capture(self):
+        a=self.adapter()
+        for stderr in ['',OTOOL_WARNING]:
+            capture={'returncode':0,'stdout':OTOOL_DEPENDENCIES,'stderr':stderr}
+            original=copy.deepcopy(capture)
+            self.assertEqual(a.otool_dependencies(capture,path=OTOOL_PATH),
+                ['@rpath/libllama.dylib','/usr/lib/libSystem.B.dylib'])
+            self.assertEqual(capture,original)
+
+    def test_otool_rpaths_handle_other_load_commands_and_keep_raw_warning(self):
+        a=self.adapter()
+        for stderr in ['',OTOOL_WARNING]:
+            capture={'returncode':0,'stdout':OTOOL_RPATHS,'stderr':stderr}
+            original=copy.deepcopy(capture)
+            self.assertEqual(a.otool_rpaths(capture,path=OTOOL_PATH),
+                ['@loader_path','@executable_path'])
+            self.assertEqual(capture,original)
+
+    def test_otool_unknown_diagnostics_and_nonzero_status_stop_both_parsers(self):
+        a=self.adapter()
+        for parser,stdout in [(a.otool_dependencies,OTOOL_DEPENDENCIES),(a.otool_rpaths,OTOOL_RPATHS)]:
+            for stderr in ['otool: warning: unknown\n',OTOOL_WARNING*2,OTOOL_WARNING+'unexpected\n',OTOOL_WARNING.rstrip('\n')]:
+                with self.subTest(parser=parser.__name__,stderr=stderr):
+                    with self.assertRaises(ValueError):parser({'returncode':0,'stdout':stdout,'stderr':stderr},path=OTOOL_PATH)
+            for status in [1,-9,True]:
+                with self.subTest(parser=parser.__name__,status=status):
+                    with self.assertRaises(ValueError):parser({'returncode':status,'stdout':stdout,'stderr':OTOOL_WARNING},path=OTOOL_PATH)
+
+    def test_otool_unknown_header_body_and_partial_output_are_rejected(self):
+        a=self.adapter()
+        for stdout in [OTOOL_DEPENDENCIES.replace(OTOOL_PATH,'/other/server',1),
+            OTOOL_DEPENDENCIES.split('\n',1)[1],OTOOL_DEPENDENCIES+'\n',
+            OTOOL_DEPENDENCIES+'unknown line\n',OTOOL_DEPENDENCIES.replace('0.0.0','unknown',1),
+            OTOOL_DEPENDENCIES.replace('\t@rpath',' @rpath',1),OTOOL_DEPENDENCIES[:-1]]:
+            with self.subTest(stdout=stdout):
+                with self.assertRaises(ValueError):a.otool_dependencies({'returncode':0,'stdout':stdout,'stderr':''},path=OTOOL_PATH)
+        with self.assertRaises(ValueError):
+            a.otool_rpaths({'returncode':0,'stdout':OTOOL_RPATHS.replace(OTOOL_PATH,'/other/server',1),'stderr':''},path=OTOOL_PATH)
+        for stdout in [OTOOL_PATH+':\n',OTOOL_PATH+':\nunknown line\n',
+            OTOOL_RPATHS.replace('LC_RPATH','LC_RPTH',1),
+            OTOOL_RPATHS.replace('Load command 1','Load command 7',1)]:
+            with self.subTest(stdout=stdout):
+                with self.assertRaises(ValueError):a.otool_rpaths({'returncode':0,'stdout':stdout,'stderr':''},path=OTOOL_PATH)
+
+    def test_otool_legal_dependency_change_is_returned_for_closure_check(self):
+        stdout=OTOOL_DEPENDENCIES.replace('@rpath/libllama.dylib','@rpath/libchanged.dylib')
+        self.assertEqual(self.adapter().otool_dependencies({'returncode':0,'stdout':stdout,'stderr':''},path=OTOOL_PATH),
+            ['@rpath/libchanged.dylib','/usr/lib/libSystem.B.dylib'])
+
+    def test_otool_rpath_bad_fields_and_duplicate_path_are_rejected(self):
+        a=self.adapter()
+        for stdout in [OTOOL_RPATHS.replace('cmdsize 32','cmdsize unknown',1),
+            OTOOL_RPATHS.replace('cmdsize 32','cmdsize 12',1),
+            OTOOL_RPATHS.replace('(offset 12)','(offset 11)',1),
+            OTOOL_RPATHS.replace('(offset 12)','(offset 32)',1),
+            OTOOL_RPATHS.replace('path @loader_path (offset 12)','path @loader_path',1),
+            OTOOL_RPATHS.replace('     path @loader_path (offset 12)\n',
+                '     path @loader_path (offset 12)\n     path @loader_path (offset 12)\n',1)]:
+            with self.subTest(stdout=stdout):
+                with self.assertRaises(ValueError):a.otool_rpaths({'returncode':0,'stdout':stdout,'stderr':''},path=OTOOL_PATH)
+
+    def test_otool_capture_bound_counts_combined_utf8_bytes(self):
+        a=self.adapter()
+        for parser,prefix,suffix in [
+            (a.otool_dependencies,OTOOL_PATH+':\n\t/fixture/',
+                ' (compatibility version 0.0.0, current version 0.0.0)\n'),
+            (a.otool_rpaths,OTOOL_PATH+':\nLoad command 0\n      cmd LC_RPATH\n  cmdsize 1048576\n     path /fixture/',
+                ' (offset 12)\n')]:
+            padding=1024**2-len((prefix+suffix).encode())
+            stdout=prefix+'\u00e9'*(padding//2)+'x'*(padding%2)+suffix
+            self.assertEqual(len(stdout.encode()),1024**2)
+            self.assertEqual(len(parser({'returncode':0,'stdout':stdout,'stderr':''},path=OTOOL_PATH)),1)
+            with self.assertRaises(ValueError):
+                parser({'returncode':0,'stdout':stdout,'stderr':OTOOL_WARNING},path=OTOOL_PATH)
 
     def test_wrong_log_level_blocks_before_any_live_dispatch(self):
         a=self.adapter()
