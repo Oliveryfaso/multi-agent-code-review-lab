@@ -55,6 +55,7 @@ jobs:
         run: >-
           python -I -S -B scripts/run_offline_tests.py
           test_offline_tests test_contracts test_provider_contract test_check_results
+          test_local_http_provider
 
       - name: Repository graph and index
         run: >-
@@ -94,6 +95,7 @@ jobs:
           test_b11521_evidence
           test_diagnosis_constraints test_diagnostic_review
           test_diagnostic_verification test_diagnostic_prompt_variants test_diagnostic_pipeline_cli
+          test_diagnostic_compact test_diagnostic_orchestrator
           test_diagnostic_dataset test_diagnostic_holdout_cases test_diagnostic_holdout_replay
 
       - name: Bounded kernel loopback lifecycle fixtures

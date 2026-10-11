@@ -1,8 +1,11 @@
 from __future__ import annotations
 
-from dataclasses import asdict
+from dataclasses import asdict, replace
+import io
 import json
 from pathlib import Path
+import tokenize
+from uuid import uuid4
 
 from macr.agents.code_smell import CodeSmellAgent
 from macr.agents.critic import RetrievalCriticAgent
@@ -13,16 +16,16 @@ from macr.agents.patch_ranker import PatchRankerAgent
 from macr.agents.planner import LlmPlanner, RuleBasedPlanner
 from macr.agents.pr_reviewer import DiffReviewAgent
 from macr.agents.router import ToolRouterAgent
-from macr.agents.routing_policy import RoutingPolicyAgent
+from macr.agents.routing_policy import RoutingDecision, RoutingPolicyAgent
 from macr.agents.solver import SolverAgent
 from macr.contracts import BoardContractValidator
 from macr.costs import estimate_llm_cost
-from macr.memory.board import AgentBoard
+from macr.memory.board import AgentBoard, BoardItem
 from macr.memory.evidence_store import EvidenceStore
 from macr.memory.trace_store import TraceStore
-from macr.providers.base import LLMProvider, LLMResponse
+from macr.providers.base import LLMProvider, LLMResponse, ModelBudget, ModelRequest, ProviderError
 from macr.runtime import RunContext, RuntimeRecorder
-from macr.schemas import Evidence, RunState, Trace
+from macr.schemas import AgentAnswer, Evidence, RunState, Trace
 from macr.tools.ast_tool import PythonAstTool
 from macr.tools.code_graph import CodeGraphTool
 from macr.tools.git_tool import GitTool
@@ -69,6 +72,36 @@ class Orchestrator:
 
     def run(self, repo_path: Path, query: str, test_selector: str | None = None) -> Trace:
         return self._run(repo_path, query, test_selector, generate_patch=False)
+
+    def prepare_diagnostic(self, repo_path: Path, question: str, *, scenario: str,
+                           assumptions: list[str], budget: ModelBudget,
+                           search_terms: list[str] | None = None) -> Trace:
+        """Retrieve once without generation; only explicit user scope enters the model."""
+        if not isinstance(budget, ModelBudget):
+            raise ProviderError("diagnostic_budget_required", failure_kind="invalid_contract")
+        if (not all(type(value) is str and value.strip() for value in (question, scenario))
+                or type(assumptions) is not list or not all(type(value) is str and value.strip() for value in assumptions)
+                or search_terms is not None and (type(search_terms) is not list
+                    or not all(type(value) is str and value.strip() for value in search_terms))):
+            raise ProviderError("diagnostic_input_invalid", failure_kind="invalid_contract")
+        try:
+            for value in [question, scenario, *assumptions, *(search_terms or [])]:
+                value.encode("utf-8")
+        except UnicodeError:
+            raise ProviderError("diagnostic_input_invalid", failure_kind="invalid_contract") from None
+        return self._run(repo_path, question, diagnostic_task={"question": question,
+            "scenario": scenario, "assumptions": assumptions, "search_terms": search_terms}, diagnostic_budget=budget)
+
+    def run_diagnostic(self, repo_path: Path, question: str, *, scenario: str,
+                       assumptions: list[str], budget: ModelBudget,
+                       search_terms: list[str] | None = None) -> Trace:
+        trace = self.prepare_diagnostic(repo_path, question, scenario=scenario,
+            assumptions=assumptions, budget=budget, search_terms=search_terms)
+        if trace.diagnosis["status"] == "prepared":
+            self.diagnostic_candidate(trace)
+        if trace.diagnosis["status"] == "candidate_completed":
+            self.verify_diagnostic(trace)
+        return trace
 
     def run_patch(
         self,
@@ -233,6 +266,8 @@ class Orchestrator:
         test_selector: str | None = None,
         generate_patch: bool = False,
         prefer_llm_patch: bool = False,
+        diagnostic_task: dict | None = None,
+        diagnostic_budget: ModelBudget | None = None,
     ) -> Trace:
         repo_path = repo_path.resolve()
         trace = Trace(query=query, repo_path=str(repo_path))
@@ -246,7 +281,12 @@ class Orchestrator:
             "Incoming task",
             {"query": query, "repo_path": str(repo_path), "generate_patch": generate_patch},
         )
-        if isinstance(self.planner, LlmPlanner):
+        if diagnostic_task is not None:
+            plan = self.rule_planner.plan(query)
+            plan = replace(plan, intent="bug_investigation",
+                steps=[step for step in plan.steps if step.tool_family in {"text_search", "ast", "symbol_graph"}],
+                search_terms=diagnostic_task["search_terms"] if diagnostic_task["search_terms"] is not None else plan.search_terms)
+        elif isinstance(self.planner, LlmPlanner):
             plan, planner_response = self.planner.plan(query)
             if planner_response:
                 trace.llm_calls.append(self._llm_record(planner_response, role="planner"))
@@ -269,10 +309,23 @@ class Orchestrator:
         policy = self.policy_agent.decide(
             plan,
             provider_available=bool(self.provider),
-            llm_planner_enabled=self.use_llm_planner,
+            llm_planner_enabled=self.use_llm_planner and diagnostic_task is None,
             generate_patch=generate_patch,
             test_selector=test_selector,
         )
+        if diagnostic_task is not None:
+            policy.mode = "diagnostic"
+            policy.use_llm_solver = False
+            legacy = {"solver", "llm_solver", "final_review"}
+            policy.executed_steps = [item for item in policy.executed_steps if item.step not in legacy]
+            policy.skipped_steps = [item for item in policy.skipped_steps if item.step not in legacy]
+            policy.skipped_steps.extend(RoutingDecision(step, "skip", "explicit diagnostic stages replace the generic gate")
+                                        for step in sorted(legacy))
+            policy.executed_steps.extend(RoutingDecision(step, "execute", reason) for step, reason in (
+                ("planner", "rule-based retrieval plan; no model planner"),
+                ("diagnostic_candidate", "one candidate attempt with explicit scope"),
+                ("diagnostic_verifier", "one verification attempt after valid candidate"),
+                ("diagnostic_final", "host publication decision from explicit verification states")))
         board.post(
             "policy",
             "routing_policy_agent",
@@ -291,7 +344,8 @@ class Orchestrator:
                 "skipped_steps": len(policy.skipped_steps),
             },
         )
-        self._post_workflow_graph(board, mode="patch" if generate_patch else "ask", policy=policy)
+        self._post_workflow_graph(board, mode="diagnostic" if diagnostic_task is not None
+                                  else "patch" if generate_patch else "ask", policy=policy)
         checkpoints.append(
             self._workflow_checkpoint(
                 "policy",
@@ -549,6 +603,9 @@ class Orchestrator:
                 "hotspots": len(smell_report["hotspots"]),
             },
         )
+        if diagnostic_task is not None:
+            return self._prepare_diagnostic_trace(trace, board, repo_path, evidence,
+                                                  diagnostic_task, diagnostic_budget)
         solver = self.solver if policy.use_llm_solver else SolverAgent()
         solver_attempts: list[dict] = []
         request_attempted = bool(solver.provider and evidence)
@@ -792,6 +849,171 @@ class Orchestrator:
         self.trace_store.save(trace)
         return trace
 
+    def _prepare_diagnostic_trace(self, trace, board, repo_path, evidence, task, budget):
+        from macr.evals.diagnostic_compact import VERSION, prepare_scope
+        board.post("evidence", "evidence_memory", "evidence_set", "Original retrieved evidence",
+            {"count": len(evidence), "items": evidence.to_payload_items()})
+        trace.board = board.to_dict()
+        trace.diagnosis = {"protocol": VERSION, "task": {key: task[key] for key in
+            ("question", "scenario", "assumptions")}, "budget": asdict(budget),
+            "status": "preparing", "candidate": None, "verification": None, "final": None,
+            "candidate_request": None, "scope": None, "attempts": [], "semantic_proof": False,
+            "confidence_role": "retrieval_description_only", "automatic_retries": 0}
+        try:
+            sources = self._diagnostic_sources(repo_path, evidence.items())
+            if not sources:
+                raise ProviderError("missing_context", failure_kind="invalid_contract")
+            scope = prepare_scope(sources, case_id=trace.task_id, attempt_id=str(uuid4()))
+            trace.diagnosis.update(scope=scope.to_dict(), status="prepared")
+            self._diagnostic_post(trace, "scope", "Captured model-visible diagnostic source", scope.to_dict())
+        except ProviderError as error:
+            trace.diagnosis.update(status="failed", error_type=error.code,
+                                   failure_kind=error.failure_kind or "invalid_contract")
+        self._diagnostic_save(trace)
+        return trace
+
+    def _diagnostic_sources(self, repo_path: Path, evidence: list[Evidence]) -> list[Evidence]:
+        from macr.investigation.records import ScopeProfile
+        from macr.investigation.scope import exclusion, read_safe
+        from macr.investigation.validation import ContractError
+        captured, chosen = {}, []
+        # Prefer whole functions; covered single-line or alternate-tool locators add no body.
+        ranked = sorted(evidence, key=lambda item: (
+            0 if item.source_tool == "parse_ast" and item.line_end > item.line_start else 1,
+            -item.confidence, item.file, item.line_start))
+        for item in ranked:
+            if any(row.file == item.file and row.line_start <= item.line_start
+                   and item.line_end <= row.line_end for row in chosen):
+                continue
+            if item.file not in captured:
+                try:
+                    if exclusion(item.file, ScopeProfile()):
+                        raise ProviderError("diagnostic_source_forbidden", failure_kind="invalid_contract")
+                    data = read_safe(repo_path, item.file, 64 * 1024)
+                    encoding = tokenize.detect_encoding(io.BytesIO(data).readline)[0] if item.file.endswith(".py") else "utf-8"
+                    captured[item.file] = data.decode(encoding).splitlines(keepends=True)
+                except (ContractError, OSError, UnicodeError, SyntaxError) as error:
+                    raise ProviderError("diagnostic_source_unavailable", failure_kind="invalid_contract") from error
+            lines = captured[item.file]
+            if not 1 <= item.line_start <= item.line_end <= len(lines):
+                raise ProviderError("diagnostic_source_range_invalid", failure_kind="invalid_contract")
+            # A module locator adds no source when only already-selected functions
+            # and whitespace remain. New nonblank top-level lines still need it.
+            if not any(line.strip() and not any(row.file == item.file
+                    and row.line_start <= number <= row.line_end for row in chosen)
+                    for number, line in enumerate(lines[item.line_start - 1:item.line_end], item.line_start)):
+                continue
+            chosen.append(replace(item, snippet="".join(lines[item.line_start - 1:item.line_end])))
+            if len(chosen) == 12:
+                break
+        return chosen
+
+    def diagnostic_candidate(self, trace: Trace) -> Trace:
+        from macr.evals.diagnostic_compact import restore_scope
+        data = trace.diagnosis
+        if not data or data["status"] != "prepared":
+            raise ProviderError("diagnostic_stage_invalid", failure_kind="invalid_contract")
+        scope = restore_scope(data["scope"])
+        if scope.case_id != trace.task_id:
+            raise ProviderError("compact_scope_mismatch", failure_kind="invalid_contract")
+        data["status"] = "candidate_running"
+        candidate, response, error, request = self.solver.diagnostic_candidate(
+            scope, **data["task"], model_budget=ModelBudget(**data["budget"]))
+        data.update(candidate=candidate, candidate_request=asdict(request))
+        self._record_diagnostic_attempt(trace, "diagnostic_candidate", response, error)
+        if error:
+            data.update(status="failed", **error)
+        else:
+            data["status"] = "candidate_completed"
+        self._diagnostic_post(trace, "candidate", "Single diagnostic candidate",
+                              {"candidate": candidate, "status": data["status"], "error": error})
+        self._diagnostic_save(trace)
+        return trace
+
+    def verify_diagnostic(self, trace: Trace) -> Trace:
+        from macr.evals.diagnostic_compact import restore_scope
+        data = trace.diagnosis
+        if not data or data["status"] != "candidate_completed":
+            raise ProviderError("diagnostic_stage_invalid", failure_kind="invalid_contract")
+        scope = restore_scope(data["scope"])
+        request = ModelRequest(**data["candidate_request"])
+        payload = json.loads(request.messages[-1]["content"])
+        if scope.case_id != trace.task_id or any(payload[key] != data["task"][key]
+                for key in ("question", "scenario", "assumptions")):
+            raise ProviderError("compact_scope_mismatch", failure_kind="invalid_contract")
+        data["status"] = "verification_running"
+        verification, response, error = self.solver.diagnostic_verification(
+            scope, request, data["candidate"], model_budget=ModelBudget(**data["budget"]))
+        data["verification"] = verification
+        self._record_diagnostic_attempt(trace, "diagnostic_verifier", response, error)
+        if error:
+            data.update(status="failed", **error)
+        else:
+            data.update(status=verification["status"], final=verification["final"],
+                        rejection_code=verification.get("error_code"))
+        self._diagnostic_post(trace, "verification", "Single candidate verification",
+                              {"verification": verification, "status": data["status"], "error": error})
+        if data["final"] is not None:
+            final = data["final"]
+            authority = {tuple(row.citation().values()): row for row in scope.source if row.citable}
+            refs = [authority[tuple(ref[key] for key in ("file", "line_start", "line_end", "symbol", "source_tool"))]
+                    for ref in final["refs"]]
+            body = "; ".join(final["unknowns"]) if final["verdict"] == "unknown" else (
+                f"{final['cause']} Trigger/domain: {final['when']}")
+            trace.answer = AgentAnswer(f"{final['verdict']}: {body}", [Evidence(**row.citation(),
+                reason="Actual model-visible diagnostic source", snippet=row.body) for row in refs], 0.0,
+                list(final["unknowns"]) if final["verdict"] == "unknown" else [])
+        self._diagnostic_post(trace, "final", "Host diagnostic publication decision",
+                              {"final": data["final"], "accepted": data["final"] is not None,
+                               "semantic_proof": False})
+        self._diagnostic_save(trace)
+        return trace
+
+    def _diagnostic_post(self, trace, kind, title, payload):
+        trace.board.setdefault("diagnostic", []).append(asdict(BoardItem("orchestrator", kind, title, payload)))
+
+    def _record_diagnostic_attempt(self, trace, role, response, error):
+        attempt = {"role": role, "status": "failed" if error else "completed",
+                   "error_type": error["error_type"] if error else None,
+                   "failure_kind": error["failure_kind"] if error else None,
+                   "provider_invoked": self.provider is not None}
+        trace.diagnosis["attempts"].append(attempt)
+        raw, encoding = self._raw_model_output(response)
+        self._diagnostic_post(trace, "attempt", "Diagnostic provider outcome",
+                              attempt | {"raw_output": raw, "raw_output_encoding": encoding})
+        if response:
+            trace.llm_calls.append(self._llm_record(response, role) | attempt)
+        elif self.provider:
+            trace.llm_calls.append(attempt | {"provider": self.provider.name,
+                "model": getattr(self.provider, "model", "unknown"), "usage": {},
+                "usage_kind": "unknown", "finish_reason": None, "latency_ms": None,
+                "cost": {"estimated_cost_usd": None, "reason": "No trusted response envelope."}})
+
+    def _diagnostic_save(self, trace):
+        data = trace.diagnosis
+        complete = data["final"] is not None
+        state = "completed" if complete else ("failed" if data["status"] == "failed" else data["status"])
+        trace.metrics = self.monitor.summarize(trace)
+        trace.metrics["diagnostic"] = {"protocol": data["protocol"], "status": data["status"],
+            "automatic_retries": 0, "provider_invocations": sum(row["provider_invoked"] for row in data["attempts"]),
+            "semantic_proof": False, "confidence_role": "retrieval_description_only",
+            "rejection_code": data.get("rejection_code")}
+        trace.metrics["run_outcome"] = {"status": state, "end_to_end_completed": complete}
+        trace.metrics["final_review"] = {"ok": complete, "human_review_required": not complete,
+            "issues": [data["error_type"]] if data.get("error_type") else
+                      [data["rejection_code"]] if data.get("rejection_code") else [], "diagnostic_mode": True}
+        self._state(trace, data["status"], state, "Diagnostic stage persisted; no automatic recovery")
+        self.trace_store.save(trace)
+
+    def _raw_model_output(self, response):
+        raw, encoding = (response.content, "utf8") if response else (None, None)
+        if raw is not None:
+            try:
+                raw.encode("utf-8")
+            except UnicodeError:
+                raw, encoding = json.dumps(raw, ensure_ascii=True), "json_escaped"
+        return raw, encoding
+
     def _record_solver_attempt(
         self, trace: Trace, board: AgentBoard, solver: SolverAgent,
         response: LLMResponse | None, role: str, request_attempted: bool, attempts: list[dict],
@@ -806,12 +1028,7 @@ class Orchestrator:
             "request_attempted": request_attempted,
         }
         attempts.append(attempt)
-        raw_output, raw_encoding = (response.content, "utf8") if response else (None, None)
-        if raw_output is not None:
-            try:
-                raw_output.encode("utf-8")
-            except UnicodeError:
-                raw_output, raw_encoding = json.dumps(raw_output, ensure_ascii=True), "json_escaped"
+        raw_output, raw_encoding = self._raw_model_output(response)
         board.post("solver_attempts", "solver", "solver_attempt", "Solver attempt outcome", {
             **attempt, "raw_output": raw_output, "raw_output_encoding": raw_encoding,
         })
@@ -919,12 +1136,36 @@ class Orchestrator:
                 )
 
     def _post_workflow_graph(self, board: AgentBoard, *, mode: str, policy) -> None:
+        graph = self.workflow.graph_payload(mode=mode, policy=policy)
+        if mode == "diagnostic":
+            legacy = {"solver", "pr_review", "final_review", "patch", "verification"}
+            graph["nodes"] = [node for node in graph["nodes"] if node["name"] not in legacy]
+            for node in graph["nodes"]:
+                if node["name"] == "planner":
+                    node.update(uses_llm=False, description="Build rule-based retrieval plan.")
+            graph["nodes"].extend({"name": name, "owner": owner, "description": description,
+                "reads": ["diagnostic"], "writes": ["diagnostic"], "uses_llm": uses_llm,
+                "skippable": True, "decision": "execute", "decision_reason": "explicit diagnostic stage"}
+                for name, owner, description, uses_llm in (
+                    ("diagnostic_candidate", "solver", "One candidate generation; no automatic repair.", True),
+                    ("diagnostic_verifier", "solver", "One check of a valid candidate.", True),
+                    ("diagnostic_final", "orchestrator", "Publish accepted candidate or preserve empty final.", False)))
+            graph["edges"] = [edge for edge in graph["edges"]
+                              if edge["source"] not in legacy and edge["target"] not in legacy]
+            graph["edges"].extend({"source": source, "target": target, "condition": condition}
+                for source, target, condition in (
+                    ("code_quality", "diagnostic_candidate", "visible_scope_prepared"),
+                    ("diagnostic_candidate", "diagnostic_verifier", "candidate_valid"),
+                    ("diagnostic_verifier", "diagnostic_final", "verification_finished"),
+                    ("diagnostic_candidate", "monitor", "technical_failure"),
+                    ("diagnostic_final", "monitor", "publication_decision_recorded")))
+            graph["state_schema"] = "Trace.diagnosis + AgentBoard + captured model-visible source"
         board.post(
             "workflow",
             "orchestrator",
             "graph_spec",
             "LangGraph-style workflow graph and routing decisions",
-            self.workflow.graph_payload(mode=mode, policy=policy),
+            graph,
         )
 
     def _post_workflow_checkpoints(self, board: AgentBoard, checkpoints: list[WorkflowCheckpoint]) -> None:

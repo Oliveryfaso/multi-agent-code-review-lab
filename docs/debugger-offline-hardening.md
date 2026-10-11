@@ -70,3 +70,8 @@ fixtures may be used as the new independent evaluation set.
 No retry, repair, verdict flip or case-specific rule is proposed. No model,
 download or VM call is needed for these changes. Model gains, cross-process protection
 and real native-service compatibility remain unvalidated.
+
+The later [compact diagnostic loop](diagnostic-compact-loop.md) records its own
+production-entry changes and frozen native measurements. Its first compact
+candidate failed the explicit character contract; no verifier or independent
+acceptance case was dispatched. The historical results above remain unchanged.

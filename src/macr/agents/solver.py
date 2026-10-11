@@ -4,7 +4,7 @@ import json
 from collections import Counter
 from dataclasses import replace
 
-from macr.providers.base import LLMProvider, LLMResponse, ModelRequest, ProviderError, invoke
+from macr.providers.base import LLMProvider, LLMResponse, ModelBudget, ModelRequest, ProviderError, invoke
 from macr.prompts import system_prompt
 from macr.schemas import AgentAnswer, Evidence, Plan
 
@@ -41,6 +41,7 @@ class SolverAgent:
     def solve(
         self, query: str, plan: Plan, evidence: list[Evidence],
         *, validation_feedback: list[str] | None = None,
+        model_budget: ModelBudget | None = None,
     ) -> tuple[AgentAnswer, LLMResponse | None]:
         if not evidence:
             return AgentAnswer(
@@ -91,10 +92,11 @@ class SolverAgent:
         visible_evidence = self._compact_evidence(sorted(ranked_evidence, key=lambda item: not item.snippet.strip()))
         provider_context = replace(fallback, evidence=visible_evidence)
         try:
-            llm_response = self._generate_with_llm(query, plan, provider_context, validation_feedback=validation_feedback)
+            llm_response = self._generate_with_llm(query, plan, provider_context,
+                validation_feedback=validation_feedback, model_budget=model_budget)
         except ProviderError as exc:
             kind, retryable = self._failure_classification(exc.code)
-            return self._failure(exc.code, kind, retryable), None
+            return self._failure(exc.code, kind, retryable), exc.response
         if not isinstance(llm_response.finish_reason, str):
             return self._failure("provider_contract", "provider_error", False), llm_response
         if llm_response.finish_reason not in {"stop", "end_turn"}:
@@ -108,6 +110,7 @@ class SolverAgent:
     def _generate_with_llm(
         self, query: str, plan: Plan, answer: AgentAnswer,
         *, validation_feedback: list[str] | None = None,
+        model_budget: ModelBudget | None = None,
     ) -> LLMResponse:
         evidence_payload = [
             {
@@ -146,7 +149,8 @@ class SolverAgent:
                 ),
             },
         ]
-        return invoke(self.provider, ModelRequest(messages, response_schema=self.OUTPUT_SCHEMA))
+        request = ModelRequest(messages, response_schema=self.OUTPUT_SCHEMA)
+        return invoke(self.provider, model_budget.apply(request) if model_budget else request)
 
     def _parse_answer(self, content: str, evidence: list[Evidence]) -> AgentAnswer:
         def unique_object(pairs):
@@ -200,6 +204,43 @@ class SolverAgent:
                 unique.append(item)
         return AgentAnswer(payload["answer"].strip(), unique,
                            self._evidence_confidence(unique) if unique else 0.2, payload["next_steps"])
+
+    def diagnostic_candidate(self, scope, *, question: str, scenario: str,
+                             assumptions: list[str], model_budget: ModelBudget):
+        from macr.evals.diagnostic_compact import build_candidate_request, parse_candidate
+        request = build_candidate_request(scope, question=question, scenario=scenario, assumptions=assumptions)
+        request.metadata.update({"role": "diagnostic_candidate", "run_id": scope.case_id,
+                                 "attempt_id": scope.attempt_id})
+        result, response, error = self._diagnostic_call(
+            request, lambda content: parse_candidate(content, scope), model_budget)
+        return result, response, error, model_budget.apply(request)
+
+    def diagnostic_verification(self, scope, candidate_request: ModelRequest, candidate: dict,
+                                *, model_budget: ModelBudget):
+        from macr.evals.diagnostic_compact import build_verification_request, validate_verification
+        request = build_verification_request(candidate_request, scope, candidate)
+        request.metadata.update({"role": "diagnostic_verifier", "run_id": scope.case_id,
+                                 "attempt_id": scope.attempt_id})
+        return self._diagnostic_call(request, lambda content: validate_verification(content, candidate, scope),
+                                     model_budget)
+
+    def _diagnostic_call(self, request: ModelRequest, parse, budget: ModelBudget):
+        response = None
+        try:
+            if self.provider is None:
+                raise ProviderError("provider_unavailable", failure_kind="invalid_contract")
+            response = invoke(self.provider, budget.apply(request))
+            if (not isinstance(response.finish_reason, str)
+                    or type(response.tool_calls) is not list or response.tool_calls):
+                raise ProviderError("provider_contract", response=response, failure_kind="invalid_contract")
+            if response.finish_reason not in {"stop", "end_turn"}:
+                raise ProviderError("model_output_incomplete", response=response, failure_kind="incomplete")
+            return parse(response.content), response, None
+        except ProviderError as error:
+            # Failed output keeps its known envelope; it never becomes a candidate/final report.
+            return None, error.response or response, {
+                "error_type": error.code, "failure_kind": error.failure_kind or "invalid_contract",
+            }
 
     def _failure(self, code: str, kind: str, retryable: bool) -> AgentAnswer:
         return AgentAnswer(

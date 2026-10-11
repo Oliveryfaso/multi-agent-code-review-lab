@@ -134,6 +134,18 @@ class B11521EvidenceTests(unittest.TestCase):
         self.assertTrue(proof['qualified']);self.assertEqual(proof['task_id'],7)
         self.assertEqual((proof['release_line'],proof['remove_waiting_line'],proof['idle_line']),(2,3,4))
 
+    def test_explicit_output_budget_matches_actual_argv_without_relaxing_other_flags(self):
+        a=self.adapter();args=ARGV.copy();args[args.index('--predict')+1]='512'
+        a.validate_preflight(VERSION,HELP,args,output_tokens=512)
+        with self.assertRaises(ValueError):a.validate_preflight(VERSION,HELP,args)
+        with self.assertRaises(ValueError):a.validate_preflight(VERSION,HELP,ARGV,output_tokens=512)
+        for value in [True,False,0,-1,2048,2049,512.0,'512']:
+            with self.subTest(value=value):
+                with self.assertRaises(ValueError):a.validate_preflight(VERSION,HELP,args,output_tokens=value)
+        for flag,value in [('--ctx-size','4096'),('--parallel','2'),('--device','metal')]:
+            changed=args.copy();changed[changed.index(flag)+1]=value
+            with self.assertRaises(ValueError):a.validate_preflight(VERSION,HELP,changed,output_tokens=512)
+
     def test_missing_duplicate_and_other_task_events_cannot_pass(self):
         a=self.adapter()
         lines=LOG.splitlines(keepends=True)
@@ -185,6 +197,20 @@ class B11521EvidenceTests(unittest.TestCase):
         self.assertEqual(a.validate_preflight(VERSION,HELP,args,port_mode='kernel')['port_mode'],'kernel')
         for changed in [ARGV,args+['--reuse-port'],args+['--port','0']]:
             with self.assertRaises(ValueError):a.validate_preflight(VERSION,HELP,changed,port_mode='kernel')
+
+    def test_native_usage_explicit_output_budget_still_checks_context_and_cache(self):
+        a=self.adapter();raw={'model':'fixture-model','system_fingerprint':a.FINGERPRINT,
+            'usage':{'prompt_tokens':1536,'completion_tokens':512,'total_tokens':2048,
+                'prompt_tokens_details':{'cached_tokens':0}},
+            'choices':[{'index':0,'finish_reason':'length','message':{'role':'assistant','content':'partial'}}]}
+        self.assertEqual(a.validate_response(raw,http_status=200,model_id='fixture-model',input_tokens=1536,
+            max_output_tokens=512)['output_tokens'],512)
+        with self.assertRaises(ValueError):a.validate_response(raw,http_status=200,model_id='fixture-model',input_tokens=1536)
+        for value in [True,False,0,-1,513,2048,512.0,'512']:
+            with self.subTest(value=value):
+                with self.assertRaises(ValueError):a.validate_response(raw,http_status=200,model_id='fixture-model',input_tokens=1536,max_output_tokens=value)
+        changed=copy.deepcopy(raw);changed['usage']['prompt_tokens_details']['cached_tokens']=1
+        with self.assertRaises(ValueError):a.validate_response(changed,http_status=200,model_id='fixture-model',input_tokens=1536,max_output_tokens=512)
 
     def test_listener_requires_same_port_in_own_pid_observation_and_native_log(self):
         a=self.adapter();log=b'srv  llama_server: listening on http://127.0.0.1:49152\n'

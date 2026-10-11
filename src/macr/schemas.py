@@ -128,6 +128,7 @@ class Trace:
     answer: AgentAnswer | None = None
     patch: PatchArtifact | None = None
     metrics: dict[str, Any] = field(default_factory=dict)
+    diagnosis: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

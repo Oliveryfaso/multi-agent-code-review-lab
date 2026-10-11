@@ -8,7 +8,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from debugger_fixtures import fixture_root
-from macr.providers.base import ModelRequest, ModelResponse, ProviderCapabilities, ProviderError
+from macr.providers.base import ModelBudget, ModelRequest, ModelResponse, ProviderCapabilities, ProviderError
 from macr.providers.profiles import ModelProfile, load_profile, validate_profile
 from macr.providers.local_http import LocalHTTPProvider, LoopbackTransport, probe_service
 
@@ -201,6 +201,129 @@ class LocalHTTPProviderTests(unittest.TestCase):
         self.assert_code('model_output_invalid', lambda:
             LocalHTTPProvider(fixture_profile(), transport=FakeTransport(completion('{"ok":'))).complete(
                 self.request(response_schema={'type': 'object'})))
+
+    def test_trusted_output_failures_preserve_raw_finish_and_measured_cost(self):
+        for content, finish, code, kind in (
+                ('{"ok":', 'length', 'model_output_incomplete', 'incomplete'),
+                ('', 'length', 'model_output_incomplete', 'incomplete'),
+                ('not JSON', 'stop', 'model_output_invalid', 'invalid_json'),
+                ('{"ok":true,"ok":false}', 'stop', 'model_output_invalid', 'invalid_json'),
+                ('[]', 'stop', 'model_output_invalid', 'invalid_contract')):
+            with self.subTest(content=content):
+                data = completion(content, usage={'prompt_tokens': 9, 'completion_tokens': 4, 'total_tokens': 13})
+                data['choices'][0]['finish_reason'] = finish
+                transport = FakeTransport(data)
+                error = self.assert_code(code, lambda:
+                    LocalHTTPProvider(fixture_profile(), transport=transport).complete(
+                        self.request(response_schema={'type': 'object'})))
+                self.assertEqual(error.failure_kind, kind)
+                self.assertEqual(error.response.content, content)
+                self.assertEqual(error.response.finish_reason, finish)
+                self.assertEqual(error.response.usage, {'input_tokens': 9, 'output_tokens': 4})
+                self.assertEqual(error.response.usage_kind, 'measured')
+                self.assertEqual(error.response.metrics['schema_validation'], 'caller_owned')
+                self.assertEqual(len(transport.calls), 1)
+
+    def test_untrusted_envelope_or_unknown_transport_does_not_fabricate_failure_response(self):
+        for data in (completion('{"ok":', usage={'prompt_tokens': 13, 'completion_tokens': 4}),
+                     completion('{"ok":', usage={'prompt_tokens': 9, 'completion_tokens': True}),
+                     completion('{"ok":') | {'model': 'foreign-model'}):
+            with self.subTest(data=data):
+                error = self.assert_code('model_response_invalid', lambda:
+                    LocalHTTPProvider(fixture_profile(), transport=FakeTransport(data)).complete(
+                        self.request(response_schema={'type': 'object'})))
+                self.assertIsNone(error.response)
+                self.assertEqual(error.failure_kind, 'invalid_contract')
+        error = self.assert_code('model_timeout', lambda:
+            LocalHTTPProvider(fixture_profile(), transport=FakeTransport(error=TimeoutError())).complete(self.request()))
+        self.assertIsNone(error.response)
+        self.assertEqual(error.failure_kind, 'transport')
+        error = self.assert_code('model_output_invalid', lambda:
+            LocalHTTPProvider(fixture_profile(), transport=FakeTransport(completion('not JSON'))).complete(
+                self.request(response_schema={'type': 'object'})))
+        self.assertEqual((error.response.usage, error.response.usage_kind), ({}, 'unknown'))
+
+    def test_explicit_frozen_budget_dispatches_once_and_overflow_dispatches_zero(self):
+        profile = fixture_profile(context_limit=2048, output_limit=512, timeout_seconds=300)
+        transport = FakeTransport()
+        provider = LocalHTTPProvider(profile, transport=transport, token_counter=lambda request, profile: 25)
+        original = ModelRequest([{'role': 'user', 'content': 'fixture'}])
+        self.assert_code('model_output_limit', lambda: provider.complete(original))
+        self.assertEqual(transport.calls, [])
+        request = ModelBudget(1536, 512, 300).apply(original)
+        provider.complete(request)
+        self.assertEqual(len(transport.calls), 1)
+        self.assertEqual(transport.calls[0][1]['max_tokens'], 512)
+        self.assertEqual(transport.calls[0][2], 300)
+        for request in (ModelBudget(1537, 512, 300).apply(original),
+                        ModelBudget(1536, 513, 300).apply(original)):
+            self.assert_code('model_context_overflow' if request.max_output_tokens == 512 else 'model_output_limit',
+                             lambda request=request: provider.complete(request))
+        self.assertEqual(len(transport.calls), 1)
+
+    def test_wrong_nested_shape_remains_caller_owned_and_keeps_response(self):
+        request = self.request(response_schema={'type': 'object', 'required': ['answer', 'evidence', 'next_steps']})
+        response = LocalHTTPProvider(fixture_profile(), transport=FakeTransport(completion('{"wrong":"shape"}'))).complete(request)
+        self.assertEqual(response.content, '{"wrong":"shape"}')
+        self.assertEqual(response.metrics['schema_validation'], 'caller_owned')
+
+    def test_solver_replay_uses_production_response_boundary_and_retains_failures(self):
+        from macr.agents.orchestrator import Orchestrator
+        from macr.agents.solver import SolverAgent
+        from macr.memory.board import AgentBoard
+        from macr.schemas import Evidence, Plan, Trace
+        evidence = [Evidence('access.py', 1, 1, 'fixture', 'return staff or paid',
+                             symbol='allowed', source_tool='parse_ast')]
+        citation = {key: getattr(evidence[0], key) for key in
+                    ('file', 'line_start', 'line_end', 'symbol', 'source_tool')}
+        success = json.dumps({'answer': 'Inspect the OR condition.', 'evidence': [citation], 'next_steps': []})
+        plan = Plan('bug_investigation', 'low', [])
+        profile = fixture_profile(context_limit=2048, output_limit=512, timeout_seconds=300,
+                                  capabilities=ProviderCapabilities(json_mode=True, usage=True))
+        budget = ModelBudget(1536, 512, 300)
+        for content, finish, transport_error, expected in (
+                (success, 'stop', None, None),
+                ('{"answer":', 'length', None, 'model_output_incomplete'),
+                ('not JSON', 'stop', None, 'model_output_invalid'),
+                ('{"wrong":"shape"}', 'stop', None, 'solver_output_invalid'),
+                ('', 'stop', TimeoutError(), 'model_timeout')):
+            with self.subTest(expected=expected):
+                data = completion(content, usage={'prompt_tokens': 1052, 'completion_tokens': 384,
+                                                   'total_tokens': 1436})
+                data['choices'][0]['finish_reason'] = finish
+                transport = FakeTransport(data, error=transport_error)
+                provider = LocalHTTPProvider(profile, transport=transport,
+                                             token_counter=lambda request, profile: 1052)
+                solver = SolverAgent(provider)
+                answer, response = solver.solve('Inspect the access requirement.', plan,
+                                                evidence, model_budget=budget)
+                self.assertEqual(answer.error_type, expected)
+                self.assertEqual(len(transport.calls), 1)
+                self.assertEqual(transport.calls[0][1]['max_tokens'], 512)
+                if transport_error is not None:
+                    self.assertIsNone(response)
+                    self.assertEqual(answer.status, 'failed')
+                else:
+                    self.assertEqual(response.content, content)
+                    self.assertEqual(response.finish_reason, finish)
+                    self.assertEqual((response.usage_kind, response.usage),
+                                     ('measured', {'input_tokens': 1052, 'output_tokens': 384}))
+                    self.assertEqual(answer.status, 'completed' if expected is None else 'failed')
+                # Exercise the production recording method without filesystem or retrieval work.
+                trace = Trace('fixture', 'fixture', answer=answer)
+                board, attempts = AgentBoard(), []
+                Orchestrator.__new__(Orchestrator)._record_solver_attempt(
+                    trace, board, solver, response, 'solver', True, attempts)
+                self.assertEqual(len(trace.llm_calls), 1)
+                record = trace.llm_calls[0]
+                if transport_error is not None:
+                    self.assertEqual((record['usage'], record['usage_kind'], record['finish_reason']),
+                                     ({}, 'unknown', None))
+                    self.assertIsNone(board.to_dict()['solver_attempts'][0]['payload']['raw_output'])
+                else:
+                    self.assertEqual((record['usage'], record['usage_kind'], record['finish_reason']),
+                                     (response.usage, 'measured', finish))
+                    self.assertEqual(board.to_dict()['solver_attempts'][0]['payload']['raw_output'], content)
 
     def test_invalid_profile_encoding_is_sanitized(self):
         self.assert_code('model_profile_invalid', lambda: validate_profile(fixture_profile(model_revision='\ud800')))

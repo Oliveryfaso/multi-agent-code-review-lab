@@ -69,3 +69,33 @@ class ProviderContractTests(unittest.TestCase):
             MockLLMProvider().complete(base.ModelRequest([], timeout_seconds=0))
         with self.assertRaises(base.ProviderError):
             DeepSeekProvider(api_key='fixture', transport=FakeTransport({'choices': []})).complete(self.request)
+
+    def test_explicit_budget_preserves_original_request_and_global_defaults(self):
+        budget = base.ModelBudget(max_input_tokens=1664, max_output_tokens=384, timeout_seconds=300)
+        effective = budget.apply(self.request)
+        self.assertEqual((effective.max_input_tokens, effective.max_output_tokens, effective.timeout_seconds),
+                         (1664, 384, 300))
+        self.assertEqual((self.request.max_input_tokens, self.request.max_output_tokens, self.request.timeout_seconds),
+                         (64000, 2000, 2))
+        self.assertEqual((base.ModelRequest([{'role': 'user', 'content': 'new'}]).max_input_tokens,
+                          base.ModelRequest([{'role': 'user', 'content': 'new'}]).max_output_tokens), (64000, 2000))
+        self.assertEqual(effective.messages, self.request.messages)
+        self.assertEqual(effective.metadata, self.request.metadata)
+        for limits in ((True, 384, 300), (1664, 0, 300), (1664, 384, float('nan'))):
+            with self.subTest(limits=limits), self.assertRaises(base.ProviderError):
+                base.ModelBudget(*limits)
+
+    def test_failure_response_is_optional_validated_evidence_not_exception_text(self):
+        response = base.ModelResponse('retained raw', finish_reason='length', usage_kind='measured',
+                                      usage={'input_tokens': 9, 'output_tokens': 16})
+        error = base.ProviderError('model_output_incomplete', response=response)
+        self.assertIs(error.response, response)
+        self.assertEqual(error.failure_kind, 'incomplete')
+        self.assertEqual(str(error), 'model_output_incomplete')
+        timeout = base.ProviderError('model_timeout')
+        self.assertIsNone(timeout.response)
+        self.assertEqual(timeout.failure_kind, 'transport')
+        with self.assertRaises(base.ProviderError):
+            base.ProviderError('model_output_invalid', response=base.ModelResponse('invalid', usage={'input_tokens': True}))
+        with self.assertRaises(ValueError):
+            base.ProviderError('model_output_invalid', failure_kind='healthy')

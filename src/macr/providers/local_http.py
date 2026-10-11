@@ -17,7 +17,7 @@ RESPONSE_LIMIT = 1024 * 1024
 REQUEST_LIMIT = 1024 * 1024
 
 
-def _object(raw):
+def _strict_json(raw):
     def unique(items):
         value = {}
         for key, item in items:
@@ -28,13 +28,17 @@ def _object(raw):
     def invalid(value):
         raise ValueError()
     try:
-        value = json.loads(raw.decode('utf-8') if type(raw) is bytes else raw,
-                           object_pairs_hook=unique, parse_constant=invalid)
-        if type(value) is not dict:
-            raise ValueError()
-        return value
+        return json.loads(raw.decode('utf-8') if type(raw) is bytes else raw,
+                          object_pairs_hook=unique, parse_constant=invalid)
     except (ValueError, TypeError, UnicodeError, RecursionError):
         raise ProviderError('model_response_invalid') from None
+
+
+def _object(raw):
+    value = _strict_json(raw)
+    if type(value) is not dict:
+        raise ProviderError('model_response_invalid')
+    return value
 
 
 class _NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -179,7 +183,7 @@ class LocalHTTPProvider:
                 raise ValueError()
             if content is None and calls:
                 content = ''
-            if type(content) is not str or (not content.strip() and not calls):
+            if type(content) is not str:
                 raise ValueError()
             model = data.get('model', self.profile.model_id)
             finish = choice.get('finish_reason', 'unknown')
@@ -200,15 +204,6 @@ class LocalHTTPProvider:
                     if 'total_tokens' in raw_usage and raw_usage['total_tokens'] != input_tokens + output_tokens:
                         raise ValueError()
                     usage = {'input_tokens': input_tokens, 'output_tokens': output_tokens}
-            if request.response_schema is not None:
-                if finish != 'stop':
-                    raise ProviderError('model_output_incomplete')
-                try:
-                    value = _object(content)
-                except ProviderError:
-                    raise ProviderError('model_output_invalid') from None
-                if request.response_schema.get('type', 'object') != 'object' or type(value) is not dict:
-                    raise ProviderError('model_output_invalid')
             metrics = {'profile_id': self.profile.profile_id,
                        'model_revision': self.profile.model_revision,
                        'tokenizer_revision': self.profile.tokenizer_revision,
@@ -221,9 +216,21 @@ class LocalHTTPProvider:
                        'prefill_tokens_per_second': None, 'decode_tokens_per_second': None,
                        'queue_ms': None, 'cold_start_ms': None, 'peak_memory_bytes': None,
                        'generation_cancel_supported': False, 'schema_validation': 'caller_owned'}
-            return validate_response(ModelResponse(content=content, tool_calls=calls, usage=usage,
+            response = validate_response(ModelResponse(content=content, tool_calls=calls, usage=usage,
                 latency_ms=metrics['latency_ms'], model=model, provider=self.name, finish_reason=finish,
                 usage_kind='measured' if usage else 'unknown', metrics=metrics))
+            if request.response_schema is not None and finish != 'stop':
+                raise ProviderError('model_output_incomplete', response=response, failure_kind='incomplete')
+            if not content.strip() and not calls:
+                raise ProviderError('model_response_invalid', response=response, failure_kind='invalid_json')
+            if request.response_schema is not None:
+                try:
+                    value = _strict_json(content)
+                except ProviderError:
+                    raise ProviderError('model_output_invalid', response=response, failure_kind='invalid_json') from None
+                if request.response_schema.get('type', 'object') != 'object' or type(value) is not dict:
+                    raise ProviderError('model_output_invalid', response=response, failure_kind='invalid_contract')
+            return response
         except ProviderError:
             raise
         except (ValueError, TypeError, KeyError, IndexError, AttributeError, OverflowError):
