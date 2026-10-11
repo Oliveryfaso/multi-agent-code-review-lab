@@ -135,3 +135,35 @@ and the defect agent wire request (retrieved source dropped before the model). O
 cover identity, visible context, bounded recovery and failure persistence; they do not establish
 native semantic correctness, planner coverage, or a solution to the 384-token completion bottleneck.
 No separate architecture review session is created here.
+
+## Phase 2: final agent context
+
+[The separate phase 2 record](debugger-continuation-phase2-results.json) binds implementation
+`5f8f7e377b57501b015b0cc0a3922728a3cbb4d1` and frozen plan
+`a2097273b65acec0642dda97e2e794f477f11025cb91318eda2258c0ff4de83e`; the first result record remains
+unchanged. The actual requests now include eight facts with 6, 7 and 7 nonblank source snippets
+for the defect, healthy and unavailable-dependency fixtures. The OR expression, its mixed-boolean
+caller, the healthy guard and the external dependency call are visible. All six attempts still
+ended with `length` at 384 output tokens. Each run exhausted one recovery and persisted
+`model_output_incomplete`, so **end-to-end completion remains 0/3** and accepted reports remain zero.
+Partial defect explanations identify the causal trigger; healthy text first invents a narrower
+requirement and later misreads the caller's arguments; missing-dependency text names the absent
+contract. None counts as an accepted diagnosis or correct abstention. Independent quality review
+confirmed these distinctions, including the different healthy errors and unchanged retry evidence.
+
+This capture runs real Orchestrator retrieval, Solver, recovery, final review and persistence with
+a frozen fixture planner and the lab's injected `BoundProvider` adapter. It overrides Solver's
+64,000/2,000-token and 60-second request limits with frozen 1,664/384-token and 300-second limits.
+The actual HTTP bodies request `json_object`; the schema is in the prompt, without a wire schema
+or grammar. Production `LocalHTTPProvider` transport, token counter and `_response` are not natively
+covered: the lab returns truncated content for Solver validation, while production `_response`
+raises a provider error before returning it. The retry adds generic validation feedback with the
+same evidence and other body fields, so it is not an identical-prompt repeat. These measurements
+prove source visibility under this adapter. They do not demonstrate improved completion or token
+efficiency; production behavior with a 2,000-token output allowance remains unverified.
+
+Phase 2 cost one service, six requests, 6,381 input and 2,304 output tokens, and 456.649 seconds.
+Peak RSS was 4.990 GiB, startup available memory was 72%, and its sampled minimum was 60%.
+The batch totals are two services, 48 requests, 41,706 tokens and 2,090.170 seconds, with zero new
+VMs, model downloads or external model API calls. The owned process and listener and the global
+model-server scan were absent after cleanup. Sampling does not prove a continuous memory minimum.

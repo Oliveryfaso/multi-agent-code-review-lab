@@ -1,0 +1,326 @@
+{
+  "schema_version": 1,
+  "measurement": "second frozen native agent capture; after exact five-field identity and provider-only snippet selection fixes",
+  "implementation_commit": "5f8f7e377b57501b015b0cc0a3922728a3cbb4d1",
+  "baseline_commit": "bc81db8b855faa11acc152d3f9811bc04486ae9c",
+  "frozen_plan": {
+    "canonical_sha256": "a2097273b65acec0642dda97e2e794f477f11025cb91318eda2258c0ff4de83e",
+    "file_sha256": "051972deea9f2dd54b5ae4e45f1169d65738794e18a6a0d416578023e5232fb9",
+    "service_profile": "qwen4b",
+    "runtime_version": "b11521",
+    "planned_calls": 6,
+    "same_three_fixtures_as_first_capture": true,
+    "prompt_template_schema_and_fixture_changes": false
+  },
+  "source_sha256": {
+    "src/macr/agents/solver.py": "5c5c992a87b9e226d5cdc521ebeee7955905fedfa5cc57f5c90f007661950240",
+    "src/macr/agents/final_reviewer.py": "0aec6efd79f902a594f9cf45c23f2143dead0cab8501dc7e6dab91b1fbad0fc4",
+    "src/macr/agents/orchestrator.py": "ca3ae899e71cc5f30c2910cafa24d1f641aee73bc6029d9ecfa0d6263c7e0646",
+    "src/macr/memory/evidence_store.py": "e9ee224a7bbc4b1e40c00e7e6050fad9c067fa9426b2291b2347fe3ccbcfb0a9",
+    "src/macr/providers/local_http.py": "1f69180be232c167e23a98b9b09b7830db47d7d776eec8d1175e0673b1201abd"
+  },
+  "first_result_preserved": {
+    "document": "debugger-continuation-results.json",
+    "sha256": "24483eaaeb37a331a403366557a32e782d4b3d3726719dc0d98eb039a2e374ed"
+  },
+  "execution_boundary": {
+    "native_entry": "Actual Orchestrator with frozen fixture planner and injected BoundProvider/Session.provider adapter.",
+    "covered": [
+      "retrieval",
+      "Solver visible-context selection and structured request preparation",
+      "bounded Solver recovery",
+      "FinalReviewAgent failure gate",
+      "trace and answer persistence"
+    ],
+    "planner": "frozen_fixture_plan_no_git_or_execution",
+    "provider_label_is_not_production_provider_coverage": true,
+    "solver_original_limits": {
+      "max_input_tokens": 64000,
+      "max_output_tokens": 2000,
+      "timeout_seconds": 60
+    },
+    "lab_effective_limits": {
+      "max_input_tokens": 1664,
+      "max_output_tokens": 384,
+      "timeout_seconds": 300
+    },
+    "http_response_format": {
+      "type": "json_object"
+    },
+    "schema_or_grammar_on_http_wire": false,
+    "schema_in_prompt": true,
+    "production_paths_not_natively_covered": [
+      "LocalHTTPProvider transport",
+      "LocalHTTPProvider injected token_counter",
+      "LocalHTTPProvider._response",
+      "unfrozen planner",
+      "production 2000-token output allowance"
+    ],
+    "response_boundary_difference": "The lab adapter retains length-ended ModelResponse content for Solver validation. Production LocalHTTPProvider._response raises ProviderError before returning that response; raw-output and failure-cost availability differ.",
+    "retry_comparison": "The retry adds generic validation_feedback; query, intent, evidence, required_format and system message remain the same. It is not an identical-prompt repeat."
+  },
+  "metrics": {
+    "attempt_output_contract": {
+      "complete_accepted": 0,
+      "attempts": 6,
+      "length_ended": 6,
+      "output_tokens_each": 384
+    },
+    "accepted_final_reports": {
+      "accepted": 0,
+      "runs": 3
+    },
+    "end_to_end_completion": {
+      "completed": 0,
+      "runs": 3,
+      "denominator": "One defect, one healthy and one unavailable-dependency Orchestrator run, each with one bounded recovery."
+    },
+    "healthy_false_alarm": {
+      "status": "unavailable_no_accepted_output",
+      "healthy_cases": 1,
+      "accepted_healthy_cases": 0,
+      "rate": null,
+      "accepted_report_denominator": 0,
+      "definition": "False-alarm rate among accepted healthy-case reports is unavailable because no healthy report was accepted."
+    },
+    "defect_causal_recall": {
+      "status": "measured_final_report_yield",
+      "defect_cases": 1,
+      "accepted_defect_cases": 0,
+      "rate": 0.0,
+      "supported_accepted_reports": 0,
+      "definition": "Supported accepted defect reports divided by one frozen defect case; the incomplete output is a miss. Partial reasoning is not credited."
+    },
+    "correct_abstention": {
+      "status": "measured_final_report_yield",
+      "unavailable_dependency_cases": 1,
+      "accepted_cases": 0,
+      "rate": 0.0,
+      "correct_accepted_reports": 0,
+      "definition": "Correct accepted insufficient-evidence reports divided by one eligible missing-dependency case; technical failure is not abstention."
+    },
+    "strict_diagnosis": {
+      "status": "measured_final_report_yield",
+      "cases": 3,
+      "accepted_cases": 0,
+      "rate": 0.0,
+      "correct_accepted_reports": 0,
+      "definition": "Complete accepted and causally supported final diagnoses divided by all three frozen cases; contract failures score zero."
+    },
+    "partial_text_policy": "Partial explanations are descriptive observations only. No incomplete response counts as an accepted diagnosis, healthy report or correct abstention."
+  },
+  "agent_cases": [
+    {
+      "case_id": "e2e-defect",
+      "expected_class": "supported_defect",
+      "run_status": "failed",
+      "error_type": "model_output_incomplete",
+      "failure_kind": "model_invalid",
+      "end_to_end_completed": false,
+      "final_review_ok": false,
+      "retry_count": 1,
+      "wire_source_examples": [
+        "return staff or paid",
+        "return \"granted\" if allowed(staff, paid) else \"denied\"",
+        "return access_status(True, False)"
+      ],
+      "retry_body_equal_except_validation_feedback": true,
+      "attempts": [
+        {
+          "key": "phase2-e2e-defect-1",
+          "finish_reason": "length",
+          "input_tokens": 1052,
+          "output_tokens": 384,
+          "native_idle_proof_qualified": true,
+          "visible_facts": 8,
+          "nonblank_source_snippets": 6,
+          "validation_feedback": [],
+          "partial_observation": "Partial answer correctly links OR versus required AND to granted access for the supplied (True, False) caller.",
+          "accepted": false,
+          "request_sha256": "662b8f76188ee12fee5aad61ed867c457c88b26dadddf77d98855cb42b7eb30f",
+          "response_sha256": "2ada8034a5e25a0bba3702f736942b26010be1a21cc5773bd47c78a6c12da54b",
+          "raw_response_sha256": "6655e92070def600b580dd601e4834355145c1e552c2d35091f74b3b3645b6ef"
+        },
+        {
+          "key": "phase2-e2e-defect-2",
+          "finish_reason": "length",
+          "input_tokens": 1081,
+          "output_tokens": 384,
+          "native_idle_proof_qualified": true,
+          "visible_facts": 8,
+          "nonblank_source_snippets": 6,
+          "validation_feedback": [
+            "solver step failed: model_output_incomplete",
+            "answer confidence too low: 0.00",
+            "evidence too thin: 0"
+          ],
+          "partial_observation": "Partial answer again identifies the OR mechanism and the mixed-boolean failure trigger.",
+          "accepted": false,
+          "request_sha256": "ad17842039540649f531a294bae689c8781048cb4a36205edf03ee583249dc09",
+          "response_sha256": "9c166f7f991969f7e6a9ff97f1b763aff07d1f0777623939d155547f17dbafb3",
+          "raw_response_sha256": "2df28076f36e3b55a2d9634e21960c3da76801166518764123fa6f9d41bb962d"
+        }
+      ]
+    },
+    {
+      "case_id": "e2e-healthy",
+      "expected_class": "healthy",
+      "run_status": "failed",
+      "error_type": "model_output_incomplete",
+      "failure_kind": "model_invalid",
+      "end_to_end_completed": false,
+      "final_review_ok": false,
+      "retry_count": 1,
+      "wire_source_examples": [
+        "return max(0, total - done)",
+        "return pending(done, total)",
+        "return job_status(total + 1, total)"
+      ],
+      "retry_body_equal_except_validation_feedback": true,
+      "attempts": [
+        {
+          "key": "phase2-e2e-healthy-1",
+          "finish_reason": "length",
+          "input_tokens": 1053,
+          "output_tokens": 384,
+          "native_idle_proof_qualified": true,
+          "visible_facts": 8,
+          "nonblank_source_snippets": 7,
+          "validation_feedback": [],
+          "partial_observation": "Partial answer invents a done <= total constraint and calls the allowed above-total caller defective; false-alarm direction.",
+          "accepted": false,
+          "request_sha256": "a9ba42aa7c9dfe6c3e020c6e326e2ceb02b702df085e59356a8f1b1d1dd32352",
+          "response_sha256": "76d0c0bae232e7f0f0114f423719d3917ee83ce2e148edea569ab27bb421878a",
+          "raw_response_sha256": "4979732ee4ee4274f290bb3d1d32a36d15fa14771c757407004e4959550e83aa"
+        },
+        {
+          "key": "phase2-e2e-healthy-2",
+          "finish_reason": "length",
+          "input_tokens": 1082,
+          "output_tokens": 384,
+          "native_idle_proof_qualified": true,
+          "visible_facts": 8,
+          "nonblank_source_snippets": 7,
+          "validation_feedback": [
+            "solver step failed: model_output_incomplete",
+            "answer confidence too low: 0.00",
+            "evidence too thin: 0"
+          ],
+          "partial_observation": "Partial answer says no bug but reads job_status(total + 1, total) as pending(total, total); actual argument support is wrong.",
+          "accepted": false,
+          "request_sha256": "3a3c5392d7fcfd351ef3d0e68b5fc4060dd373db1e404c1a2e9204b01c37a3aa",
+          "response_sha256": "0e159f8e4c37bfcdfee0dac35cae01c1de5b894726f10e0d8be1ac145a3c5ef3",
+          "raw_response_sha256": "3b990cc01dbaa83ed0631deafc5201e7ebcc90528acda9c8d166ff424f719e6c"
+        }
+      ]
+    },
+    {
+      "case_id": "e2e-unknown",
+      "expected_class": "insufficient_evidence",
+      "run_status": "failed",
+      "error_type": "model_output_incomplete",
+      "failure_kind": "model_invalid",
+      "end_to_end_completed": false,
+      "final_review_ok": false,
+      "retry_count": 1,
+      "wire_source_examples": [
+        "return registry.resolve(key)",
+        "return lookup(key, registry)",
+        "return display_lookup(\"present\", registry)"
+      ],
+      "retry_body_equal_except_validation_feedback": true,
+      "attempts": [
+        {
+          "key": "phase2-e2e-unknown-1",
+          "finish_reason": "length",
+          "input_tokens": 1042,
+          "output_tokens": 384,
+          "native_idle_proof_qualified": true,
+          "visible_facts": 8,
+          "nonblank_source_snippets": 7,
+          "validation_feedback": [],
+          "partial_observation": "Partial answer names the missing registry.resolve implementation and contract and declines to guarantee exception-free return.",
+          "accepted": false,
+          "request_sha256": "1ab9c81c5215291addd411a927261f4e159fa72ff985d05acf90b97696152aa5",
+          "response_sha256": "51ee82f5c2f0375615309c877fcd2fb03aae68bdbfad576c57814c3568452a4c",
+          "raw_response_sha256": "d3fb62472939cbaaf0422076db044e6b34bda86b08a986112a0ebd5d33196d79"
+        },
+        {
+          "key": "phase2-e2e-unknown-2",
+          "finish_reason": "length",
+          "input_tokens": 1071,
+          "output_tokens": 384,
+          "native_idle_proof_qualified": true,
+          "visible_facts": 8,
+          "nonblank_source_snippets": 7,
+          "validation_feedback": [
+            "solver step failed: model_output_incomplete",
+            "answer confidence too low: 0.00",
+            "evidence too thin: 0"
+          ],
+          "partial_observation": "Partial answer again identifies the unavailable external dependency behavior.",
+          "accepted": false,
+          "request_sha256": "a49873c721d0107382f7a191376088d5d85f402b0feaee34249a261f3feccd0f",
+          "response_sha256": "c4726854b9c44f166b3ed4dbab8cf9906d7198a9ecfa7546de081ceaef7d1eb1",
+          "raw_response_sha256": "1f672646a5cad28ab472e1b41a6c1340e077597bb5db089f8aa64854a568048f"
+        }
+      ]
+    }
+  ],
+  "cost": {
+    "new_service_starts": 1,
+    "new_generation_requests": 6,
+    "input_tokens": 6381,
+    "output_tokens": 2304,
+    "total_tokens": 8685,
+    "service_elapsed_seconds": 456.64903404109646,
+    "cumulative_batch_service_starts": 2,
+    "cumulative_batch_generation_requests": 48,
+    "cumulative_batch_input_tokens": 28225,
+    "cumulative_batch_output_tokens": 13481,
+    "cumulative_batch_total_tokens": 41706,
+    "cumulative_batch_service_elapsed_seconds": 2090.170370499138,
+    "new_vm": 0,
+    "new_model_downloads": 0,
+    "external_model_api_calls": 0
+  },
+  "resources": {
+    "peak_rss_bytes": 5357633536,
+    "peak_rss_gib": 4.99,
+    "rss_limit_gib": 5.5,
+    "startup_available_percent": 72,
+    "minimum_sampled_available_percent": 60,
+    "startup_required_percent": 30,
+    "running_required_percent": 20,
+    "continuous_memory_minimum_proven": false,
+    "owned_process_absent_after_cleanup": true,
+    "owned_listener_absent_after_cleanup": true,
+    "monitor_threads_completed": true,
+    "independent_os_observation": {
+      "owned_process_absent": true,
+      "owned_listener_absent": true,
+      "global_model_server_absent": true
+    }
+  },
+  "closed_capture_sha256": {
+    "execution_ledger": "76e870b9548876055fd9d396c2ad48522f2fef7e60f1bfee4547057c70175054",
+    "execution_result": "b45aff5b4c80b6470373fb0bbf69473e6a6531b52f98915c0fa8e2dedb274e45",
+    "captured_suite": "c34ed8e2410e76c2f73d80503d033ae36be14621b6169418a9eff3812ec6eb79",
+    "callback_result": "77aec76512c284b38074fb70e72b40247e6798141b6b7aca70cefbcf19c7b086",
+    "transition_result": "78cdd1755f94f2438ed2f00b599d47ff657545027bd2a9fe6e4ee7aad1e46498",
+    "independent_os_observation": "1a44a214ed5561a5d04c80588dd3600547957c2287c52875c09f066bf9c50fa2"
+  },
+  "independent_quality_review": {
+    "status": "completed",
+    "scope": "Independent final semantic review confirmed six length-ended attempts, three failed runs, nonblank source counts 6/7/7, unchanged retry evidence with added validation_feedback, and the distinct healthy requirement and argument errors.",
+    "partial_observations_are_not_acceptance_metrics": true,
+    "artifact_sha256": "0c5ef36c428d5fa66b47ec0adce5a66cbc5c008f1f59e0a4b24ed04fe163340d"
+  },
+  "limits": [
+    "The fixed snippet-selection change is verified on the actual lab HTTP wire; it does not demonstrate improved completion, token efficiency or model accuracy.",
+    "All six requests hit the frozen 384-token output allowance. This is not proof that production requests with a 2000-token allowance fail.",
+    "No result establishes general healthy false-alarm reduction, defect recall or correct abstention.",
+    "The first capture and its result document remain separate and unchanged.",
+    "No extra request or service remains in the authorized 2-start/48-request batch."
+  ]
+}
