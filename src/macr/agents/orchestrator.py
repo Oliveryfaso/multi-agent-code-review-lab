@@ -705,7 +705,7 @@ class Orchestrator:
             query,
             plan,
             trace.answer,
-            trace.answer.evidence if trace.answer else evidence.items(),
+            evidence.items(),
             trace.tool_calls,
             board=pre_monitor_board,
             patch=trace.patch,

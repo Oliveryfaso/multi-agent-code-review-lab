@@ -66,6 +66,12 @@ jobs:
           python -I -S -B scripts/run_offline_tests.py
           test_context_reader test_static_readers
 
+      - name: Final review uses distinct retrieved sources
+        run: >-
+          python -I -S -B scripts/run_offline_tests.py
+          test_final_reviewer
+          test_orchestrator.OrchestratorTests.test_final_review_receives_store_evidence_after_recovery
+
       - name: Snapshots and static facts
         run: >-
           python -I -S -B scripts/run_offline_tests.py

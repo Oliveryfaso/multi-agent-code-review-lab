@@ -1,0 +1,855 @@
+{
+  "version": "diagnostic-new-samples-v1",
+  "cases": {
+    "ns01": {
+      "category": "supported_defect",
+      "topic": "boolean-authorization",
+      "mechanism": "permitted combines the two required conditions with or. One true condition therefore grants access even when the other required condition is false, and decide forwards that result.",
+      "trigger": "For decide(True, False), or yields True although the stated two-condition policy requires False. decide(False, True) is an equally valid trigger.",
+      "missing_evidence": [],
+      "evidence_roles": [
+        {
+          "file": "gate_policy.py",
+          "start": 2,
+          "end": 2,
+          "role": "wrong-connective"
+        },
+        {
+          "file": "gate_entry.py",
+          "start": 5,
+          "end": 5,
+          "role": "public-path-forwarding"
+        }
+      ],
+      "accepted_shape_witness": {
+        "verdict": "supported_defect",
+        "cause": "The helper uses or instead of requiring both authorization conditions; decide forwards its result.",
+        "when": "Exactly one input is True, for example decide(True, False), returns True instead of False.",
+        "refs": [
+          {
+            "file": "gate_policy.py",
+            "start": 2,
+            "end": 2
+          },
+          {
+            "file": "gate_entry.py",
+            "start": 5,
+            "end": 5
+          }
+        ],
+        "unknowns": []
+      },
+      "reject_examples": [
+        {
+          "reason": "An assertion of a defect must explain the or-versus-both condition. Claims that both False grant access or that the import is missing contradict the supplied path.",
+          "answer": {
+            "verdict": "supported_defect",
+            "cause": "Both false authorization inputs are accepted by or.",
+            "when": "decide(False, False) grants access.",
+            "refs": [
+              {
+                "file": "gate_policy.py",
+                "start": 2,
+                "end": 2
+              },
+              {
+                "file": "gate_entry.py",
+                "start": 5,
+                "end": 5
+              }
+            ],
+            "unknowns": []
+          }
+        }
+      ],
+      "safe_probe": null
+    },
+    "ns02": {
+      "category": "no_defect_supported",
+      "topic": "bit-mask",
+      "mechanism": "Bitwise and with mask 6 retains only the required two bits; equality with 6 is True exactly when both are present, independent of the other two allowed bits.",
+      "trigger": "Within the stated integer domain, flags 0, 2 and 4 return False; 6 and 14 return True. An equivalent full-domain explanation is accepted.",
+      "missing_evidence": [],
+      "evidence_roles": [
+        {
+          "file": "flags.py",
+          "start": 2,
+          "end": 3,
+          "role": "mask-and-comparison"
+        }
+      ],
+      "accepted_shape_witness": {
+        "verdict": "no_defect_supported",
+        "cause": "The mask 6 selects bits 2 and 4, and equality requires both selected bits while ignoring others.",
+        "when": "For allowed ints 0 through 15, including False for 2/4 and True for 6/14.",
+        "refs": [
+          {
+            "file": "flags.py",
+            "start": 2,
+            "end": 3
+          }
+        ],
+        "unknowns": []
+      },
+      "reject_examples": [
+        {
+          "reason": "A claim that the comparison accepts any one required bit, or rejects extra bits, contradicts the mask operation.",
+          "answer": {
+            "verdict": "supported_defect",
+            "cause": "The comparison requires flags to equal 6 and rejects extra bits.",
+            "when": "flags=14 returns False.",
+            "refs": [
+              {
+                "file": "flags.py",
+                "start": 2,
+                "end": 3
+              }
+            ],
+            "unknowns": []
+          }
+        },
+        {
+          "reason": "Unknown based only on custom numeric operators ignores the exact built-in int scope.",
+          "answer": {
+            "verdict": "unknown",
+            "cause": null,
+            "when": null,
+            "refs": [
+              {
+                "file": "flags.py",
+                "start": 2,
+                "end": 3
+              }
+            ],
+            "unknowns": [
+              "The custom numeric operator implementation is missing."
+            ]
+          }
+        }
+      ],
+      "safe_probe": null
+    },
+    "ns03": {
+      "category": "unknown",
+      "topic": "storage-durability",
+      "mechanism": null,
+      "trigger": null,
+      "missing_evidence": [
+        "The deployed store.save acknowledgement/durability guarantee or verified evidence that an acknowledged event survives immediate power loss is missing."
+      ],
+      "evidence_roles": [
+        {
+          "file": "persistence.py",
+          "start": 2,
+          "end": 2,
+          "role": "external-property-delegation"
+        }
+      ],
+      "accepted_shape_witness": {
+        "verdict": "unknown",
+        "cause": null,
+        "when": null,
+        "refs": [
+          {
+            "file": "persistence.py",
+            "start": 2,
+            "end": 2
+          }
+        ],
+        "unknowns": [
+          "The deployed store.save acknowledgement/durability guarantee or verified evidence that an acknowledged event survives immediate power loss is missing."
+        ]
+      },
+      "reject_examples": [
+        {
+          "reason": "Do not infer that returning an identifier proves durable persistence.",
+          "answer": {
+            "verdict": "no_defect_supported",
+            "cause": "A returned identifier proves data is durably persisted.",
+            "when": "Every normal store.save return survives power loss.",
+            "refs": [
+              {
+                "file": "persistence.py",
+                "start": 2,
+                "end": 2
+              }
+            ],
+            "unknowns": []
+          }
+        },
+        {
+          "reason": "Do not infer that save only buffers data and necessarily loses it; the deployed implementation is absent.",
+          "answer": {
+            "verdict": "supported_defect",
+            "cause": "store.save only buffers in memory.",
+            "when": "Any immediate power loss loses the acknowledged event.",
+            "refs": [
+              {
+                "file": "persistence.py",
+                "start": 2,
+                "end": 2
+              }
+            ],
+            "unknowns": []
+          }
+        },
+        {
+          "reason": "A generic need-more-context gap is insufficient; identify successful-return durability or acknowledgement policy.",
+          "answer": {
+            "verdict": "unknown",
+            "cause": null,
+            "when": null,
+            "refs": [
+              {
+                "file": "persistence.py",
+                "start": 2,
+                "end": 2
+              }
+            ],
+            "unknowns": [
+              "More context is needed."
+            ]
+          }
+        }
+      ],
+      "safe_probe": null
+    },
+    "ns04": {
+      "category": "supported_defect",
+      "topic": "lazy-result-contract",
+      "mechanism": "The parenthesized generator expression returns a generator object rather than a materialized tuple. Its potential yielded strings do not satisfy the required immediate tuple result.",
+      "trigger": "capitalized((\"oak\", \"fir\")) returns a generator object instead of (\"OAK\", \"FIR\"). The empty input also returns a generator instead of ().",
+      "missing_evidence": [],
+      "evidence_roles": [
+        {
+          "file": "formatters.py",
+          "start": 2,
+          "end": 2,
+          "role": "generator-return"
+        }
+      ],
+      "accepted_shape_witness": {
+        "verdict": "supported_defect",
+        "cause": "The return expression creates a generator instead of materializing the required tuple.",
+        "when": "Calling capitalized((\"oak\", \"fir\")) returns a generator object rather than (\"OAK\", \"FIR\").",
+        "refs": [
+          {
+            "file": "formatters.py",
+            "start": 2,
+            "end": 2
+          }
+        ],
+        "unknowns": []
+      },
+      "reject_examples": [
+        {
+          "reason": "Do not claim word.upper fails or changes ordering within the supplied ASCII built-in string scope.",
+          "answer": {
+            "verdict": "supported_defect",
+            "cause": "upper fails on the allowed lowercase ASCII words.",
+            "when": "capitalized((\"oak\", \"fir\")) raises an encoding error.",
+            "refs": [
+              {
+                "file": "formatters.py",
+                "start": 2,
+                "end": 2
+              }
+            ],
+            "unknowns": []
+          }
+        },
+        {
+          "reason": "It is not healthy merely because consuming the generator would yield the desired values; the required result itself is a tuple.",
+          "answer": {
+            "verdict": "no_defect_supported",
+            "cause": "Iteration yields the required uppercase strings, so the generator satisfies the tuple contract.",
+            "when": "The shown nonempty input can be iterated.",
+            "refs": [
+              {
+                "file": "formatters.py",
+                "start": 2,
+                "end": 2
+              }
+            ],
+            "unknowns": []
+          }
+        }
+      ],
+      "safe_probe": null
+    },
+    "ns05": {
+      "category": "no_defect_supported",
+      "topic": "tuple-transposition",
+      "mechanism": "Unpacking binds the two integer positions and the comma-separated return constructs the reversed two-element tuple. The original tuple is never mutated.",
+      "trigger": "For every stated two-integer tuple, including (3, -2) returning (-2, 3) and (5, 5) returning (5, 5).",
+      "missing_evidence": [],
+      "evidence_roles": [
+        {
+          "file": "pairs.py",
+          "start": 2,
+          "end": 3,
+          "role": "unpack-and-reverse"
+        }
+      ],
+      "accepted_shape_witness": {
+        "verdict": "no_defect_supported",
+        "cause": "The input is unpacked into first and second and the returned tuple reverses those positions without mutating the immutable input.",
+        "when": "For every allowed two-int tuple, including (3, -2) -> (-2, 3) and equal-value pairs.",
+        "refs": [
+          {
+            "file": "pairs.py",
+            "start": 2,
+            "end": 3
+          }
+        ],
+        "unknowns": []
+      },
+      "reject_examples": [
+        {
+          "reason": "Do not claim tuple unpacking accepts the wrong length: inputs are explicitly exactly two elements.",
+          "answer": {
+            "verdict": "supported_defect",
+            "cause": "Unpacking fails because pair may contain three values.",
+            "when": "A three-element tuple raises ValueError.",
+            "refs": [
+              {
+                "file": "pairs.py",
+                "start": 2,
+                "end": 3
+              }
+            ],
+            "unknowns": []
+          }
+        },
+        {
+          "reason": "Do not invent mutation or a nested-copy requirement for the supplied immutable scalar domain.",
+          "answer": {
+            "verdict": "supported_defect",
+            "cause": "Returning second first mutates pair.",
+            "when": "transpose((3, -2)) changes the original tuple.",
+            "refs": [
+              {
+                "file": "pairs.py",
+                "start": 2,
+                "end": 3
+              }
+            ],
+            "unknowns": []
+          }
+        }
+      ],
+      "safe_probe": null
+    },
+    "ns06": {
+      "category": "unknown",
+      "topic": "replica-read-after-write",
+      "mechanism": null,
+      "trigger": null,
+      "missing_evidence": [
+        "The deployed replica read-after-write/consistency guarantee or verified evidence relating this fetch result to the last acknowledged primary write is missing."
+      ],
+      "evidence_roles": [
+        {
+          "file": "replication.py",
+          "start": 2,
+          "end": 2,
+          "role": "external-property-delegation"
+        }
+      ],
+      "accepted_shape_witness": {
+        "verdict": "unknown",
+        "cause": null,
+        "when": null,
+        "refs": [
+          {
+            "file": "replication.py",
+            "start": 2,
+            "end": 2
+          }
+        ],
+        "unknowns": [
+          "The deployed replica read-after-write/consistency guarantee or verified evidence relating this fetch result to the last acknowledged primary write is missing."
+        ]
+      },
+      "reject_examples": [
+        {
+          "reason": "Do not assume the replica is current merely because the primary write completed.",
+          "answer": {
+            "verdict": "no_defect_supported",
+            "cause": "The replica is necessarily up to date after the primary write.",
+            "when": "The first fetch after the acknowledged primary write returns the new value.",
+            "refs": [
+              {
+                "file": "replication.py",
+                "start": 2,
+                "end": 2
+              }
+            ],
+            "unknowns": []
+          }
+        },
+        {
+          "reason": "Do not assume replica lag or an obsolete result definitely occurred without deployed configuration or observation.",
+          "answer": {
+            "verdict": "supported_defect",
+            "cause": "The replica is stale after every primary write.",
+            "when": "This fetch necessarily returns the old value.",
+            "refs": [
+              {
+                "file": "replication.py",
+                "start": 2,
+                "end": 2
+              }
+            ],
+            "unknowns": []
+          }
+        },
+        {
+          "reason": "Name missing consistency or returned-version evidence rather than claiming a generic missing fetch body.",
+          "answer": {
+            "verdict": "unknown",
+            "cause": null,
+            "when": null,
+            "refs": [
+              {
+                "file": "replication.py",
+                "start": 2,
+                "end": 2
+              }
+            ],
+            "unknowns": [
+              "More context is needed."
+            ]
+          }
+        }
+      ],
+      "safe_probe": null
+    },
+    "ns07": {
+      "category": "supported_defect",
+      "topic": "exception-suppression",
+      "mechanism": "The missing-key lookup raises KeyError, but the handler catches that required exception and returns 0, suppressing it instead of propagating it.",
+      "trigger": "With {\"seen\": 5} and key \"missing\", the function returns 0 rather than raising the required KeyError. Any absent key is an equivalent trigger.",
+      "missing_evidence": [],
+      "evidence_roles": [
+        {
+          "file": "reader.py",
+          "start": 3,
+          "end": 5,
+          "role": "lookup-and-suppression"
+        }
+      ],
+      "accepted_shape_witness": {
+        "verdict": "supported_defect",
+        "cause": "The except KeyError branch suppresses the missing-key exception and substitutes 0 contrary to the propagation requirement.",
+        "when": "For required_value({\"seen\": 5}, \"missing\"), the missing key leads to return 0 rather than propagated KeyError.",
+        "refs": [
+          {
+            "file": "reader.py",
+            "start": 3,
+            "end": 5
+          }
+        ],
+        "unknowns": []
+      },
+      "reject_examples": [
+        {
+          "reason": "Returning 0 for a present key whose stored value is 0 is correct; the defect is specifically the missing-key path.",
+          "answer": {
+            "verdict": "supported_defect",
+            "cause": "A stored zero value is an invalid missing-value substitute.",
+            "when": "mapping={\"seen\": 0}, key=\"seen\" returns 0.",
+            "refs": [
+              {
+                "file": "reader.py",
+                "start": 3,
+                "end": 5
+              }
+            ],
+            "unknowns": []
+          }
+        },
+        {
+          "reason": "Do not claim every lookup fails or that a custom dict hook changes the supplied built-in behavior.",
+          "answer": {
+            "verdict": "supported_defect",
+            "cause": "Every built-in dict lookup raises KeyError.",
+            "when": "Any present key lookup is caught and returns zero.",
+            "refs": [
+              {
+                "file": "reader.py",
+                "start": 3,
+                "end": 5
+              }
+            ],
+            "unknowns": []
+          }
+        }
+      ],
+      "safe_probe": null
+    },
+    "ns08": {
+      "category": "no_defect_supported",
+      "topic": "single-literal-prefix",
+      "mechanism": "startswith checks exactly the leading case-sensitive literal. Slicing after its four characters removes one occurrence, while the other branch preserves the whole string.",
+      "trigger": "For all stated strings, including \"job-job-a\" -> \"job-a\", \"job-\" -> \"\" and \"xjob-a\" unchanged.",
+      "missing_evidence": [],
+      "evidence_roles": [
+        {
+          "file": "prefixes.py",
+          "start": 2,
+          "end": 4,
+          "role": "prefix-guard-and-single-removal"
+        }
+      ],
+      "accepted_shape_witness": {
+        "verdict": "no_defect_supported",
+        "cause": "The leading literal is checked before slicing away its four characters once, and names without it are returned unchanged.",
+        "when": "Across the allowed ASCII strings, including job-job-a -> job-a, job- -> empty and xjob-a unchanged.",
+        "refs": [
+          {
+            "file": "prefixes.py",
+            "start": 2,
+            "end": 4
+          }
+        ],
+        "unknowns": []
+      },
+      "reject_examples": [
+        {
+          "reason": "Do not assert global replacement, repeated removal, case-insensitive behavior or invalid empty slicing; none is performed.",
+          "answer": {
+            "verdict": "supported_defect",
+            "cause": "The code removes every occurrence of job-.",
+            "when": "job-job-a becomes a.",
+            "refs": [
+              {
+                "file": "prefixes.py",
+                "start": 2,
+                "end": 4
+              }
+            ],
+            "unknowns": []
+          }
+        },
+        {
+          "reason": "An unspecified alternate prefix policy cannot override the fully stated literal contract.",
+          "answer": {
+            "verdict": "unknown",
+            "cause": null,
+            "when": null,
+            "refs": [
+              {
+                "file": "prefixes.py",
+                "start": 2,
+                "end": 4
+              }
+            ],
+            "unknowns": [
+              "The desired prefix policy is unspecified."
+            ]
+          }
+        }
+      ],
+      "safe_probe": null
+    },
+    "ns09": {
+      "category": "unknown",
+      "topic": "cross-process-lock-scope",
+      "mechanism": null,
+      "trigger": null,
+      "missing_evidence": [
+        "The deployed lock backend and shared-resource binding, or a verified guarantee that both process handles provide mutual exclusion across these processes, are missing."
+      ],
+      "evidence_roles": [
+        {
+          "file": "critical.py",
+          "start": 2,
+          "end": 2,
+          "role": "external-property-delegation"
+        }
+      ],
+      "accepted_shape_witness": {
+        "verdict": "unknown",
+        "cause": null,
+        "when": null,
+        "refs": [
+          {
+            "file": "critical.py",
+            "start": 2,
+            "end": 2
+          }
+        ],
+        "unknowns": [
+          "The deployed lock backend and shared-resource binding, or a verified guarantee that both process handles provide mutual exclusion across these processes, are missing."
+        ]
+      },
+      "reject_examples": [
+        {
+          "reason": "Do not assume a with statement or context-manager protocol alone proves cross-process exclusion.",
+          "answer": {
+            "verdict": "no_defect_supported",
+            "cause": "A with block guarantees mutual exclusion across processes.",
+            "when": "Both worker processes invoke guarded_write.",
+            "refs": [
+              {
+                "file": "critical.py",
+                "start": 2,
+                "end": 2
+              }
+            ],
+            "unknowns": []
+          }
+        },
+        {
+          "reason": "Do not assume the deployed handles are process-local and necessarily permit overlap; their actual scope is absent.",
+          "answer": {
+            "verdict": "supported_defect",
+            "cause": "The lock handles are necessarily process-local.",
+            "when": "The two writers definitely overlap.",
+            "refs": [
+              {
+                "file": "critical.py",
+                "start": 2,
+                "end": 2
+              }
+            ],
+            "unknowns": []
+          }
+        },
+        {
+          "reason": "The missing writer implementation is not the decisive gap for the explicitly limited overlap property.",
+          "answer": {
+            "verdict": "unknown",
+            "cause": null,
+            "when": null,
+            "refs": [
+              {
+                "file": "critical.py",
+                "start": 2,
+                "end": 2
+              }
+            ],
+            "unknowns": [
+              "The writer implementation is missing."
+            ]
+          }
+        }
+      ],
+      "safe_probe": null
+    },
+    "ns10": {
+      "category": "supported_defect",
+      "topic": "ascii-case-recognition",
+      "mechanism": "Equality to the lowercase literal is case-sensitive, so the allowed mixed/uppercase spellings of the same required token are rejected.",
+      "trigger": "is_ready(\"READY\") returns False although the case-insensitive requirement demands True. \"Ready\" is an equally valid trigger.",
+      "missing_evidence": [],
+      "evidence_roles": [
+        {
+          "file": "labels.py",
+          "start": 2,
+          "end": 2,
+          "role": "case-sensitive-equality"
+        }
+      ],
+      "accepted_shape_witness": {
+        "verdict": "supported_defect",
+        "cause": "The direct equality is case-sensitive and does not recognize the explicitly allowed uppercase or mixed-case spellings.",
+        "when": "is_ready(\"READY\") or is_ready(\"Ready\") returns False instead of True.",
+        "refs": [
+          {
+            "file": "labels.py",
+            "start": 2,
+            "end": 2
+          }
+        ],
+        "unknowns": []
+      },
+      "reject_examples": [
+        {
+          "reason": "Do not report Unicode normalization, encoding, whitespace or an input outside the complete allowed set as the mechanism.",
+          "answer": {
+            "verdict": "supported_defect",
+            "cause": "The code fails to trim Unicode whitespace.",
+            "when": "A non-ASCII label padded with whitespace is rejected.",
+            "refs": [
+              {
+                "file": "labels.py",
+                "start": 2,
+                "end": 2
+              }
+            ],
+            "unknowns": []
+          }
+        },
+        {
+          "reason": "The lowercase input ready is not a failing trigger; it returns the required True.",
+          "answer": {
+            "verdict": "supported_defect",
+            "cause": "The equality is always False.",
+            "when": "is_ready(\"ready\") returns False.",
+            "refs": [
+              {
+                "file": "labels.py",
+                "start": 2,
+                "end": 2
+              }
+            ],
+            "unknowns": []
+          }
+        }
+      ],
+      "safe_probe": null
+    },
+    "ns11": {
+      "category": "no_defect_supported",
+      "topic": "immutable-set-disjointness",
+      "mechanism": "The built-in frozenset.isdisjoint predicate reports whether the intersection is empty and does not mutate either immutable operand.",
+      "trigger": "For the full stated domain, disjoint sets and an empty operand yield True; any shared element yields False.",
+      "missing_evidence": [],
+      "evidence_roles": [
+        {
+          "file": "sets.py",
+          "start": 2,
+          "end": 2,
+          "role": "builtin-disjoint-predicate"
+        }
+      ],
+      "accepted_shape_witness": {
+        "verdict": "no_defect_supported",
+        "cause": "frozenset.isdisjoint directly tests for an empty intersection and leaves both immutable inputs unchanged.",
+        "when": "For allowed frozensets, including True for an empty/disjoint pair and False for a pair sharing 2.",
+        "refs": [
+          {
+            "file": "sets.py",
+            "start": 2,
+            "end": 2
+          }
+        ],
+        "unknowns": []
+      },
+      "reject_examples": [
+        {
+          "reason": "Do not claim a destructive set operation or that empty sets are nondisjoint; neither follows from isdisjoint.",
+          "answer": {
+            "verdict": "supported_defect",
+            "cause": "isdisjoint destructively removes shared elements.",
+            "when": "A pair sharing 2 loses that value.",
+            "refs": [
+              {
+                "file": "sets.py",
+                "start": 2,
+                "end": 2
+              }
+            ],
+            "unknowns": []
+          }
+        },
+        {
+          "reason": "Unsupported subclass behavior is outside the exact built-in frozenset scope.",
+          "answer": {
+            "verdict": "unknown",
+            "cause": null,
+            "when": null,
+            "refs": [
+              {
+                "file": "sets.py",
+                "start": 2,
+                "end": 2
+              }
+            ],
+            "unknowns": [
+              "The frozenset subclass behavior is missing."
+            ]
+          }
+        }
+      ],
+      "safe_probe": null
+    },
+    "ns12": {
+      "category": "unknown",
+      "topic": "end-to-end-deduplication",
+      "mechanism": null,
+      "trigger": null,
+      "missing_evidence": [
+        "The deployed end-to-end duplicate-suppression guarantee for repeated event_id, including broker behavior and downstream processing effects, is missing."
+      ],
+      "evidence_roles": [
+        {
+          "file": "delivery.py",
+          "start": 2,
+          "end": 2,
+          "role": "external-property-delegation"
+        }
+      ],
+      "accepted_shape_witness": {
+        "verdict": "unknown",
+        "cause": null,
+        "when": null,
+        "refs": [
+          {
+            "file": "delivery.py",
+            "start": 2,
+            "end": 2
+          }
+        ],
+        "unknowns": [
+          "The deployed end-to-end duplicate-suppression guarantee for repeated event_id, including broker behavior and downstream processing effects, is missing."
+        ]
+      },
+      "reject_examples": [
+        {
+          "reason": "Do not infer that passing event_id automatically deduplicates broker delivery or consumer effects.",
+          "answer": {
+            "verdict": "no_defect_supported",
+            "cause": "Passing event_id automatically deduplicates all downstream effects.",
+            "when": "The two successful submissions have identical event_id.",
+            "refs": [
+              {
+                "file": "delivery.py",
+                "start": 2,
+                "end": 2
+              }
+            ],
+            "unknowns": []
+          }
+        },
+        {
+          "reason": "Do not infer that two calls necessarily cause two effects; the deployed path could deduplicate.",
+          "answer": {
+            "verdict": "supported_defect",
+            "cause": "Two send calls always cause two downstream effects.",
+            "when": "Submitting the same event twice necessarily processes it twice.",
+            "refs": [
+              {
+                "file": "delivery.py",
+                "start": 2,
+                "end": 2
+              }
+            ],
+            "unknowns": []
+          }
+        },
+        {
+          "reason": "A gap must identify the duplicate-event handling/processing guarantee, not only generic network availability.",
+          "answer": {
+            "verdict": "unknown",
+            "cause": null,
+            "when": null,
+            "refs": [
+              {
+                "file": "delivery.py",
+                "start": 2,
+                "end": 2
+              }
+            ],
+            "unknowns": [
+              "Network availability is unknown."
+            ]
+          }
+        }
+      ],
+      "safe_probe": null
+    }
+  }
+}

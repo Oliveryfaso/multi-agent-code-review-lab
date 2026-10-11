@@ -1,0 +1,1634 @@
+{
+  "cases": [
+    {
+      "answer": {
+        "cause": "The function decide returns True when either authenticated or can_edit is True, which means it returns True in all cases where at least one of the inputs is True. However, the scenario requires it to return True only when both authenticated and can_edit are True. Since the current implementation returns True for (True, False), it violates the stated requirement. Thus, the implementation does not satisfy the scenario's condition.",
+        "refs": [
+          {
+            "end": 2,
+            "file": "gate_policy.py",
+            "start": 1
+          },
+          {
+            "end": 5,
+            "file": "gate_entry.py",
+            "start": 1
+          }
+        ],
+        "unknowns": [],
+        "verdict": "no_defect_supported",
+        "when": "When authenticated is True and can_edit is False, decide returns True, violating the requirement that it should return False in this case."
+      },
+      "case_id": "ns01",
+      "contract_valid": true,
+      "diagnostic_passed": false,
+      "error_code": null,
+      "expected_verdict": "supported_defect",
+      "failure_class": "semantic",
+      "finish_reason": "stop",
+      "healthy_false_alarm": null,
+      "http_latency_ms": 21147,
+      "measured_usage": {
+        "input_tokens": 512,
+        "output_tokens": 198
+      },
+      "profile_id": "qwen4b",
+      "raw_content": "{\n  \"verdict\": \"no_defect_supported\",\n  \"cause\": \"The function decide returns True when either authenticated or can_edit is True, which means it returns True in all cases where at least one of the inputs is True. However, the scenario requires it to return True only when both authenticated and can_edit are True. Since the current implementation returns True for (True, False), it violates the stated requirement. Thus, the implementation does not satisfy the scenario's condition.\",\n  \"when\": \"When authenticated is True and can_edit is False, decide returns True, violating the requirement that it should return False in this case.\",\n  \"refs\": [\n    {\n      \"file\": \"gate_policy.py\",\n      \"start\": 1,\n      \"end\": 2\n    },\n    {\n      \"file\": \"gate_entry.py\",\n      \"start\": 1,\n      \"end\": 5\n    }\n  ],\n  \"unknowns\": []\n}",
+      "record_sha256": "23947e8d240abcd21c51e6f0b4d1e2f03156133634b03b56fd4790cf6ed6f873",
+      "review": {
+        "abstention_reason": "unknown",
+        "citation_support": "supported",
+        "evidence_refs": [
+          {
+            "end": 2,
+            "file": "gate_policy.py",
+            "start": 1
+          },
+          {
+            "end": 5,
+            "file": "gate_entry.py",
+            "start": 1
+          }
+        ],
+        "mechanism": "supported",
+        "reason": "The OR-versus-both causal account and one-true-input trigger are correct, and both supplied files are cited. However, verdict no_defect_supported directly conflicts with that account and the frozen supported_defect requirement. Correct prose cannot override the wrong verdict; diagnostic pass is false.",
+        "record_sha256": "23947e8d240abcd21c51e6f0b4d1e2f03156133634b03b56fd4790cf6ed6f873",
+        "trigger": "supported"
+      },
+      "semantic_review": "reviewed",
+      "strict_json_valid": true,
+      "topic": "boolean-authorization",
+      "unknown_abstention": null,
+      "verdict_correct": false
+    },
+    {
+      "answer": {
+        "cause": "The function checks if bits set in `flags` match `required = 6` (binary 110), which corresponds to bits 1 and 2 (0-indexed), not bits 2 and 4 (value 4 is 100 in binary, value 2 is 010). The scenario requires bits of value 2 and 4 (i.e., 2^1 and 2^2), but the function evaluates against bit positions 1 and 2 (values 2 and 4), which is a misalignment in bit interpretation. The trigger is the use of `required = 6` (binary 110), which sets bits 1 and 2, not bits 2 and 4 as required.",
+        "refs": [
+          {
+            "end": 3,
+            "file": "flags.py",
+            "start": 1
+          }
+        ],
+        "unknowns": [],
+        "verdict": "supported_defect",
+        "when": "When the input flags is 6 (binary 110), the function returns True, but this corresponds to bits 1 and 2 (values 2 and 4), which satisfies the scenario's requirement. However, for input 4 (binary 100), only bit 2 is set, and the function returns False, which is incorrect because bit 4 (value 4) is in"
+      },
+      "case_id": "ns02",
+      "contract_valid": true,
+      "diagnostic_passed": false,
+      "error_code": null,
+      "expected_verdict": "no_defect_supported",
+      "failure_class": "semantic",
+      "finish_reason": "stop",
+      "healthy_false_alarm": true,
+      "http_latency_ms": 29604,
+      "measured_usage": {
+        "input_tokens": 516,
+        "output_tokens": 306
+      },
+      "profile_id": "qwen4b",
+      "raw_content": "{\n  \"verdict\": \"supported_defect\",\n  \"cause\": \"The function checks if bits set in `flags` match `required = 6` (binary 110), which corresponds to bits 1 and 2 (0-indexed), not bits 2 and 4 (value 4 is 100 in binary, value 2 is 010). The scenario requires bits of value 2 and 4 (i.e., 2^1 and 2^2), but the function evaluates against bit positions 1 and 2 (values 2 and 4), which is a misalignment in bit interpretation. The trigger is the use of `required = 6` (binary 110), which sets bits 1 and 2, not bits 2 and 4 as required.\",\n  \"when\": \"When the input flags is 6 (binary 110), the function returns True, but this corresponds to bits 1 and 2 (values 2 and 4), which satisfies the scenario's requirement. However, for input 4 (binary 100), only bit 2 is set, and the function returns False, which is incorrect because bit 4 (value 4) is in\",  \n  \"refs\": [\n    {\n      \"file\": \"flags.py\",\n      \"start\": 1,\n      \"end\": 3\n    }\n  ],\n  \"unknowns\": []\n}",
+      "record_sha256": "7d935d053ae953f28045ebfa0a47715e2bcb5e15b3693ef4eb6161652bba6816",
+      "review": {
+        "abstention_reason": "unknown",
+        "citation_support": "contradicted",
+        "evidence_refs": [
+          {
+            "end": 3,
+            "file": "flags.py",
+            "start": 1
+          }
+        ],
+        "mechanism": "contradicted",
+        "reason": "The requirement explicitly identifies bit VALUES 2 and 4, exactly mask 6. The answer conflates these values with positional indices and invents a mismatch. Returning False for flags=4 is required because value-2 bit is absent; flags=6 correctly returns True. The when field ends at its 300-character cap and is not completed here. This is a healthy false alarm.",
+        "record_sha256": "7d935d053ae953f28045ebfa0a47715e2bcb5e15b3693ef4eb6161652bba6816",
+        "trigger": "contradicted"
+      },
+      "semantic_review": "reviewed",
+      "strict_json_valid": true,
+      "topic": "bit-mask",
+      "unknown_abstention": null,
+      "verdict_correct": false
+    },
+    {
+      "answer": {
+        "cause": "The function record_event simply forwards the event to store.save without any additional durability guarantees or post-transaction validation. The assumption that store.save returns a nonempty identifier and that the host provides this function is sufficient for the scenario's stated property, as the durability property is explicitly tied to the store's implementation, which is assumed to be correctly configured. Since the scenario only concerns successful returns and immediate survival after power loss, and no failure or durability mechanism is provided in the source, the implementation is in",
+        "refs": [
+          {
+            "end": 2,
+            "file": "persistence.py",
+            "start": 1
+          }
+        ],
+        "unknowns": [],
+        "verdict": "no_defect_supported",
+        "when": "At the moment of a successful return from record_event, the event is passed to store.save, which by assumption is responsible for ensuring durability. The scenario does not require any additional behavior from record_event itself, only that the event survives power loss after a successful return. As"
+      },
+      "case_id": "ns03",
+      "contract_valid": true,
+      "diagnostic_passed": false,
+      "error_code": null,
+      "expected_verdict": "unknown",
+      "failure_class": "semantic",
+      "finish_reason": "stop",
+      "healthy_false_alarm": null,
+      "http_latency_ms": 24471,
+      "measured_usage": {
+        "input_tokens": 503,
+        "output_tokens": 221
+      },
+      "profile_id": "qwen4b",
+      "raw_content": "{\n  \"verdict\": \"no_defect_supported\",\n  \"cause\": \"The function record_event simply forwards the event to store.save without any additional durability guarantees or post-transaction validation. The assumption that store.save returns a nonempty identifier and that the host provides this function is sufficient for the scenario's stated property, as the durability property is explicitly tied to the store's implementation, which is assumed to be correctly configured. Since the scenario only concerns successful returns and immediate survival after power loss, and no failure or durability mechanism is provided in the source, the implementation is in\"\n,\n  \"when\": \"At the moment of a successful return from record_event, the event is passed to store.save, which by assumption is responsible for ensuring durability. The scenario does not require any additional behavior from record_event itself, only that the event survives power loss after a successful return. As\"\n\n,\n  \"refs\": [\n    {\n      \"file\": \"persistence.py\",\n      \"start\": 1,\n      \"end\": 2\n    }\n  ],\n  \"unknowns\": []\n}",
+      "record_sha256": "460657d1baba7e7d3363d4f65d8a2047a6697ce4b54570cdb12ba5d83e5ec7bb",
+      "review": {
+        "abstention_reason": "contradicted",
+        "citation_support": "partial",
+        "evidence_refs": [
+          {
+            "end": 2,
+            "file": "persistence.py",
+            "start": 1
+          }
+        ],
+        "mechanism": "contradicted",
+        "reason": "The cited return supports forwarding to save, but supplies no successful-return power-loss durability guarantee. The answer invents an assumption of correct durability configuration/responsibility that the frozen assumptions explicitly do not supply. Its healthy verdict and empty unknowns miss the decisive gap. Both capped fields have unfinished endings; no missing words are inferred.",
+        "record_sha256": "460657d1baba7e7d3363d4f65d8a2047a6697ce4b54570cdb12ba5d83e5ec7bb",
+        "trigger": "contradicted"
+      },
+      "semantic_review": "reviewed",
+      "strict_json_valid": true,
+      "topic": "storage-durability",
+      "unknown_abstention": false,
+      "verdict_correct": false
+    },
+    {
+      "answer": {
+        "cause": "The function returns a generator expression, not a materialized tuple. The scenario requires a fully materialized tuple containing uppercase forms of words, but the implementation produces a generator that evaluates lazily and does not create the tuple at return time. The trigger is the specific input words=('oak', 'fir'), which would require the output to be ('OAK', 'FIR') as a tuple, but the function returns a generator that only materializes on iteration, violating the requirement for an already materialized tuple.",
+        "refs": [
+          {
+            "end": 2,
+            "file": "formatters.py",
+            "start": 1
+          }
+        ],
+        "unknowns": [],
+        "verdict": "supported_defect",
+        "when": "At return time for any non-empty input tuple, such as ('oak', 'fir'), the function does not produce a tuple but a generator, thus failing to satisfy the materialized-tuple requirement."
+      },
+      "case_id": "ns04",
+      "contract_valid": true,
+      "diagnostic_passed": true,
+      "error_code": null,
+      "expected_verdict": "supported_defect",
+      "failure_class": null,
+      "finish_reason": "stop",
+      "healthy_false_alarm": null,
+      "http_latency_ms": 23862,
+      "measured_usage": {
+        "input_tokens": 512,
+        "output_tokens": 207
+      },
+      "profile_id": "qwen4b",
+      "raw_content": "{\n  \"verdict\": \"supported_defect\",\n  \"cause\": \"The function returns a generator expression, not a materialized tuple. The scenario requires a fully materialized tuple containing uppercase forms of words, but the implementation produces a generator that evaluates lazily and does not create the tuple at return time. The trigger is the specific input words=('oak', 'fir'), which would require the output to be ('OAK', 'FIR') as a tuple, but the function returns a generator that only materializes on iteration, violating the requirement for an already materialized tuple.\",\n  \"when\": \"At return time for any non-empty input tuple, such as ('oak', 'fir'), the function does not produce a tuple but a generator, thus failing to satisfy the materialized-tuple requirement.\",\n  \"refs\": [\n    {\n      \"file\": \"formatters.py\",\n      \"start\": 1,\n      \"end\": 2\n    }\n  ],\n  \"unknowns\": []\n}",
+      "record_sha256": "9dcf356cb0a802c5b989486e425bfc8ee391d964f9d5f7bd92307014e5f6fb52",
+      "review": {
+        "abstention_reason": "unknown",
+        "citation_support": "supported",
+        "evidence_refs": [
+          {
+            "end": 2,
+            "file": "formatters.py",
+            "start": 1
+          }
+        ],
+        "mechanism": "supported",
+        "reason": "The generator return is correctly distinguished from the required immediate built-in tuple, with the allowed oak/fir input giving a concrete failure. The iteration wording describes lazy evaluation in context rather than proving a tuple is returned. One sound nonempty trigger suffices; omission of the empty input is not a defect in the diagnosis. The cited return is decisive.",
+        "record_sha256": "9dcf356cb0a802c5b989486e425bfc8ee391d964f9d5f7bd92307014e5f6fb52",
+        "trigger": "supported"
+      },
+      "semantic_review": "reviewed",
+      "strict_json_valid": true,
+      "topic": "lazy-result-contract",
+      "unknown_abstention": null,
+      "verdict_correct": true
+    },
+    {
+      "answer": {
+        "cause": "The function correctly reorders the tuple elements by unpacking the input pair and returning a new tuple with the second element first and the first element second. The input tuple is not modified, as required. The operation is valid for any exact tuple of two integers within the specified range, including equal values like (5, 5). No mutation or side effects occur, satisfying the preservation and reordering requirements.",
+        "refs": [
+          {
+            "end": 3,
+            "file": "pairs.py",
+            "start": 1
+          }
+        ],
+        "unknowns": [],
+        "verdict": "no_defect_supported",
+        "when": "When the input is an exact tuple of two integers from -5 to 5, the function transposes it by swapping the elements, returning a new tuple with the second element first and the first element second, without altering the original input."
+      },
+      "case_id": "ns05",
+      "contract_valid": true,
+      "diagnostic_passed": true,
+      "error_code": null,
+      "expected_verdict": "no_defect_supported",
+      "failure_class": null,
+      "finish_reason": "stop",
+      "healthy_false_alarm": false,
+      "http_latency_ms": 23073,
+      "measured_usage": {
+        "input_tokens": 502,
+        "output_tokens": 192
+      },
+      "profile_id": "qwen4b",
+      "raw_content": "{\n  \"verdict\": \"no_defect_supported\",\n  \"cause\": \"The function correctly reorders the tuple elements by unpacking the input pair and returning a new tuple with the second element first and the first element second. The input tuple is not modified, as required. The operation is valid for any exact tuple of two integers within the specified range, including equal values like (5, 5). No mutation or side effects occur, satisfying the preservation and reordering requirements.\",\n  \"when\": \"When the input is an exact tuple of two integers from -5 to 5, the function transposes it by swapping the elements, returning a new tuple with the second element first and the first element second, without altering the original input.\",\n  \"refs\": [\n    {\n      \"file\": \"pairs.py\",\n      \"start\": 1,\n      \"end\": 3\n    }\n  ],\n  \"unknowns\": []\n}",
+      "record_sha256": "8bf840484259b3ab41b3aafe28b804c5c4fbd3c821e6fafb4e15271dbea6c03d",
+      "review": {
+        "abstention_reason": "unknown",
+        "citation_support": "supported",
+        "evidence_refs": [
+          {
+            "end": 3,
+            "file": "pairs.py",
+            "start": 1
+          }
+        ],
+        "mechanism": "supported",
+        "reason": "Unpacking and the comma-separated reverse return establish the two-value tuple result without mutating the immutable input. The explanation covers the exact bounded integer-tuple domain and equal values; the trigger/domain wording and complete source citation are supported.",
+        "record_sha256": "8bf840484259b3ab41b3aafe28b804c5c4fbd3c821e6fafb4e15271dbea6c03d",
+        "trigger": "supported"
+      },
+      "semantic_review": "reviewed",
+      "strict_json_valid": true,
+      "topic": "tuple-transposition",
+      "unknown_abstention": null,
+      "verdict_correct": true
+    },
+    {
+      "answer": {
+        "cause": "The read_latest function directly returns the value fetched from the replica via replica.fetch, which by assumption returns the most recent written value after a successful primary write. The scenario specifies no intervening writes and that the primary write completed before read_latest is invoked, ensuring consistency. The function satisfies the read-after-write property under the given assumptions and without side effects or type issues.",
+        "refs": [
+          {
+            "end": 2,
+            "file": "replication.py",
+            "start": 1
+          }
+        ],
+        "unknowns": [],
+        "verdict": "no_defect_supported",
+        "when": "Immediately after a successful primary write of a new value for key, and before any subsequent writes, when read_latest is called with the same key and a replica that has been updated with the new value."
+      },
+      "case_id": "ns06",
+      "contract_valid": true,
+      "diagnostic_passed": false,
+      "error_code": null,
+      "expected_verdict": "unknown",
+      "failure_class": "semantic",
+      "finish_reason": "stop",
+      "healthy_false_alarm": null,
+      "http_latency_ms": 22567,
+      "measured_usage": {
+        "input_tokens": 521,
+        "output_tokens": 176
+      },
+      "profile_id": "qwen4b",
+      "raw_content": "{\n  \"verdict\": \"no_defect_supported\",\n  \"cause\": \"The read_latest function directly returns the value fetched from the replica via replica.fetch, which by assumption returns the most recent written value after a successful primary write. The scenario specifies no intervening writes and that the primary write completed before read_latest is invoked, ensuring consistency. The function satisfies the read-after-write property under the given assumptions and without side effects or type issues.\",\n  \"when\": \"Immediately after a successful primary write of a new value for key, and before any subsequent writes, when read_latest is called with the same key and a replica that has been updated with the new value.\",\n  \"refs\": [\n    {\n      \"file\": \"replication.py\",\n      \"start\": 1,\n      \"end\": 2\n    }\n  ],\n  \"unknowns\": []\n}",
+      "record_sha256": "126b1e5f8ba270922cd4c5c2a0e42d11e3ce624c80a2096fe976c643ac4e5f46",
+      "review": {
+        "abstention_reason": "contradicted",
+        "citation_support": "partial",
+        "evidence_refs": [
+          {
+            "end": 2,
+            "file": "replication.py",
+            "start": 1
+          }
+        ],
+        "mechanism": "contradicted",
+        "reason": "The forwarding source is cited correctly, but primary acknowledgement and no intervening writes do not ensure replica freshness. The answer invents the missing guarantee that fetch returns the most recent value and adds an updated-replica precondition absent from the frozen scenario. It does not abstain on the explicitly missing read-after-write/returned-version evidence.",
+        "record_sha256": "126b1e5f8ba270922cd4c5c2a0e42d11e3ce624c80a2096fe976c643ac4e5f46",
+        "trigger": "contradicted"
+      },
+      "semantic_review": "reviewed",
+      "strict_json_valid": true,
+      "topic": "replica-read-after-write",
+      "unknown_abstention": false,
+      "verdict_correct": false
+    },
+    {
+      "answer": {
+        "cause": "The function returns 0 when key is absent, violating the requirement to propagate KeyError. The scenario explicitly forbids returning a replacement value for a missing key, but the implementation catches KeyError and returns 0 instead, which is a direct violation of the specified behavior.",
+        "refs": [
+          {
+            "end": 5,
+            "file": "reader.py",
+            "start": 3
+          }
+        ],
+        "unknowns": [],
+        "verdict": "supported_defect",
+        "when": "When key is absent in the mapping (e.g., key=\"missing\" in mapping={\"seen\": 5}), the function fails to propagate KeyError and instead returns 0, which is not allowed by the scenario."
+      },
+      "case_id": "ns07",
+      "contract_valid": true,
+      "diagnostic_passed": true,
+      "error_code": null,
+      "expected_verdict": "supported_defect",
+      "failure_class": null,
+      "finish_reason": "stop",
+      "healthy_false_alarm": null,
+      "http_latency_ms": 21615,
+      "measured_usage": {
+        "input_tokens": 516,
+        "output_tokens": 158
+      },
+      "profile_id": "qwen4b",
+      "raw_content": "{\n  \"verdict\": \"supported_defect\",\n  \"cause\": \"The function returns 0 when key is absent, violating the requirement to propagate KeyError. The scenario explicitly forbids returning a replacement value for a missing key, but the implementation catches KeyError and returns 0 instead, which is a direct violation of the specified behavior.\",\n  \"when\": \"When key is absent in the mapping (e.g., key=\\\"missing\\\" in mapping={\\\"seen\\\": 5}), the function fails to propagate KeyError and instead returns 0, which is not allowed by the scenario.\",\n  \"refs\": [\n    {\n      \"file\": \"reader.py\",\n      \"start\": 3,\n      \"end\": 5\n    }\n  ],\n  \"unknowns\": []\n}",
+      "record_sha256": "89fda8778e82d8441c7fae3a236795474caaa61c0d7941bebcbc5d3c1c8ad39a",
+      "review": {
+        "abstention_reason": "unknown",
+        "citation_support": "supported",
+        "evidence_refs": [
+          {
+            "end": 5,
+            "file": "reader.py",
+            "start": 3
+          }
+        ],
+        "mechanism": "supported",
+        "reason": "The handler catches the missing-key KeyError and substitutes 0, contrary to the explicit propagation contract. The absent missing key in the supplied ordinary dict is a sound failing input. Source lines 3-5 support the lookup, catch and replacement mechanism.",
+        "record_sha256": "89fda8778e82d8441c7fae3a236795474caaa61c0d7941bebcbc5d3c1c8ad39a",
+        "trigger": "supported"
+      },
+      "semantic_review": "reviewed",
+      "strict_json_valid": true,
+      "topic": "exception-suppression",
+      "unknown_abstention": null,
+      "verdict_correct": true
+    },
+    {
+      "answer": {
+        "cause": "The function removes exactly one leading \"job-\" prefix by slicing at index 4, which works for cases like \"job-job-a\" → \"job-a\". However, the scenario requires that only a leading prefix be removed, and the function does not validate that the prefix is at the very start. For example, if the input is \"job-job-a\", the function returns \"job-a\", which incorrectly removes a second prefix. This violates the requirement to remove only a leading literal prefix. The function does not check for the prefix being at the beginning of the string beyond the initial check, so it fails on inputs like \"job-job-a",
+        "refs": [
+          {
+            "end": 4,
+            "file": "prefixes.py",
+            "start": 1
+          }
+        ],
+        "unknowns": [],
+        "verdict": "supported_defect",
+        "when": "When the input string contains a prefix like \"job-job-a\" where \"job-\" appears twice, the function incorrectly removes the second occurrence due to slicing at index 4 without verifying prefix position."
+      },
+      "case_id": "ns08",
+      "contract_valid": true,
+      "diagnostic_passed": false,
+      "error_code": null,
+      "expected_verdict": "no_defect_supported",
+      "failure_class": "semantic",
+      "finish_reason": "stop",
+      "healthy_false_alarm": true,
+      "http_latency_ms": 27269,
+      "measured_usage": {
+        "input_tokens": 533,
+        "output_tokens": 235
+      },
+      "profile_id": "qwen4b",
+      "raw_content": "{\n  \"verdict\": \"supported_defect\",\n  \"cause\": \"The function removes exactly one leading \\\"job-\\\" prefix by slicing at index 4, which works for cases like \\\"job-job-a\\\" → \\\"job-a\\\". However, the scenario requires that only a leading prefix be removed, and the function does not validate that the prefix is at the very start. For example, if the input is \\\"job-job-a\\\", the function returns \\\"job-a\\\", which incorrectly removes a second prefix. This violates the requirement to remove only a leading literal prefix. The function does not check for the prefix being at the beginning of the string beyond the initial check, so it fails on inputs like \\\"job-job-a\", \n  \"when\": \"When the input string contains a prefix like \\\"job-job-a\\\" where \\\"job-\\\" appears twice, the function incorrectly removes the second occurrence due to slicing at index 4 without verifying prefix position.\",\n  \"refs\": [\n    {\n      \"file\": \"prefixes.py\",\n      \"start\": 1,\n      \"end\": 4\n    }\n  ],\n  \"unknowns\": []\n}",
+      "record_sha256": "730d0364d19869b760c8962573da1dada7404b389b6928f3439bce8485c90969",
+      "review": {
+        "abstention_reason": "unknown",
+        "citation_support": "contradicted",
+        "evidence_refs": [
+          {
+            "end": 4,
+            "file": "prefixes.py",
+            "start": 1
+          }
+        ],
+        "mechanism": "contradicted",
+        "reason": "The answer first correctly describes removing one leading prefix and job-job-a becoming job-a, then calls this removal of a second prefix and asserts a missing leading-position check. The source explicitly startswith-checks and slices once; the stated output is required, not a failing trigger. The cap-ended cause is retained unchanged. This is a healthy false alarm and an internal contradiction.",
+        "record_sha256": "730d0364d19869b760c8962573da1dada7404b389b6928f3439bce8485c90969",
+        "trigger": "contradicted"
+      },
+      "semantic_review": "reviewed",
+      "strict_json_valid": true,
+      "topic": "single-literal-prefix",
+      "unknown_abstention": null,
+      "verdict_correct": false
+    },
+    {
+      "answer": {
+        "cause": "The scenario requires mutual exclusion across two worker processes targeting the same resource. The provided source shows that each guarded_write call acquires a lock via the lock context manager, which ensures exclusive access within a single process. The assumptions confirm that lock handles are working context managers and that only overlap of call intervals is assessed. However, the scenario specifies cross-process mutual exclusion, which is not addressed by the code alone. The lock mechanism is process-local and does not inherently provide cross-process exclusion. Therefore, the property—",
+        "refs": [
+          {
+            "end": 3,
+            "file": "critical.py",
+            "start": 1
+          }
+        ],
+        "unknowns": [
+          "The lock backend's cross-process exclusion scope is not specified in the assumptions.",
+          "The behavior of lock handles when shared across processes is not defined.",
+          "No evidence is provided about whether the lock mechanism supports inter-process synchronization."
+        ],
+        "verdict": "no_defect_supported",
+        "when": "The code does not provide cross-process synchronization, and the lock context manager operates within each process independently. Thus, the mutual exclusion property across processes cannot be guaranteed by the given implementation."
+      },
+      "case_id": "ns09",
+      "contract_valid": true,
+      "diagnostic_passed": false,
+      "error_code": null,
+      "expected_verdict": "unknown",
+      "failure_class": "semantic",
+      "finish_reason": "stop",
+      "healthy_false_alarm": null,
+      "http_latency_ms": 31499,
+      "measured_usage": {
+        "input_tokens": 534,
+        "output_tokens": 254
+      },
+      "profile_id": "qwen4b",
+      "raw_content": "{\n  \"verdict\": \"no_defect_supported\",\n  \"cause\": \"The scenario requires mutual exclusion across two worker processes targeting the same resource. The provided source shows that each guarded_write call acquires a lock via the lock context manager, which ensures exclusive access within a single process. The assumptions confirm that lock handles are working context managers and that only overlap of call intervals is assessed. However, the scenario specifies cross-process mutual exclusion, which is not addressed by the code alone. The lock mechanism is process-local and does not inherently provide cross-process exclusion. Therefore, the property—\"  \n  ,\n  \"when\": \"The code does not provide cross-process synchronization, and the lock context manager operates within each process independently. Thus, the mutual exclusion property across processes cannot be guaranteed by the given implementation.\",\n  \"refs\": [\n    {\n      \"file\": \"critical.py\",\n      \"start\": 1,\n      \"end\": 3\n    }\n  ],\n  \"unknowns\": [\n    \"The lock backend's cross-process exclusion scope is not specified in the assumptions.\",\n    \"The behavior of lock handles when shared across processes is not defined.\",\n    \"No evidence is provided about whether the lock mechanism supports inter-process synchronization.\"\n  ]\n}",
+      "record_sha256": "920487648b3de98aebfa71dad56ef2a9914c75481e6524498c3fa9ac6bfeec98",
+      "review": {
+        "abstention_reason": "supported",
+        "citation_support": "partial",
+        "evidence_refs": [
+          {
+            "end": 3,
+            "file": "critical.py",
+            "start": 1
+          }
+        ],
+        "mechanism": "contradicted",
+        "reason": "The listed unknowns correctly identify absent cross-process lock scope/shared-handle behavior. However, the healthy verdict conflicts with the claim that the property cannot be guaranteed, and the cause/when invent that handles are necessarily process-local or exclude within one process. A working context-manager protocol proves neither scope. The source only supports delegated with-lock use, not the asserted backend. The correct gap list does not rescue the wrong verdict/non-null causal claims.",
+        "record_sha256": "920487648b3de98aebfa71dad56ef2a9914c75481e6524498c3fa9ac6bfeec98",
+        "trigger": "contradicted"
+      },
+      "semantic_review": "reviewed",
+      "strict_json_valid": true,
+      "topic": "cross-process-lock-scope",
+      "unknown_abstention": false,
+      "verdict_correct": false
+    },
+    {
+      "answer": {
+        "cause": "The function compares the input label directly to the string \"ready\" without case-insensitive handling, so it returns False for inputs like \"READY\", \"Ready\", or \"ready\" unless they exactly match. The scenario explicitly requires case-insensitive recognition of \"ready\", which is not implemented.",
+        "refs": [
+          {
+            "end": 2,
+            "file": "labels.py",
+            "start": 1
+          }
+        ],
+        "unknowns": [],
+        "verdict": "supported_defect",
+        "when": "When the input label is \"READY\" or any case variant of \"ready\" that does not exactly match the literal string \"ready\"."
+      },
+      "case_id": "ns10",
+      "contract_valid": true,
+      "diagnostic_passed": true,
+      "error_code": null,
+      "expected_verdict": "supported_defect",
+      "failure_class": null,
+      "finish_reason": "stop",
+      "healthy_false_alarm": null,
+      "http_latency_ms": 26029,
+      "measured_usage": {
+        "input_tokens": 493,
+        "output_tokens": 148
+      },
+      "profile_id": "qwen4b",
+      "raw_content": "{\n  \"verdict\": \"supported_defect\",\n  \"cause\": \"The function compares the input label directly to the string \\\"ready\\\" without case-insensitive handling, so it returns False for inputs like \\\"READY\\\", \\\"Ready\\\", or \\\"ready\\\" unless they exactly match. The scenario explicitly requires case-insensitive recognition of \\\"ready\\\", which is not implemented.\",\n  \"when\": \"When the input label is \\\"READY\\\" or any case variant of \\\"ready\\\" that does not exactly match the literal string \\\"ready\\\".\",\n  \"refs\": [\n    {\n      \"file\": \"labels.py\",\n      \"start\": 1,\n      \"end\": 2\n    }\n  ],\n  \"unknowns\": []\n}",
+      "record_sha256": "adac9424d47feb351b65cfa2190dbc25500618d8d28e241db627d2f2041366a8",
+      "review": {
+        "abstention_reason": "unknown",
+        "citation_support": "supported",
+        "evidence_refs": [
+          {
+            "end": 2,
+            "file": "labels.py",
+            "start": 1
+          }
+        ],
+        "mechanism": "supported",
+        "reason": "Direct equality to lowercase ready lacks the explicitly required ASCII case-insensitive recognition. READY is an allowed failing trigger. Read as a complete sentence, unless they exactly match excludes lowercase ready from the failed inputs, and when explicitly restricts to variants not matching the literal. The decisive return is cited; no exact-wording penalty is applied.",
+        "record_sha256": "adac9424d47feb351b65cfa2190dbc25500618d8d28e241db627d2f2041366a8",
+        "trigger": "supported"
+      },
+      "semantic_review": "reviewed",
+      "strict_json_valid": true,
+      "topic": "ascii-case-recognition",
+      "unknown_abstention": null,
+      "verdict_correct": true
+    },
+    {
+      "answer": {
+        "cause": "The function `no_shared` correctly returns `True` when `left` and `right` have no common elements by leveraging the built-in `isdisjoint` method of frozensets, which checks for no shared elements. This method is defined in Python's standard library and behaves exactly as specified in the scenario. The inputs are not modified, and the function handles empty sets correctly. The assumptions confirm that inputs are exact frozensets of integers from 0 to 3, and the method operates safely under the given constraints.",
+        "refs": [
+          {
+            "end": 2,
+            "file": "sets.py",
+            "start": 1
+          }
+        ],
+        "unknowns": [],
+        "verdict": "no_defect_supported",
+        "when": "During execution of `no_shared(left, right)` with any frozenset inputs, including empty sets or sets with shared elements, the function returns the correct boolean result without altering the inputs."
+      },
+      "case_id": "ns11",
+      "contract_valid": true,
+      "diagnostic_passed": true,
+      "error_code": null,
+      "expected_verdict": "no_defect_supported",
+      "failure_class": null,
+      "finish_reason": "stop",
+      "healthy_false_alarm": false,
+      "http_latency_ms": 32094,
+      "measured_usage": {
+        "input_tokens": 516,
+        "output_tokens": 208
+      },
+      "profile_id": "qwen4b",
+      "raw_content": "{\n  \"verdict\": \"no_defect_supported\",\n  \"cause\": \"The function `no_shared` correctly returns `True` when `left` and `right` have no common elements by leveraging the built-in `isdisjoint` method of frozensets, which checks for no shared elements. This method is defined in Python's standard library and behaves exactly as specified in the scenario. The inputs are not modified, and the function handles empty sets correctly. The assumptions confirm that inputs are exact frozensets of integers from 0 to 3, and the method operates safely under the given constraints.\",\n  \"when\": \"During execution of `no_shared(left, right)` with any frozenset inputs, including empty sets or sets with shared elements, the function returns the correct boolean result without altering the inputs.\",\n  \"refs\": [\n    {\n      \"file\": \"sets.py\",\n      \"start\": 1,\n      \"end\": 2\n    }\n  ],\n  \"unknowns\": []\n}",
+      "record_sha256": "88b9f1e14dd48cca3b7cde541c481d9156f22cb609da74a79baa6dd1825ba31f",
+      "review": {
+        "abstention_reason": "unknown",
+        "citation_support": "supported",
+        "evidence_refs": [
+          {
+            "end": 2,
+            "file": "sets.py",
+            "start": 1
+          }
+        ],
+        "mechanism": "supported",
+        "reason": "Built-in frozenset.isdisjoint gives exactly the required empty-intersection Boolean and does not mutate either immutable operand. The answer addresses the stated domain, empty operands and shared elements; its general execution wording is supported in that frozen scope.",
+        "record_sha256": "88b9f1e14dd48cca3b7cde541c481d9156f22cb609da74a79baa6dd1825ba31f",
+        "trigger": "supported"
+      },
+      "semantic_review": "reviewed",
+      "strict_json_valid": true,
+      "topic": "immutable-set-disjointness",
+      "unknown_abstention": null,
+      "verdict_correct": true
+    },
+    {
+      "answer": {
+        "cause": "The scenario requires exactly one downstream processing effect for a logical event with duplicate event_id and body. The source code shows that submit simply forwards the event to the broker via broker.send, which returns an acknowledgment preserving event_id. The assumptions confirm that the broker and downstream consumers do not guarantee exactly-once processing, but only that an event_id is preserved and that at least one processing effect occurs. Since the scenario only assesses the two successful submissions and their eventual effects, and no deduplication logic is implemented in the code",
+        "refs": [
+          {
+            "end": 2,
+            "file": "delivery.py",
+            "start": 1
+          }
+        ],
+        "unknowns": [],
+        "verdict": "no_defect_supported",
+        "when": "During the execution of two identical submit calls with the same event_id and body, the broker forwards the event and downstream consumers process it, but no deduplication mechanism is present in the submit function or broker interface."
+      },
+      "case_id": "ns12",
+      "contract_valid": true,
+      "diagnostic_passed": false,
+      "error_code": null,
+      "expected_verdict": "unknown",
+      "failure_class": "semantic",
+      "finish_reason": "stop",
+      "healthy_false_alarm": null,
+      "http_latency_ms": 32421,
+      "measured_usage": {
+        "input_tokens": 576,
+        "output_tokens": 212
+      },
+      "profile_id": "qwen4b",
+      "raw_content": "{\n  \"verdict\": \"no_defect_supported\",\n  \"cause\": \"The scenario requires exactly one downstream processing effect for a logical event with duplicate event_id and body. The source code shows that submit simply forwards the event to the broker via broker.send, which returns an acknowledgment preserving event_id. The assumptions confirm that the broker and downstream consumers do not guarantee exactly-once processing, but only that an event_id is preserved and that at least one processing effect occurs. Since the scenario only assesses the two successful submissions and their eventual effects, and no deduplication logic is implemented in the code\", \n  \"when\": \"During the execution of two identical submit calls with the same event_id and body, the broker forwards the event and downstream consumers process it, but no deduplication mechanism is present in the submit function or broker interface.\",\n  \"refs\": [\n    {\n      \"file\": \"delivery.py\",\n      \"start\": 1,\n      \"end\": 2\n    }\n  ],\n  \"unknowns\": []\n}",
+      "record_sha256": "d8a1f64033518cd47bbd627e760588dfc28b12b60a35e8da43edcf14d86e0453",
+      "review": {
+        "abstention_reason": "contradicted",
+        "citation_support": "partial",
+        "evidence_refs": [
+          {
+            "end": 2,
+            "file": "delivery.py",
+            "start": 1
+          }
+        ],
+        "mechanism": "contradicted",
+        "reason": "The source forwards an event_id to send but does not establish downstream processing/deduplication behavior. The answer turns an UNSUPPLIED exactly-once guarantee into an assertion that broker/consumers lack it and still labels the path healthy, with no specific abstention. At-least-one effect is given, while whether duplicates occur remains unknown. The cap-ended dependent cause clause is not completed or used to infer hidden intent.",
+        "record_sha256": "d8a1f64033518cd47bbd627e760588dfc28b12b60a35e8da43edcf14d86e0453",
+        "trigger": "contradicted"
+      },
+      "semantic_review": "reviewed",
+      "strict_json_valid": true,
+      "topic": "end-to-end-deduplication",
+      "unknown_abstention": false,
+      "verdict_correct": false
+    },
+    {
+      "answer": {
+        "cause": "The function `permitted` returns `True` if either `authenticated` or `can_edit` is `True`, which means it allows `True` when only `can_edit` is `True` and `authenticated` is `False`. This violates the requirement that `decide` must return `True` only when both `authenticated` and `can_edit` are `True`.",
+        "refs": [
+          {
+            "end": 2,
+            "file": "gate_policy.py",
+            "start": 1
+          },
+          {
+            "end": 5,
+            "file": "gate_entry.py",
+            "start": 1
+          }
+        ],
+        "unknowns": [],
+        "verdict": "supported_defect",
+        "when": "When `decide(True, False)` is called, the function `permitted(True, False)` returns `True` because `True or False` is `True`. However, according to the requirement, `decide(True, False)` should return `False`."
+      },
+      "case_id": "ns01",
+      "contract_valid": true,
+      "diagnostic_passed": true,
+      "error_code": null,
+      "expected_verdict": "supported_defect",
+      "failure_class": null,
+      "finish_reason": "stop",
+      "healthy_false_alarm": null,
+      "http_latency_ms": 48843,
+      "measured_usage": {
+        "input_tokens": 512,
+        "output_tokens": 223
+      },
+      "profile_id": "qwen25coder7b",
+      "raw_content": "{\n  \"verdict\": \"supported_defect\",\n  \"cause\": \"The function `permitted` returns `True` if either `authenticated` or `can_edit` is `True`, which means it allows `True` when only `can_edit` is `True` and `authenticated` is `False`. This violates the requirement that `decide` must return `True` only when both `authenticated` and `can_edit` are `True`.\",\n  \"when\": \"When `decide(True, False)` is called, the function `permitted(True, False)` returns `True` because `True or False` is `True`. However, according to the requirement, `decide(True, False)` should return `False`.\",\n  \"refs\": [\n    {\n      \"file\": \"gate_policy.py\",\n      \"start\": 1,\n      \"end\": 2\n    },\n    {\n      \"file\": \"gate_entry.py\",\n      \"start\": 1,\n      \"end\": 5\n    }\n  ],\n  \"unknowns\": []\n}",
+      "record_sha256": "c7777394b97a327b88c762a42f93373fa96d1a3a65fd0b55a7fe7818f1d26b64",
+      "review": {
+        "abstention_reason": "unknown",
+        "citation_support": "supported",
+        "evidence_refs": [
+          {
+            "end": 2,
+            "file": "gate_policy.py",
+            "start": 1
+          },
+          {
+            "end": 5,
+            "file": "gate_entry.py",
+            "start": 1
+          }
+        ],
+        "mechanism": "supported",
+        "reason": "The or connective accepts a single true condition although both are required. The allowed decide(True, False) counterexample has the stated wrong result. The two cited ranges cover both gate_policy.py:2 and the public forwarding call at gate_entry.py:5.",
+        "record_sha256": "c7777394b97a327b88c762a42f93373fa96d1a3a65fd0b55a7fe7818f1d26b64",
+        "trigger": "supported"
+      },
+      "semantic_review": "reviewed",
+      "strict_json_valid": true,
+      "topic": "boolean-authorization",
+      "unknown_abstention": null,
+      "verdict_correct": true
+    },
+    {
+      "answer": {
+        "cause": "The function `required_flags_present` correctly checks if both the bit of value 2 and the bit of value 4 are set in the `flags` integer. The required value `6` (binary `110`) is the bitwise OR of `2` (binary `10`) and `4` (binary `100`). The function uses the bitwise AND operation to check if all required bits are set, and returns `True` if they are, and `False` otherwise. This implementation handles all allowed flags values safely, including 0, 2, 4, 6, and 14.",
+        "refs": [
+          {
+            "end": 3,
+            "file": "flags.py",
+            "start": 1
+          }
+        ],
+        "unknowns": [],
+        "verdict": "no_defect_supported",
+        "when": "The function is called with any integer value from the set {0, 1, ..., 15}."
+      },
+      "case_id": "ns02",
+      "contract_valid": true,
+      "diagnostic_passed": true,
+      "error_code": null,
+      "expected_verdict": "no_defect_supported",
+      "failure_class": null,
+      "finish_reason": "stop",
+      "healthy_false_alarm": false,
+      "http_latency_ms": 51777,
+      "measured_usage": {
+        "input_tokens": 516,
+        "output_tokens": 215
+      },
+      "profile_id": "qwen25coder7b",
+      "raw_content": "{\n  \"verdict\": \"no_defect_supported\",\n  \"cause\": \"The function `required_flags_present` correctly checks if both the bit of value 2 and the bit of value 4 are set in the `flags` integer. The required value `6` (binary `110`) is the bitwise OR of `2` (binary `10`) and `4` (binary `100`). The function uses the bitwise AND operation to check if all required bits are set, and returns `True` if they are, and `False` otherwise. This implementation handles all allowed flags values safely, including 0, 2, 4, 6, and 14.\",\n  \"when\": \"The function is called with any integer value from the set {0, 1, ..., 15}.\",\n  \"refs\": [\n    {\n      \"file\": \"flags.py\",\n      \"start\": 1,\n      \"end\": 3\n    }\n  ],\n  \"unknowns\": []\n}",
+      "record_sha256": "017e5d481d88ab398da34cafa2e6c5d739f628f0e87ddb38450ca6c33c44d15f",
+      "review": {
+        "abstention_reason": "unknown",
+        "citation_support": "supported",
+        "evidence_refs": [
+          {
+            "end": 3,
+            "file": "flags.py",
+            "start": 1
+          }
+        ],
+        "mechanism": "supported",
+        "reason": "Mask 6 retains exactly bits 2 and 4, and equality with 6 requires both. The cause covers the full allowed integer domain independently of the other bits, and when explicitly covers 0..15. flags.py:1-3 supports the explanation.",
+        "record_sha256": "017e5d481d88ab398da34cafa2e6c5d739f628f0e87ddb38450ca6c33c44d15f",
+        "trigger": "supported"
+      },
+      "semantic_review": "reviewed",
+      "strict_json_valid": true,
+      "topic": "bit-mask",
+      "unknown_abstention": null,
+      "verdict_correct": true
+    },
+    {
+      "answer": {
+        "cause": null,
+        "refs": [],
+        "unknowns": [
+          "The durability guarantee of the store.save method is not provided.",
+          "The power-loss behavior of the deployed save implementation is not verified.",
+          "The specific mechanism by which the store.save method ensures durability is unknown."
+        ],
+        "verdict": "unknown",
+        "when": null
+      },
+      "case_id": "ns03",
+      "contract_valid": true,
+      "diagnostic_passed": true,
+      "error_code": null,
+      "expected_verdict": "unknown",
+      "failure_class": null,
+      "finish_reason": "stop",
+      "healthy_false_alarm": null,
+      "http_latency_ms": 33207,
+      "measured_usage": {
+        "input_tokens": 503,
+        "output_tokens": 81
+      },
+      "profile_id": "qwen25coder7b",
+      "raw_content": "{\n  \"verdict\": \"unknown\",\n  \"cause\": null,\n  \"when\": null,\n  \"refs\": [],\n  \"unknowns\": [\n    \"The durability guarantee of the store.save method is not provided.\",\n    \"The power-loss behavior of the deployed save implementation is not verified.\",\n    \"The specific mechanism by which the store.save method ensures durability is unknown.\"\n  ]\n}",
+      "record_sha256": "f170f1c485bc5ae93e9f42b82218c28161b9cb2ab6e7fdfe6c5e6296e8a154c8",
+      "review": {
+        "abstention_reason": "supported",
+        "citation_support": "unknown",
+        "evidence_refs": [],
+        "mechanism": "unknown",
+        "reason": "Null cause/when and empty refs are valid for abstention. The answer specifically names the deployed store.save durability guarantee and verification under power loss, the missing property needed to assess successful-return persistence. An acknowledgement identifier alone would not settle it.",
+        "record_sha256": "f170f1c485bc5ae93e9f42b82218c28161b9cb2ab6e7fdfe6c5e6296e8a154c8",
+        "trigger": "unknown"
+      },
+      "semantic_review": "reviewed",
+      "strict_json_valid": true,
+      "topic": "storage-durability",
+      "unknown_abstention": true,
+      "verdict_correct": true
+    },
+    {
+      "answer": {
+        "cause": "The function `capitalized` correctly transforms each word in the input tuple to uppercase and returns a generator expression. However, the scenario requires a materialized tuple, which is not provided by the function. The generator expression is a lazy evaluation mechanism that does not materialize the tuple until iterated over.",
+        "refs": [
+          {
+            "end": 2,
+            "file": "formatters.py",
+            "start": 1
+          }
+        ],
+        "unknowns": [],
+        "verdict": "no_defect_supported",
+        "when": "When the function `capitalized` is called with the input `words=(\"oak\", \"fir\")`, it returns a generator expression that yields the uppercase forms of the words. The scenario requires a materialized tuple, which is not produced by the function."
+      },
+      "case_id": "ns04",
+      "contract_valid": true,
+      "diagnostic_passed": false,
+      "error_code": null,
+      "expected_verdict": "supported_defect",
+      "failure_class": "semantic",
+      "finish_reason": "stop",
+      "healthy_false_alarm": null,
+      "http_latency_ms": 45412,
+      "measured_usage": {
+        "input_tokens": 512,
+        "output_tokens": 177
+      },
+      "profile_id": "qwen25coder7b",
+      "raw_content": "{\n  \"verdict\": \"no_defect_supported\",\n  \"cause\": \"The function `capitalized` correctly transforms each word in the input tuple to uppercase and returns a generator expression. However, the scenario requires a materialized tuple, which is not provided by the function. The generator expression is a lazy evaluation mechanism that does not materialize the tuple until iterated over.\",\n  \"when\": \"When the function `capitalized` is called with the input `words=(\\\"oak\\\", \\\"fir\\\")`, it returns a generator expression that yields the uppercase forms of the words. The scenario requires a materialized tuple, which is not produced by the function.\",\n  \"refs\": [\n    {\n      \"file\": \"formatters.py\",\n      \"start\": 1,\n      \"end\": 2\n    }\n  ],\n  \"unknowns\": []\n}",
+      "record_sha256": "33425b1c12f0ec9cb4495473c35cb5246182b3dee57e93bf6b35552425b02617",
+      "review": {
+        "abstention_reason": "unknown",
+        "citation_support": "supported",
+        "evidence_refs": [
+          {
+            "end": 2,
+            "file": "formatters.py",
+            "start": 1
+          }
+        ],
+        "mechanism": "supported",
+        "reason": "The explanation identifies the generator result and its failure to provide the required materialized tuple, with the allowed oak/fir counterexample. The source reference supports that mechanism. The no_defect_supported verdict conflicts with this explanation and the expected supported_defect label. The phrase until iterated over is imprecise: ordinary iteration does not make the result a tuple; it does not remove the otherwise explicit, sufficient result-type mismatch.",
+        "record_sha256": "33425b1c12f0ec9cb4495473c35cb5246182b3dee57e93bf6b35552425b02617",
+        "trigger": "supported"
+      },
+      "semantic_review": "reviewed",
+      "strict_json_valid": true,
+      "topic": "lazy-result-contract",
+      "unknown_abstention": null,
+      "verdict_correct": false
+    },
+    {
+      "answer": {
+        "cause": "The function `transpose` does not preserve the input `pair` as required. Instead, it returns a new tuple with the elements in reversed order, which violates the contract that the input must remain unchanged.",
+        "refs": [
+          {
+            "end": 3,
+            "file": "pairs.py",
+            "start": 1
+          }
+        ],
+        "unknowns": [],
+        "verdict": "supported_defect",
+        "when": "When the function `transpose` is called with a pair, it returns a new tuple with the elements in reversed order."
+      },
+      "case_id": "ns05",
+      "contract_valid": true,
+      "diagnostic_passed": false,
+      "error_code": null,
+      "expected_verdict": "no_defect_supported",
+      "failure_class": "semantic",
+      "finish_reason": "stop",
+      "healthy_false_alarm": true,
+      "http_latency_ms": 39552,
+      "measured_usage": {
+        "input_tokens": 502,
+        "output_tokens": 127
+      },
+      "profile_id": "qwen25coder7b",
+      "raw_content": "{\n  \"verdict\": \"supported_defect\",\n  \"cause\": \"The function `transpose` does not preserve the input `pair` as required. Instead, it returns a new tuple with the elements in reversed order, which violates the contract that the input must remain unchanged.\",\n  \"when\": \"When the function `transpose` is called with a pair, it returns a new tuple with the elements in reversed order.\",\n  \"refs\": [\n    {\n      \"file\": \"pairs.py\",\n      \"start\": 1,\n      \"end\": 3\n    }\n  ],\n  \"unknowns\": []\n}",
+      "record_sha256": "41a5030773e0e430d6e0ecea6c5e1e91048a26a250ef26f0dd5493bdaafbd395",
+      "review": {
+        "abstention_reason": "unknown",
+        "citation_support": "partial",
+        "evidence_refs": [
+          {
+            "end": 3,
+            "file": "pairs.py",
+            "start": 1
+          }
+        ],
+        "mechanism": "contradicted",
+        "reason": "Returning a new reversed tuple does not modify the original exact immutable two-int tuple. The cause incorrectly treats required reversal as a failure to preserve the input. The when statement accurately describes the return behavior for the frozen pair domain. pairs.py:1-3 supports unpacking/reversal, but not the alleged input mutation.",
+        "record_sha256": "41a5030773e0e430d6e0ecea6c5e1e91048a26a250ef26f0dd5493bdaafbd395",
+        "trigger": "supported"
+      },
+      "semantic_review": "reviewed",
+      "strict_json_valid": true,
+      "topic": "tuple-transposition",
+      "unknown_abstention": null,
+      "verdict_correct": false
+    },
+    {
+      "answer": {
+        "cause": "The function `read_latest` directly returns the value fetched from `replica.fetch(key)`, which does not guarantee that the read operation is performed after the write operation. The scenario assumes that the primary write succeeded and completed before `read_latest` is invoked, but the function does not enforce this order. Therefore, `read_latest` could potentially return an old value if the read operation is not guaranteed to happen after the write operation.",
+        "refs": [
+          {
+            "end": 2,
+            "file": "replication.py",
+            "start": 1
+          }
+        ],
+        "unknowns": [],
+        "verdict": "supported_defect",
+        "when": "When `read_latest` is invoked after a primary write but before the read-after-write guarantee is enforced."
+      },
+      "case_id": "ns06",
+      "contract_valid": true,
+      "diagnostic_passed": false,
+      "error_code": null,
+      "expected_verdict": "unknown",
+      "failure_class": "semantic",
+      "finish_reason": "stop",
+      "healthy_false_alarm": null,
+      "http_latency_ms": 46647,
+      "measured_usage": {
+        "input_tokens": 521,
+        "output_tokens": 171
+      },
+      "profile_id": "qwen25coder7b",
+      "raw_content": "{\n  \"verdict\": \"supported_defect\",\n  \"cause\": \"The function `read_latest` directly returns the value fetched from `replica.fetch(key)`, which does not guarantee that the read operation is performed after the write operation. The scenario assumes that the primary write succeeded and completed before `read_latest` is invoked, but the function does not enforce this order. Therefore, `read_latest` could potentially return an old value if the read operation is not guaranteed to happen after the write operation.\",\n  \"when\": \"When `read_latest` is invoked after a primary write but before the read-after-write guarantee is enforced.\",\n  \"refs\": [\n    {\n      \"file\": \"replication.py\",\n      \"start\": 1,\n      \"end\": 2\n    }\n  ],\n  \"unknowns\": []\n}",
+      "record_sha256": "9aedcaa225c6ead0910e11187f1b66b69f1d5b67a1b067d705ebd96552f5e86b",
+      "review": {
+        "abstention_reason": "unknown",
+        "citation_support": "partial",
+        "evidence_refs": [
+          {
+            "end": 2,
+            "file": "replication.py",
+            "start": 1
+          }
+        ],
+        "mechanism": "contradicted",
+        "reason": "The frozen scenario already states that the acknowledged primary write completes before this call, contradicting the proposed missing write-before-read ordering mechanism. The stated trigger before a read-after-write guarantee is enforced is an unverified deployment event. replication.py:1-2 supports delegation to fetch, not a stale result or ordering failure. The deployed consistency guarantee or returned-version evidence is missing; declaring a supported defect is unsupported.",
+        "record_sha256": "9aedcaa225c6ead0910e11187f1b66b69f1d5b67a1b067d705ebd96552f5e86b",
+        "trigger": "unknown"
+      },
+      "semantic_review": "reviewed",
+      "strict_json_valid": true,
+      "topic": "replica-read-after-write",
+      "unknown_abstention": false,
+      "verdict_correct": false
+    },
+    {
+      "answer": {
+        "cause": "The function `required_value` correctly propagates a `KeyError` when the key is absent, as per the provided scenario and assumptions. The function does not return a replacement value for missing keys, adhering to the stated property.",
+        "refs": [
+          {
+            "end": 5,
+            "file": "reader.py",
+            "start": 2
+          }
+        ],
+        "unknowns": [],
+        "verdict": "no_defect_supported",
+        "when": "When the key is absent in the `mapping` dictionary."
+      },
+      "case_id": "ns07",
+      "contract_valid": true,
+      "diagnostic_passed": false,
+      "error_code": null,
+      "expected_verdict": "supported_defect",
+      "failure_class": "semantic",
+      "finish_reason": "stop",
+      "healthy_false_alarm": null,
+      "http_latency_ms": 40092,
+      "measured_usage": {
+        "input_tokens": 516,
+        "output_tokens": 122
+      },
+      "profile_id": "qwen25coder7b",
+      "raw_content": "{\n  \"verdict\": \"no_defect_supported\",\n  \"cause\": \"The function `required_value` correctly propagates a `KeyError` when the key is absent, as per the provided scenario and assumptions. The function does not return a replacement value for missing keys, adhering to the stated property.\",\n  \"when\": \"When the key is absent in the `mapping` dictionary.\",\n  \"refs\": [\n    {\n      \"file\": \"reader.py\",\n      \"start\": 2,\n      \"end\": 5\n    }\n  ],\n  \"unknowns\": []\n}",
+      "record_sha256": "0ced4ea7296cb1f536e724e9e19e99da65b6691fe51b61be6b71696ba45edf67",
+      "review": {
+        "abstention_reason": "unknown",
+        "citation_support": "contradicted",
+        "evidence_refs": [
+          {
+            "end": 5,
+            "file": "reader.py",
+            "start": 2
+          }
+        ],
+        "mechanism": "contradicted",
+        "reason": "An absent key is the actual allowed failing path, so the trigger is supported. But reader.py:2-5 explicitly catches KeyError and returns 0; it directly contradicts the cause that the exception propagates and no replacement is returned. The healthy verdict is wrong.",
+        "record_sha256": "0ced4ea7296cb1f536e724e9e19e99da65b6691fe51b61be6b71696ba45edf67",
+        "trigger": "supported"
+      },
+      "semantic_review": "reviewed",
+      "strict_json_valid": true,
+      "topic": "exception-suppression",
+      "unknown_abstention": null,
+      "verdict_correct": false
+    },
+    {
+      "answer": {
+        "cause": "The function does not handle the case where the input string starts with 'job-' followed by any non-lowercase letter. For example, 'Job-a' should remain unchanged, but the function will remove the 'job-' prefix, resulting in 'a'.",
+        "refs": [
+          {
+            "end": 4,
+            "file": "prefixes.py",
+            "start": 1
+          }
+        ],
+        "unknowns": [],
+        "verdict": "supported_defect",
+        "when": "When the input string starts with 'job-' followed by a non-lowercase letter."
+      },
+      "case_id": "ns08",
+      "contract_valid": true,
+      "diagnostic_passed": false,
+      "error_code": null,
+      "expected_verdict": "no_defect_supported",
+      "failure_class": "semantic",
+      "finish_reason": "stop",
+      "healthy_false_alarm": true,
+      "http_latency_ms": 43131,
+      "measured_usage": {
+        "input_tokens": 533,
+        "output_tokens": 134
+      },
+      "profile_id": "qwen25coder7b",
+      "raw_content": "{\n  \"verdict\": \"supported_defect\",\n  \"cause\": \"The function does not handle the case where the input string starts with 'job-' followed by any non-lowercase letter. For example, 'Job-a' should remain unchanged, but the function will remove the 'job-' prefix, resulting in 'a'.\",\n  \"when\": \"When the input string starts with 'job-' followed by a non-lowercase letter.\",\n  \"refs\": [\n    {\n      \"file\": \"prefixes.py\",\n      \"start\": 1,\n      \"end\": 4\n    }\n  ],\n  \"unknowns\": []\n}",
+      "record_sha256": "749261d700ffa7088d2b5e6365d5de50d099f7bca9bbbd35900e8fe4f6b5aa54",
+      "review": {
+        "abstention_reason": "unknown",
+        "citation_support": "contradicted",
+        "evidence_refs": [
+          {
+            "end": 4,
+            "file": "prefixes.py",
+            "start": 1
+          }
+        ],
+        "mechanism": "contradicted",
+        "reason": "The literal case-sensitive startswith(\"job-\") guard does not match \"Job-a\", so the alleged removal to \"a\" does not occur. A non-lowercase letter after a matching lowercase job- prefix does not invalidate the required one-prefix removal. The cited source contradicts the claimed behavior and its purported failing trigger.",
+        "record_sha256": "749261d700ffa7088d2b5e6365d5de50d099f7bca9bbbd35900e8fe4f6b5aa54",
+        "trigger": "contradicted"
+      },
+      "semantic_review": "reviewed",
+      "strict_json_valid": true,
+      "topic": "single-literal-prefix",
+      "unknown_abstention": null,
+      "verdict_correct": false
+    },
+    {
+      "answer": {
+        "cause": null,
+        "refs": [],
+        "unknowns": [
+          "The behavior of the host-supplied lock handles is not specified, particularly how they handle cross-process exclusion.",
+          "The nature of the shared resource and how it is accessed by the writer function is not defined.",
+          "The concurrency model of the host environment is not specified, which could affect how the lock handles operate across processes."
+        ],
+        "verdict": "unknown",
+        "when": null
+      },
+      "case_id": "ns09",
+      "contract_valid": true,
+      "diagnostic_passed": true,
+      "error_code": null,
+      "expected_verdict": "unknown",
+      "failure_class": null,
+      "finish_reason": "stop",
+      "healthy_false_alarm": null,
+      "http_latency_ms": 38703,
+      "measured_usage": {
+        "input_tokens": 534,
+        "output_tokens": 104
+      },
+      "profile_id": "qwen25coder7b",
+      "raw_content": "{\n  \"verdict\": \"unknown\",\n  \"cause\": null,\n  \"when\": null,\n  \"refs\": [],\n  \"unknowns\": [\n    \"The behavior of the host-supplied lock handles is not specified, particularly how they handle cross-process exclusion.\",\n    \"The nature of the shared resource and how it is accessed by the writer function is not defined.\",\n    \"The concurrency model of the host environment is not specified, which could affect how the lock handles operate across processes.\"\n  ]\n}",
+      "record_sha256": "91ac9f0a394cfde8212c94082af6bdcc9b4567e8f5bdcc77ac1512f7f643ce15",
+      "review": {
+        "abstention_reason": "supported",
+        "citation_support": "unknown",
+        "evidence_refs": [],
+        "mechanism": "unknown",
+        "reason": "Null cause/when with no refs is valid here. The first gap specifically names cross-process exclusion by the supplied lock handles, and the resource-binding gap relates to whether both processes coordinate the same resource. Those missing deployment properties are sufficient for abstention; the additional generic concurrency wording does not erase the specific gaps.",
+        "record_sha256": "91ac9f0a394cfde8212c94082af6bdcc9b4567e8f5bdcc77ac1512f7f643ce15",
+        "trigger": "unknown"
+      },
+      "semantic_review": "reviewed",
+      "strict_json_valid": true,
+      "topic": "cross-process-lock-scope",
+      "unknown_abstention": true,
+      "verdict_correct": true
+    },
+    {
+      "answer": {
+        "cause": "The function `is_ready` correctly checks if the input `label` is exactly equal to the string \"ready\". The comparison is case-sensitive, so it will return `True` only when the input is exactly \"ready\" (case-sensitive). For other inputs, including \"READY\", \"Ready\", and \"blocked\", it will return `False`. The function handles the complete allowed input set safely without any defects.",
+        "refs": [
+          {
+            "end": 2,
+            "file": "labels.py",
+            "start": 1
+          }
+        ],
+        "unknowns": [],
+        "verdict": "no_defect_supported",
+        "when": "The function is called with any of the allowed inputs: \"ready\", \"READY\", \"Ready\", \"blocked\", or an empty string."
+      },
+      "case_id": "ns10",
+      "contract_valid": true,
+      "diagnostic_passed": false,
+      "error_code": null,
+      "expected_verdict": "supported_defect",
+      "failure_class": "semantic",
+      "finish_reason": "stop",
+      "healthy_false_alarm": null,
+      "http_latency_ms": 46689,
+      "measured_usage": {
+        "input_tokens": 493,
+        "output_tokens": 175
+      },
+      "profile_id": "qwen25coder7b",
+      "raw_content": "{\n  \"verdict\": \"no_defect_supported\",\n  \"cause\": \"The function `is_ready` correctly checks if the input `label` is exactly equal to the string \\\"ready\\\". The comparison is case-sensitive, so it will return `True` only when the input is exactly \\\"ready\\\" (case-sensitive). For other inputs, including \\\"READY\\\", \\\"Ready\\\", and \\\"blocked\\\", it will return `False`. The function handles the complete allowed input set safely without any defects.\",\n  \"when\": \"The function is called with any of the allowed inputs: \\\"ready\\\", \\\"READY\\\", \\\"Ready\\\", \\\"blocked\\\", or an empty string.\",\n  \"refs\": [\n    {\n      \"file\": \"labels.py\",\n      \"start\": 1,\n      \"end\": 2\n    }\n  ],\n  \"unknowns\": []\n}",
+      "record_sha256": "3719d17b9073a1c8b8c6f3fd29929160c8de07febe11cebbe171671b48af4cec",
+      "review": {
+        "abstention_reason": "unknown",
+        "citation_support": "partial",
+        "evidence_refs": [
+          {
+            "end": 2,
+            "file": "labels.py",
+            "start": 1
+          }
+        ],
+        "mechanism": "partial",
+        "reason": "The cause accurately describes case-sensitive equality and READY/Ready returning False, and when covers the complete allowed input set including those required-True spellings. It then incorrectly calls this healthy instead of explaining the violation of the explicit case-insensitive requirement. labels.py:1-2 supports the stated actual comparison behavior, but not the claim that it has no defects.",
+        "record_sha256": "3719d17b9073a1c8b8c6f3fd29929160c8de07febe11cebbe171671b48af4cec",
+        "trigger": "supported"
+      },
+      "semantic_review": "reviewed",
+      "strict_json_valid": true,
+      "topic": "ascii-case-recognition",
+      "unknown_abstention": null,
+      "verdict_correct": false
+    },
+    {
+      "answer": {
+        "cause": "The function `no_shared` uses the method `isdisjoint` on the `left` frozenset, which checks if the set has no elements in common with another set. However, the function does not ensure that the `right` frozenset is not modified, which violates the requirement that both inputs must remain unchanged.",
+        "refs": [
+          {
+            "end": 2,
+            "file": "sets.py",
+            "start": 1
+          }
+        ],
+        "unknowns": [],
+        "verdict": "supported_defect",
+        "when": "When the `right` frozenset is not empty and contains elements that are not in the `left` frozenset, the function will return `True` as expected. However, if the `right` frozenset is modified during the execution of the function, the behavior of the function will be unpredictable."
+      },
+      "case_id": "ns11",
+      "contract_valid": true,
+      "diagnostic_passed": false,
+      "error_code": null,
+      "expected_verdict": "no_defect_supported",
+      "failure_class": "semantic",
+      "finish_reason": "stop",
+      "healthy_false_alarm": true,
+      "http_latency_ms": 50091,
+      "measured_usage": {
+        "input_tokens": 516,
+        "output_tokens": 193
+      },
+      "profile_id": "qwen25coder7b",
+      "raw_content": "{\n  \"verdict\": \"supported_defect\",\n  \"cause\": \"The function `no_shared` uses the method `isdisjoint` on the `left` frozenset, which checks if the set has no elements in common with another set. However, the function does not ensure that the `right` frozenset is not modified, which violates the requirement that both inputs must remain unchanged.\",\n  \"when\": \"When the `right` frozenset is not empty and contains elements that are not in the `left` frozenset, the function will return `True` as expected. However, if the `right` frozenset is modified during the execution of the function, the behavior of the function will be unpredictable.\",\n  \"refs\": [\n    {\n      \"file\": \"sets.py\",\n      \"start\": 1,\n      \"end\": 2\n    }\n  ],\n  \"unknowns\": []\n}",
+      "record_sha256": "f540fdee552540d9b77871f19b6baa31a7b289f5224c4c9261cedd5e580e268b",
+      "review": {
+        "abstention_reason": "unknown",
+        "citation_support": "partial",
+        "evidence_refs": [
+          {
+            "end": 2,
+            "file": "sets.py",
+            "start": 1
+          }
+        ],
+        "mechanism": "contradicted",
+        "reason": "The operands are exact immutable frozensets; the invented mutation during execution cannot occur in this frozen domain. The first when clause is also insufficient: merely having some right elements absent from left does not imply disjointness when other elements are shared. The cited line supports the basic isdisjoint predicate statement, but not mutation or that trigger. This is a false defect claim on a healthy case.",
+        "record_sha256": "f540fdee552540d9b77871f19b6baa31a7b289f5224c4c9261cedd5e580e268b",
+        "trigger": "contradicted"
+      },
+      "semantic_review": "reviewed",
+      "strict_json_valid": true,
+      "topic": "immutable-set-disjointness",
+      "unknown_abstention": null,
+      "verdict_correct": false
+    },
+    {
+      "answer": {
+        "cause": null,
+        "refs": [],
+        "unknowns": [
+          "The deployed broker deduplication contract/configuration and downstream consumer processing/deduplication guarantee are not supplied.",
+          "The exact mechanism by which the downstream consumer handles duplicate events is unknown."
+        ],
+        "verdict": "unknown",
+        "when": null
+      },
+      "case_id": "ns12",
+      "contract_valid": true,
+      "diagnostic_passed": true,
+      "error_code": null,
+      "expected_verdict": "unknown",
+      "failure_class": null,
+      "finish_reason": "stop",
+      "healthy_false_alarm": null,
+      "http_latency_ms": 37152,
+      "measured_usage": {
+        "input_tokens": 576,
+        "output_tokens": 75
+      },
+      "profile_id": "qwen25coder7b",
+      "raw_content": "{\n  \"verdict\": \"unknown\",\n  \"cause\": null,\n  \"when\": null,\n  \"refs\": [],\n  \"unknowns\": [\n    \"The deployed broker deduplication contract/configuration and downstream consumer processing/deduplication guarantee are not supplied.\",\n    \"The exact mechanism by which the downstream consumer handles duplicate events is unknown.\"\n  ]\n}",
+      "record_sha256": "79d1608e0f151d436dcc19b389687202181639605fff1055ada9392ef0ed6fcc",
+      "review": {
+        "abstention_reason": "supported",
+        "citation_support": "unknown",
+        "evidence_refs": [],
+        "mechanism": "unknown",
+        "reason": "Null cause/when and empty refs are valid. The gaps specifically identify the deployed broker duplicate-suppression contract/configuration and downstream processing/deduplication guarantee. These are the missing end-to-end properties needed to decide whether two acknowledged identical event IDs cause exactly one effect.",
+        "record_sha256": "79d1608e0f151d436dcc19b389687202181639605fff1055ada9392ef0ed6fcc",
+        "trigger": "unknown"
+      },
+      "semantic_review": "reviewed",
+      "strict_json_valid": true,
+      "topic": "end-to-end-deduplication",
+      "unknown_abstention": true,
+      "verdict_correct": true
+    }
+  ],
+  "configuration": {
+    "chat_template": "explicit-chatml-b11521-v1",
+    "context_limit": 2048,
+    "cpu_threads": 2,
+    "grammar_route": "hand_written_GBNF_in_grammar_field_no_schema_conversion",
+    "grammar_sha256": "cc5ceae80ed6ffe95c7f3d75c32fb9a1f4820789ecc1962ac96fab6477dc2a40",
+    "imported_macr_modules": 59,
+    "imported_published_modules": 56,
+    "imported_unchanged_historical_local_modules": 3,
+    "input_limit": 1536,
+    "output_limit": 384,
+    "parallel": 1,
+    "published_base": "e0ea8dc7031e30124d6d7fe7ea59b33000653252",
+    "runtime": "llama.cpp b11521",
+    "seed": 0,
+    "source_binding_modules": 62,
+    "source_pins": 95,
+    "temperature": 0,
+    "top_p": 1
+  },
+  "consumption": {
+    "automatic_retry": false,
+    "cumulative_model_services_after": 22,
+    "cumulative_model_services_before": 20,
+    "external_model_api_requests": 0,
+    "new_download_attempts": 0,
+    "new_generation_requests": 24,
+    "new_service_starts": 2,
+    "new_vm_starts": 0,
+    "planned_generation_requests": 24,
+    "reserved_requests_used": 0,
+    "retained_vm_count": 15
+  },
+  "dataset_version": "diagnostic-new-samples-v1",
+  "date": "2026-10-11",
+  "evaluation_scope": "Twelve newly authored bounded source cases per model, four defect/four healthy/four missing-evidence. Inputs and rubric were reviewed and frozen before outputs. Topic-level overlap exists for the prefix family; this is not a topic-disjoint or general capability benchmark. Case source was not executed.",
+  "guard_limits": {
+    "allocation_gib": 5,
+    "finish_hard_failure": false,
+    "finish_soft_reminder_seconds": 1800,
+    "free_run_gib": 2,
+    "free_start_gib": 7,
+    "health_seconds": 180,
+    "maximum_requests_per_model": 16,
+    "maximum_starts": 2,
+    "memory_run_percent": 20,
+    "memory_start_percent": 30,
+    "nonweight_mib": 512,
+    "preparation_seconds": 7200,
+    "records_mib": 512,
+    "request_seconds": 300,
+    "rss_4b_gib": 5.5,
+    "rss_7b_gib": 8,
+    "service_active_seconds": 5340,
+    "service_cleanup_seconds": 60,
+    "service_seconds": 5400,
+    "whole_observation_seconds": 21600
+  },
+  "models": [
+    {
+      "categories": {
+        "no_defect_supported": {
+          "captured_responses": 4,
+          "contract_passes": 4,
+          "contract_rate": 1.0,
+          "diagnostic_passes": 2,
+          "diagnostic_rate": 0.5,
+          "expected": 4,
+          "format": 0,
+          "infrastructure": 0,
+          "not_attempted": 0,
+          "quality_cases": 4,
+          "recorded": 4,
+          "semantic": 2,
+          "semantic_pending": 0,
+          "semantic_reviewed": 4,
+          "strict_json_passes": 4,
+          "strict_json_rate": 1.0,
+          "uncertain_cells": 0
+        },
+        "supported_defect": {
+          "captured_responses": 4,
+          "contract_passes": 4,
+          "contract_rate": 1.0,
+          "diagnostic_passes": 3,
+          "diagnostic_rate": 0.75,
+          "expected": 4,
+          "format": 0,
+          "infrastructure": 0,
+          "not_attempted": 0,
+          "quality_cases": 4,
+          "recorded": 4,
+          "semantic": 1,
+          "semantic_pending": 0,
+          "semantic_reviewed": 4,
+          "strict_json_passes": 4,
+          "strict_json_rate": 1.0,
+          "uncertain_cells": 0
+        },
+        "unknown": {
+          "captured_responses": 4,
+          "contract_passes": 4,
+          "contract_rate": 1.0,
+          "diagnostic_passes": 0,
+          "diagnostic_rate": 0.0,
+          "expected": 4,
+          "format": 0,
+          "infrastructure": 0,
+          "not_attempted": 0,
+          "quality_cases": 4,
+          "recorded": 4,
+          "semantic": 4,
+          "semantic_pending": 0,
+          "semantic_reviewed": 4,
+          "strict_json_passes": 4,
+          "strict_json_rate": 1.0,
+          "uncertain_cells": 0
+        }
+      },
+      "profile": {
+        "capabilities": {
+          "cancel": false,
+          "health": true,
+          "json_mode": true,
+          "usage": true
+        },
+        "chat_template_version": "explicit-chatml-b11521-v1",
+        "context_limit": 2048,
+        "model_id": "qwen4b-b11521-cpu",
+        "model_revision": "a06e946bb6b655725eafa393f4a9745d460374c9",
+        "output_limit": 384,
+        "profile_id": "qwen4b",
+        "quantization": "Q4_K_M",
+        "runtime": "llama.cpp",
+        "runtime_version": "b11521",
+        "sampling": {
+          "seed": 0,
+          "temperature": 0,
+          "top_p": 1
+        },
+        "schema_version": 1,
+        "timeout_seconds": 300,
+        "tokenizer_revision": "a06e946bb6b655725eafa393f4a9745d460374c9"
+      },
+      "scores": {
+        "captured_responses": 12,
+        "contract_passes": 12,
+        "diagnostic_passes": 5,
+        "expected": 12,
+        "format": 0,
+        "healthy_false_alarms": 2,
+        "healthy_valid_denominator": 4,
+        "infrastructure": 0,
+        "not_attempted": 0,
+        "quality_cases": 12,
+        "recorded": 12,
+        "semantic": 7,
+        "semantic_pending": 0,
+        "semantic_reviewed": 12,
+        "strict_json_passes": 12,
+        "unknown_correct_abstentions": 0,
+        "unknown_valid_denominator": 4
+      }
+    },
+    {
+      "categories": {
+        "no_defect_supported": {
+          "captured_responses": 4,
+          "contract_passes": 4,
+          "contract_rate": 1.0,
+          "diagnostic_passes": 1,
+          "diagnostic_rate": 0.25,
+          "expected": 4,
+          "format": 0,
+          "infrastructure": 0,
+          "not_attempted": 0,
+          "quality_cases": 4,
+          "recorded": 4,
+          "semantic": 3,
+          "semantic_pending": 0,
+          "semantic_reviewed": 4,
+          "strict_json_passes": 4,
+          "strict_json_rate": 1.0,
+          "uncertain_cells": 0
+        },
+        "supported_defect": {
+          "captured_responses": 4,
+          "contract_passes": 4,
+          "contract_rate": 1.0,
+          "diagnostic_passes": 1,
+          "diagnostic_rate": 0.25,
+          "expected": 4,
+          "format": 0,
+          "infrastructure": 0,
+          "not_attempted": 0,
+          "quality_cases": 4,
+          "recorded": 4,
+          "semantic": 3,
+          "semantic_pending": 0,
+          "semantic_reviewed": 4,
+          "strict_json_passes": 4,
+          "strict_json_rate": 1.0,
+          "uncertain_cells": 0
+        },
+        "unknown": {
+          "captured_responses": 4,
+          "contract_passes": 4,
+          "contract_rate": 1.0,
+          "diagnostic_passes": 3,
+          "diagnostic_rate": 0.75,
+          "expected": 4,
+          "format": 0,
+          "infrastructure": 0,
+          "not_attempted": 0,
+          "quality_cases": 4,
+          "recorded": 4,
+          "semantic": 1,
+          "semantic_pending": 0,
+          "semantic_reviewed": 4,
+          "strict_json_passes": 4,
+          "strict_json_rate": 1.0,
+          "uncertain_cells": 0
+        }
+      },
+      "profile": {
+        "capabilities": {
+          "cancel": false,
+          "health": true,
+          "json_mode": true,
+          "usage": true
+        },
+        "chat_template_version": "explicit-chatml-b11521-v1",
+        "context_limit": 2048,
+        "model_id": "qwen25coder7b-b11521-cpu",
+        "model_revision": "13fb94bfda8c8cf22497dc57b78f391a9acb426a",
+        "output_limit": 384,
+        "profile_id": "qwen25coder7b",
+        "quantization": "Q4_K_M",
+        "runtime": "llama.cpp",
+        "runtime_version": "b11521",
+        "sampling": {
+          "seed": 0,
+          "temperature": 0,
+          "top_p": 1
+        },
+        "schema_version": 1,
+        "timeout_seconds": 300,
+        "tokenizer_revision": "13fb94bfda8c8cf22497dc57b78f391a9acb426a"
+      },
+      "scores": {
+        "captured_responses": 12,
+        "contract_passes": 12,
+        "diagnostic_passes": 5,
+        "expected": 12,
+        "format": 0,
+        "healthy_false_alarms": 3,
+        "healthy_valid_denominator": 4,
+        "infrastructure": 0,
+        "not_attempted": 0,
+        "quality_cases": 12,
+        "recorded": 12,
+        "semantic": 7,
+        "semantic_pending": 0,
+        "semantic_reviewed": 12,
+        "strict_json_passes": 12,
+        "unknown_correct_abstentions": 3,
+        "unknown_valid_denominator": 4
+      }
+    }
+  ],
+  "old_derived_analysis": {
+    "native_gain_claimed": false,
+    "old_healthy_4b_valid_denominator": 0,
+    "original_scores_preserved": true,
+    "profiles": [
+      {
+        "captured_quality_denominator": 12,
+        "derived_analytical_diagnostic_passes": 6,
+        "derived_contract_passes": 11,
+        "native_quality_improvement_claimed": false,
+        "new_model_calls": 0,
+        "original_contract_passes": 4,
+        "original_formal_diagnostic_passes": 4,
+        "original_strict_json_passes": 12,
+        "profile_id": "qwen4b",
+        "unchanged_original_rows_carried_forward": 5
+      },
+      {
+        "captured_quality_denominator": 12,
+        "derived_analytical_diagnostic_passes": 4,
+        "derived_contract_passes": 11,
+        "native_quality_improvement_claimed": false,
+        "new_model_calls": 0,
+        "original_contract_passes": 11,
+        "original_formal_diagnostic_passes": 4,
+        "original_strict_json_passes": 12,
+        "profile_id": "qwen25coder7b",
+        "unchanged_original_rows_carried_forward": 12
+      }
+    ]
+  },
+  "performance": [
+    {
+      "all_finish_reasons_stop": true,
+      "http_mean_latency_ms": 26304.25,
+      "http_median_latency_ms": 25250.0,
+      "input_tokens_total": 6234,
+      "maximum_input_tokens": 576,
+      "maximum_output_tokens": 306,
+      "output_tokens_total": 2515,
+      "profile_id": "qwen4b"
+    },
+    {
+      "all_finish_reasons_stop": true,
+      "http_mean_latency_ms": 43441.333333333336,
+      "http_median_latency_ms": 44271.5,
+      "input_tokens_total": 6234,
+      "maximum_input_tokens": 576,
+      "maximum_output_tokens": 223,
+      "output_tokens_total": 1797,
+      "profile_id": "qwen25coder7b"
+    }
+  ],
+  "prompt_version": "diagnostic-new-samples-v1",
+  "review_acceptance": {
+    "authority_raw_sha256": "a7e867598303666d70d5e6b7a7f06b3163c2e7d196552d9c4d95e04d36db9e10",
+    "comparison_raw_sha256": "8466fc085915ee65f89f37b54dc85be8c44081b88e400ad7e6eed1947fd0c3a9",
+    "final_outcome_raw_sha256": "6d925ceed7b63f18d42c28ee11147fb2fef431995746b608e55eb378d93d3189",
+    "generic_offline_scorer_real_model_accuracy_measured": false,
+    "new_model_calls_during_review": 0,
+    "note": "Actual execution is evidenced separately by original native captures. The generic scorer marker is retained; accepted captured reviews are not a whole-run compliance certificate.",
+    "soft_mode_checkpoints": [
+      {
+        "elapsed_seconds": 329.1774114590371,
+        "name": "before_review",
+        "soft_reminder_reached": false
+      },
+      {
+        "elapsed_seconds": 329.1799420840107,
+        "name": "after_comparison",
+        "soft_reminder_reached": false
+      },
+      {
+        "elapsed_seconds": 329.2013072500704,
+        "name": "after_comparison_save",
+        "soft_reminder_reached": false
+      },
+      {
+        "elapsed_seconds": 329.207312209066,
+        "name": "after_comparison_and_sidecar_save",
+        "soft_reminder_reached": false
+      }
+    ],
+    "status": "accepted_at_checkpoints",
+    "whole_run_compliance": "not_assessed"
+  },
+  "schema_version": 1,
+  "selection_assessment": "Both models pass 5/12. Their failure profiles differ; these twelve new cases do not establish a general model ranking or isolate prompt effects from case differences. Published hardening is not measured model-quality gain.",
+  "services": [
+    {
+      "auxiliary_elapsed_seconds": 4.449530668440275,
+      "cleanup": {
+        "elapsed_seconds": 0.13222658296581358,
+        "empty_dirs_absent": true,
+        "listener_absent": true,
+        "threads_completed": true
+      },
+      "elapsed_seconds": 329.20849408302456,
+      "generation_requests": 12,
+      "log_bytes": 2882016,
+      "memory_start_percent": 78,
+      "minimum_available_memory_percent": 69,
+      "native_execution_result_sha256": "fb1536176ff0a0e7b94ab5f2cc2c40e1f3d637aeeae9b5022540e33c096b8f68",
+      "pid": 3678,
+      "pid_observed_absent": true,
+      "port": 63416,
+      "profile_id": "qwen4b",
+      "sampled_peak_rss_bytes": 5351096320,
+      "service_start_attempts": 1,
+      "success": true,
+      "window": 21
+    },
+    {
+      "auxiliary_elapsed_seconds": 4.884465624811128,
+      "cleanup": {
+        "elapsed_seconds": 0.1883967500180006,
+        "empty_dirs_absent": true,
+        "listener_absent": true,
+        "threads_completed": true
+      },
+      "elapsed_seconds": 541.5915307499235,
+      "generation_requests": 12,
+      "log_bytes": 2148734,
+      "memory_start_percent": 71,
+      "minimum_available_memory_percent": 42,
+      "native_execution_result_sha256": "d2856d95173ec1d209b506ca1ff6b368dc16c4e16e2fd17888ee25f0d20a0b56",
+      "pid": 5360,
+      "pid_observed_absent": true,
+      "port": 63627,
+      "profile_id": "qwen25coder7b",
+      "sampled_peak_rss_bytes": 7167442944,
+      "service_start_attempts": 1,
+      "success": true,
+      "window": 22
+    }
+  ],
+  "status": "24_real_outputs_and_reviews_accepted_owned_services_closed"
+}

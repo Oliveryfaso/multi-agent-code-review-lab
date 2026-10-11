@@ -1,0 +1,245 @@
+{
+  "version": "diagnostic-new-samples-v1",
+  "prompt_version": "diagnostic-new-samples-v1",
+  "cases": [
+    {
+      "id": "ns01",
+      "source": [
+        {
+          "file": "gate_policy.py",
+          "start": 1,
+          "end": 2,
+          "body": "def permitted(authenticated, can_edit):\n    return authenticated or can_edit\n"
+        },
+        {
+          "file": "gate_entry.py",
+          "start": 1,
+          "end": 5,
+          "body": "from gate_policy import permitted\n\n\ndef decide(authenticated, can_edit):\n    return permitted(authenticated, can_edit)\n"
+        }
+      ],
+      "question": "Assess the stated property using only the provided source and assumptions. Explain a supported mechanism and trigger, or name the specific evidence needed if the property cannot be determined.",
+      "scenario": "decide must return True exactly when authenticated and can_edit are both True, and False otherwise. All four Boolean pairs are allowed; consider decide(True, False) in particular.",
+      "assumptions": [
+        "Both inputs are exact built-in bool values.",
+        "gate_entry imports the exact permitted implementation shown in gate_policy.py. These two supplied modules are the complete path for decide.",
+        "No concurrency, hidden inputs or mutable state is involved.",
+        "The shown function definitions, imports and ordinary built-ins retain their displayed bindings; no monkeypatching or subclasses are in scope."
+      ]
+    },
+    {
+      "id": "ns02",
+      "source": [
+        {
+          "file": "flags.py",
+          "start": 1,
+          "end": 3,
+          "body": "def required_flags_present(flags):\n    required = 6\n    return (flags & required) == required\n"
+        }
+      ],
+      "question": "Assess the stated property using only the provided source and assumptions. Explain a supported mechanism and trigger, or name the specific evidence needed if the property cannot be determined.",
+      "scenario": "required_flags_present must return a built-in bool indicating whether both the bit of value 2 and the bit of value 4 are set. Other bits do not change that decision. Every allowed flags value is assessed, including 0, 2, 4, 6 and 14.",
+      "assumptions": [
+        "flags is an exact built-in int in the finite set {0, 1, ..., 15}; bool is not an allowed input.",
+        "The bit numbering and the values 2 and 4 above are the complete requirement; there are no additional required bits.",
+        "No concurrency or mutable state is involved.",
+        "The shown function definitions, imports and ordinary built-ins retain their displayed bindings; no monkeypatching or subclasses are in scope."
+      ]
+    },
+    {
+      "id": "ns03",
+      "source": [
+        {
+          "file": "persistence.py",
+          "start": 1,
+          "end": 2,
+          "body": "def record_event(event, store):\n    return store.save(event)\n"
+        }
+      ],
+      "question": "Assess the stated property using only the provided source and assumptions. Explain a supported mechanism and trigger, or name the specific evidence needed if the property cannot be determined.",
+      "scenario": "For the deployed store, every successful return from record_event must mean that event survives a complete power loss immediately after that return. Assess this successful-return durability property.",
+      "assumptions": [
+        "event is an ordinary built-in ASCII str of length 1 through 16.",
+        "The host provides store.save; it accepts event and returns a nonempty built-in str identifier normally.",
+        "The deployed save implementation, acknowledgement/durability configuration and verified power-loss behavior are not supplied. Returning an identifier alone asserts no durability guarantee.",
+        "Only the durability property of a successful return is in scope, not failures or identifier formatting.",
+        "The shown function definitions, imports and ordinary built-ins retain their displayed bindings; no monkeypatching or subclasses are in scope."
+      ]
+    },
+    {
+      "id": "ns04",
+      "source": [
+        {
+          "file": "formatters.py",
+          "start": 1,
+          "end": 2,
+          "body": "def capitalized(words):\n    return (word.upper() for word in words)\n"
+        }
+      ],
+      "question": "Assess the stated property using only the provided source and assumptions. Explain a supported mechanism and trigger, or name the specific evidence needed if the property cannot be determined.",
+      "scenario": "capitalized must return an already materialized built-in tuple containing the uppercase form of every input word in the same order. This includes an empty tuple for empty input. Consider words=(\"oak\", \"fir\") in particular.",
+      "assumptions": [
+        "words is an exact built-in tuple of zero through three exact built-in str values containing only lowercase ASCII letters a through z; each word has length 1 through 5.",
+        "Only the result type, complete contents and order are assessed. Later iteration of a non-tuple result does not satisfy the materialized-tuple requirement.",
+        "No concurrency, external dependencies or mutable state is involved.",
+        "The shown function definitions, imports and ordinary built-ins retain their displayed bindings; no monkeypatching or subclasses are in scope."
+      ]
+    },
+    {
+      "id": "ns05",
+      "source": [
+        {
+          "file": "pairs.py",
+          "start": 1,
+          "end": 3,
+          "body": "def transpose(pair):\n    first, second = pair\n    return second, first\n"
+        }
+      ],
+      "question": "Assess the stated property using only the provided source and assumptions. Explain a supported mechanism and trigger, or name the specific evidence needed if the property cannot be determined.",
+      "scenario": "transpose must return a built-in tuple of exactly two values with the second input value first and the first input value second. The input must remain unchanged. Equal values are allowed; consider (3, -2) and (5, 5).",
+      "assumptions": [
+        "pair is an exact built-in tuple containing exactly two exact built-in ints, each from -5 through 5; bool is excluded.",
+        "Only reordering and preservation of this immutable tuple are required; no copying of nested mutable objects is part of the contract.",
+        "No concurrency, external dependencies or mutable state is involved.",
+        "The shown function definitions, imports and ordinary built-ins retain their displayed bindings; no monkeypatching or subclasses are in scope."
+      ]
+    },
+    {
+      "id": "ns06",
+      "source": [
+        {
+          "file": "replication.py",
+          "start": 1,
+          "end": 2,
+          "body": "def read_latest(key, replica):\n    return replica.fetch(key)\n"
+        }
+      ],
+      "question": "Assess the stated property using only the provided source and assumptions. Explain a supported mechanism and trigger, or name the specific evidence needed if the property cannot be determined.",
+      "scenario": "After an acknowledged primary write of a new value for key, read_latest must return that most recent written value on the deployed path. There are no intervening writes. Assess the required read-after-write property.",
+      "assumptions": [
+        "key is an ordinary built-in ASCII str of length 1 through 16; the old and newly written values are ordinary built-in ints and differ.",
+        "The primary write succeeded and completed before read_latest is invoked.",
+        "The host supplies replica.fetch, which returns a built-in int normally. The deployed replication state, consistency/read-after-write guarantee and actual returned value are not supplied.",
+        "The source below is the complete read path. No exception or type issue is in scope.",
+        "The shown function definitions, imports and ordinary built-ins retain their displayed bindings; no monkeypatching or subclasses are in scope."
+      ]
+    },
+    {
+      "id": "ns07",
+      "source": [
+        {
+          "file": "reader.py",
+          "start": 1,
+          "end": 5,
+          "body": "def required_value(mapping, key):\n    try:\n        return mapping[key]\n    except KeyError:\n        return 0\n"
+        }
+      ],
+      "question": "Assess the stated property using only the provided source and assumptions. Explain a supported mechanism and trigger, or name the specific evidence needed if the property cannot be determined.",
+      "scenario": "required_value must return mapping[key] when key is present and must propagate a KeyError to its caller when key is absent. Returning a replacement value for a missing key is forbidden. Consider mapping={\"seen\": 5}, key=\"missing\".",
+      "assumptions": [
+        "mapping is an exact built-in dict with built-in ASCII str keys and exact built-in int values from -5 through 5; key is a built-in ASCII str.",
+        "No custom __missing__, dict subclass, concurrency or mutation occurs during the call.",
+        "Built-in KeyError retains its usual binding, and both present and absent keys are allowed.",
+        "The shown function definitions, imports and ordinary built-ins retain their displayed bindings; no monkeypatching or subclasses are in scope."
+      ]
+    },
+    {
+      "id": "ns08",
+      "source": [
+        {
+          "file": "prefixes.py",
+          "start": 1,
+          "end": 4,
+          "body": "def remove_job_prefix(name):\n    if name.startswith(\"job-\"):\n        return name[4:]\n    return name\n"
+        }
+      ],
+      "question": "Assess the stated property using only the provided source and assumptions. Explain a supported mechanism and trigger, or name the specific evidence needed if the property cannot be determined.",
+      "scenario": "remove_job_prefix must remove exactly one leading literal \"job-\" when present, and return the input unchanged otherwise. It must not remove a later occurrence or repeatedly remove prefixes. Thus \"job-job-a\" should become \"job-a\", \"job-\" should become \"\", and \"xjob-a\" should remain unchanged.",
+      "assumptions": [
+        "name is an exact built-in str containing only ASCII letters and hyphens, with length 0 through 20.",
+        "Prefix comparison is case-sensitive and literal: uppercase \"JOB-\" is not the required prefix.",
+        "Only the stated prefix-removal property is assessed; no concurrency, external dependencies or mutable state is involved.",
+        "The shown function definitions, imports and ordinary built-ins retain their displayed bindings; no monkeypatching or subclasses are in scope."
+      ]
+    },
+    {
+      "id": "ns09",
+      "source": [
+        {
+          "file": "critical.py",
+          "start": 1,
+          "end": 3,
+          "body": "def guarded_write(record, lock, writer):\n    with lock:\n        writer(record)\n"
+        }
+      ],
+      "question": "Assess the stated property using only the provided source and assumptions. Explain a supported mechanism and trigger, or name the specific evidence needed if the property cannot be determined.",
+      "scenario": "Across two worker processes targeting the same deployed resource, the two writer(record) critical sections must never overlap. Both processes invoke guarded_write with their host-supplied lock handles. Assess this cross-process mutual-exclusion property.",
+      "assumptions": [
+        "record is an ordinary built-in ASCII str. writer is supplied and completes synchronously without exceptions; only overlap of its call intervals is assessed.",
+        "Each lock handle is a working context manager whose __enter__/__exit__ return normally.",
+        "The host may give handles to the same shared backend or separate/process-local backends. Its lock backend, shared resource identity and cross-process exclusion scope are not supplied.",
+        "Concurrency of exactly these two worker processes is in scope; no additional code or failure behavior is assumed.",
+        "The shown function definitions, imports and ordinary built-ins retain their displayed bindings; no monkeypatching or subclasses are in scope."
+      ]
+    },
+    {
+      "id": "ns10",
+      "source": [
+        {
+          "file": "labels.py",
+          "start": 1,
+          "end": 2,
+          "body": "def is_ready(label):\n    return label == \"ready\"\n"
+        }
+      ],
+      "question": "Assess the stated property using only the provided source and assumptions. Explain a supported mechanism and trigger, or name the specific evidence needed if the property cannot be determined.",
+      "scenario": "is_ready must return True exactly when the ASCII label spells \"ready\" regardless of letter case, and False otherwise. No whitespace trimming is required. The complete allowed input set is {\"ready\", \"READY\", \"Ready\", \"blocked\", \"\"}; consider \"READY\" in particular.",
+      "assumptions": [
+        "label is an exact built-in str from the finite set stated above.",
+        "Only case-insensitive recognition of this literal token is required; non-ASCII text and arbitrary normalization are out of scope.",
+        "No concurrency, external dependencies or mutable state is involved.",
+        "The shown function definitions, imports and ordinary built-ins retain their displayed bindings; no monkeypatching or subclasses are in scope."
+      ]
+    },
+    {
+      "id": "ns11",
+      "source": [
+        {
+          "file": "sets.py",
+          "start": 1,
+          "end": 2,
+          "body": "def no_shared(left, right):\n    return left.isdisjoint(right)\n"
+        }
+      ],
+      "question": "Assess the stated property using only the provided source and assumptions. Explain a supported mechanism and trigger, or name the specific evidence needed if the property cannot be determined.",
+      "scenario": "no_shared must return a built-in bool that is True exactly when left and right have no common element, and False when they share at least one element. Both inputs must remain unchanged. Empty inputs are allowed; examples include ({1, 2}, {3}), ({1, 2}, {2}), and an empty left set.",
+      "assumptions": [
+        "left and right are exact built-in frozenset objects containing only exact built-in ints from 0 through 3; bool is excluded.",
+        "Example braces above describe membership; the actual inputs are frozenset instances, not mutable set subclasses.",
+        "No concurrency, external dependencies or mutable state is involved.",
+        "The shown function definitions, imports and ordinary built-ins retain their displayed bindings; no monkeypatching or subclasses are in scope."
+      ]
+    },
+    {
+      "id": "ns12",
+      "source": [
+        {
+          "file": "delivery.py",
+          "start": 1,
+          "end": 2,
+          "body": "def submit(event_id, body, broker):\n    return broker.send(event_id=event_id, body=body)\n"
+        }
+      ],
+      "question": "Assess the stated property using only the provided source and assumptions. Explain a supported mechanism and trigger, or name the specific evidence needed if the property cannot be determined.",
+      "scenario": "For the deployed end-to-end path, two successful submit calls with the same event_id and body must cause exactly one downstream processing effect for that logical event. Assess this duplicate-suppression requirement, including the downstream consumer.",
+      "assumptions": [
+        "event_id and body are ordinary built-in ASCII str values of length 1 through 16; the two calls use identical values.",
+        "The host supplies broker.send; each call returns a nonempty built-in str acknowledgement normally and preserves the supplied event_id field.",
+        "At least one downstream processing effect for this logical event is guaranteed. Only whether additional duplicate effects occur is under review.",
+        "The deployed broker deduplication contract/configuration and downstream consumer processing/deduplication guarantee are not supplied. An acknowledgement and presence of an event_id field alone imply no exactly-once effect guarantee.",
+        "Only these two successful submissions and their eventual processing effects are assessed; unrelated events and exception paths are out of scope.",
+        "The shown function definitions, imports and ordinary built-ins retain their displayed bindings; no monkeypatching or subclasses are in scope."
+      ]
+    }
+  ]
+}

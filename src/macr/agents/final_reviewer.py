@@ -6,7 +6,7 @@ from macr.schemas import AgentAnswer, Evidence, FinalReviewReport, Plan
 
 
 class FinalReviewAgent:
-    """Audits whether agent artifacts are coherent enough to trust or need fallback."""
+    """Checks cited evidence provenance and artifact coherence."""
 
     def review(
         self,
@@ -24,7 +24,23 @@ class FinalReviewAgent:
         questions: list[str] = []
         answer_confidence = answer.confidence if answer else 0.0
         answer_evidence = answer.evidence if answer else []
-        evidence_count = len(answer_evidence or evidence)
+        authority = {
+            (item.file, item.line_start, item.line_end, item.symbol or "", item.source_tool or ""): item
+            for item in evidence
+        }
+        cited_evidence: list[Evidence] = []
+        unknown_references = 0
+        for item in answer_evidence:
+            key = (item.file, item.line_start, item.line_end, item.symbol or "", item.source_tool or "")
+            source = authority.get(key)
+            if source is None:
+                unknown_references += 1
+            else:
+                cited_evidence.append(source)
+        evidence_count = len({(item.file, item.line_start, item.line_end) for item in cited_evidence})
+        if unknown_references:
+            issues.append(f"{unknown_references} answer references outside authoritative evidence")
+            questions.append("Which retrieved evidence supports the answer's citations?")
         failed_tools = [call for call in tool_calls if not call.get("ok") and call.get("error_type") != "empty_recall"]
         empty_recall = [call for call in tool_calls if call.get("error_type") == "empty_recall"]
 
@@ -43,7 +59,7 @@ class FinalReviewAgent:
         if len(empty_recall) >= 4 and evidence_count < 6:
             issues.append("retrieval had repeated empty recall with limited evidence")
             questions.append("Can you rephrase the task with concrete code identifiers?")
-        uncovered_terms = self._uncovered_query_terms(query, answer_evidence or evidence)
+        uncovered_terms = self._uncovered_query_terms(query, cited_evidence)
         if uncovered_terms:
             issues.append(f"query terms not covered by evidence: {', '.join(uncovered_terms)}")
             questions.append(f"These terms were not found in evidence: {', '.join(uncovered_terms)}. Should they be ignored or should you provide the relevant file/function?")

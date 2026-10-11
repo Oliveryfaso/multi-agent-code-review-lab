@@ -31,7 +31,7 @@ OFFLINE_MODULES = frozenset({
     'test_repository_snapshots', 'test_repository_index', 'test_context_reader',
     'test_static_readers', 'test_static_facts', 'test_static_locate_abstention', 'test_contracts',
     'test_investigation_contracts', 'test_evidence_store', 'test_provider_contract',
-    'test_check_results',
+    'test_check_results', 'test_final_reviewer',
     'test_local_http_provider', 'test_investigation_budget', 'test_investigation_queue',
     'test_investigation_memory', 'test_run_store', 'test_run_recovery', 'test_sqlite_run_store',
     'test_repo_map', 'test_patch_agent', 'test_patch_ranker',
@@ -42,6 +42,7 @@ OFFLINE_MODULES = frozenset({
     'test_diagnostic_dataset', 'test_diagnostic_holdout_cases', 'test_diagnostic_holdout_replay',
 })
 OFFLINE_CASES = frozenset({
+    'test_orchestrator.OrchestratorTests.test_final_review_receives_store_evidence_after_recovery',
     'test_orchestrator.OrchestratorTests.test_canonical_graph_edge_kind_reaches_evidence_in_both_directions',
     'test_code_smell.CodeSmellAgentTests.test_appledouble_files_and_subtrees_are_filtered_before_read',
     'test_code_smell.CodeSmellAgentTests.test_real_python_syntax_error_is_still_reported',

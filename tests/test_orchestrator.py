@@ -6,7 +6,9 @@ from debugger_fixtures import fixture_root
 from test_code_graph import graph_fixture
 
 from macr.agents.orchestrator import Orchestrator
+from macr.agents.solver import SolverAgent
 from macr.memory.trace_store import TraceStore
+from macr.schemas import AgentAnswer
 
 
 class OrchestratorTests(unittest.TestCase):
@@ -83,6 +85,32 @@ class OrchestratorTests(unittest.TestCase):
         self.assertEqual((incoming['file'], incoming['line_start']), ('tests/test_auth.py', 3))
         self.assertTrue(trace.metrics['contract_validation']['ok'])
         self.assertEqual(trace.state_timeline[-1].name, 'completed')
+
+    def test_final_review_receives_store_evidence_after_recovery(self):
+        root = graph_fixture()
+        orchestrator = Orchestrator(trace_store=TraceStore(fixture_root() / 'traces'))
+        solver_inputs = []
+
+        def solve(query, plan, evidence):
+            solver_inputs.append(evidence)
+            return AgentAnswer('needs confirmation', evidence[:1], .4, []), None
+
+        forbidden = AssertionError('final review integration must remain offline')
+        with patch.object(SolverAgent, 'solve', side_effect=solve) as solver, \
+             patch.object(orchestrator.final_reviewer, 'review', wraps=orchestrator.final_reviewer.review) as reviewer, \
+             patch('subprocess.Popen', side_effect=forbidden), \
+             patch('socket.create_connection', side_effect=forbidden):
+            trace = orchestrator.run(root, 'process_payment')
+
+        self.assertEqual(solver.call_count, 2)
+        self.assertEqual(reviewer.call_count, 2)
+        for call, authority in zip(reviewer.call_args_list, solver_inputs):
+            self.assertEqual(call.args[3], authority)
+            self.assertGreater(len(authority), len(call.args[2].evidence))
+        self.assertEqual([call.kwargs['retry_count'] for call in reviewer.call_args_list], [0, 1])
+        self.assertEqual(len(trace.board['recovery']), 2)
+        self.assertTrue(trace.metrics['final_review']['human_review_required'])
+        self.assertFalse(trace.llm_calls)
 
 
 if __name__ == "__main__":
