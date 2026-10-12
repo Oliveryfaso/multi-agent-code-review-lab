@@ -534,3 +534,126 @@ the independent acceptance failure. Local-only receipts under
 hashes, frozen implementation, twelve request/response pairs, scoring,
 resource audit and preservation checks. Runtime logs, private scoring data,
 model assets and personal configuration are excluded from publication.
+
+## Requirement-preserving prompt contrast: 2026-10-12
+
+**Independent acceptance failed: none of the three new final diagnoses met
+the frozen minimum whole-task semantics.** The three seen development pairs
+improved from 0/3 to 1/3 on that minimum. Only one concrete defect control
+improved; general diagnostic accuracy and successful unknown handling remain
+unverified.
+
+Previous traces exposed unsupported certainty: the candidate merged an extra
+implementation condition into the stated requirement and treated a fixed,
+deterministic bool-returning dependency as a sufficient behavioral guarantee.
+The verifier accepted that error. A source/prompt/schema audit also found the
+hard 96-character reason limit and unfinished explanations, without a native
+`length` finish or a counterfactual proving that the limit caused the errors.
+
+An explicit `prompt_variant='requirement_preserving'` passes through the real
+request builder, solver, staged candidate and complete diagnostic entry. It
+appends a single candidate system paragraph about preserving requirements,
+compatible dependency behaviors, concrete reachable violations, and positive
+support for the full healthy requirement. The default stays `baseline`.
+Invalid variants fail before retrieval or candidate dispatch and preserve a
+prepared trace. The variant is recorded in local request metadata. The
+baseline wire and metadata, verifier prompt, schema, host rules, reason limit,
+source limits, model profile, sampling and budgets are unchanged.
+
+Implementation, tests, protocol, 18 generation keys and one-service budget
+were frozen before new inputs were released to implementation/runtime. Three
+old seen development cases cover a necessary dependency gap, a healthy
+control and a concrete defect. Each pair has identical task/source/scope/
+schema; candidate wire differs only by the frozen system suffix. The changed
+candidate subsequently changes verifier input, a recorded downstream effect
+rather than a separate fixed-candidate verifier prompt contrast. Three new
+cases, one per state, were independently authored with complete functions
+and a private expected/scoring file. The private file was not used for
+implementation, tests, capacity checks or model input. A separate ordinary
+reviewer scored unchanged raw, parsed and final outputs after shutdown.
+
+| Measure | Seen baseline | Seen variant | New variant acceptance |
+| --- | --- | --- | --- |
+| Minimum whole-task semantics, original candidate | 0/3 | 1/3 | 0/3 |
+| Minimum whole-task semantics, retained final | 0/3 | 1/3 | 0/3 |
+| Correct raw label | 1/3 | 2/3 | 2/3 |
+| Correct parsed label, all planned units | 1/3 | 2/3 | 1/3 |
+| Correct final label, all planned units | 0/3 | 2/3 | 1/3 |
+| Candidate business contract | 3/3 | 3/3 | 2/3 |
+| Verifier parsed, including rejected, attempted calls | 2/3 | 2/3 | 1/2 |
+| Host interface completed with final | 1/3 | 2/3 | 1/3 |
+| Healthy false-defect reports, raw candidate | 1/1 | 0/1 | 0/1 |
+| Healthy whole-task minimum | 0/1 | 0/1 | 0/1 |
+| Correct completed essential-gap unknown | 0/1 | 0/1 | 0/1 |
+| Concrete defect causal/caller minimum | 0/1 | 1/1 | 0/1 |
+| Correct complete original caller explanation | 0/3 | 1/3 | 1/3 |
+| Raw references to all caller blocks | 3/3 | 3/3 | 3/3 |
+| Complete candidate prose | 2/3 | 2/3 | 2/3 |
+| Complete verifier reason | 0/3 | 0/3 | 0/2 |
+
+The seen dependency-gap pair remains incorrectly healthy in both arms. The
+seen healthy variant corrects its label and concrete result but still says
+a false condition enters the `if` branch; that control-flow contradiction
+fails the explanation requirement. The defect variant correctly explains
+swapped arguments, a reachable caller and actual-versus-required results;
+its baseline lacks the correct cause and is rejected. This is a single
+paired minimum gain, without a defect-control regression in this tiny set.
+The healthy final false-defect count is 0/1 in both arms, but baseline has no
+final and variant has the explanation fault; that count alone is no success.
+
+New case 1 writes `unknown` and recognizes a necessary dependency guarantee,
+but non-null `cause`/`when` violate the existing unknown business contract,
+and its caller/prose explanation is incomplete. Its parser fails and verifier
+is skipped, so it is partial recognition rather than correct completed
+unknown. New case 2 has a correct concrete three-function caller, but only
+restates the requirement for the remaining domain without source support for
+the actual guard and other outputs. Its accepted final remains incomplete.
+New case 3 misses the wrapper label inversion, reports healthy and fails a
+required verifier reference; no final is produced.
+
+All 17 responses meet raw JSON/wire schema and finish with `stop`. Candidate
+business contract passes 8/9; verifier parsing, including rejection, passes
+5/8; interface completion is 4/9. One candidate cross-field failure, three
+missing conditional verifier references and one valid rejection remain
+unaltered. Technical failures are not healthy or correct unknown outcomes.
+Eight verifier reasons are 96-character residual clauses; candidate prose is
+complete in 6/9. There is no `length` finish or causal proof of native token
+truncation. All nine candidates cite the caller blocks, which does not prove
+correct caller reasoning or per-check citation support. Those measures are
+separate in the local independent report. No reference, verdict, candidate
+explanation or state is repaired, and final publication requires human review.
+
+| Measured native cost | Seen baseline | Seen variant | New variant |
+| --- | --- | --- | --- |
+| Generations | 6 | 6 | 5 |
+| Input tokens | 5,837 | 6,163 | 5,019 |
+| Output tokens | 1,124 | 1,094 | 1,046 |
+| Generation wire seconds | 226.07 | 236.65 | 225.48 |
+
+Actual cost is one cached 4B CPU service (cumulative start 30), 17 unique
+generations, 17,019 input plus 3,264 output tokens, 20,283 total, and 703.51
+seconds including cleanup. Only the invalid candidate's verifier was skipped;
+six unkeyed reserve slots were unused. All 128 HTTP events are accounted for:
+17 generations and 111 health/identity/template/token-count calls. Saved
+schemas, raw-to-typed usage, zero-cache usage and native idle-release evidence
+match. RSS peaks at 4.88 GiB under 5.5 GiB; available memory is 80% at startup
+and at least 73% in recorded runtime samples. Process, listener and monitor
+threads closed. There was no retry, repair, extra service, VM, download or
+external model API. Historical total-record peak and runtime disk minimum
+were not continuously recorded and remain unknown.
+
+Full Offline Core passes 326/326, with three new tests covering the sole
+suffix, actual wire/persistence and invalid-variant no-dispatch behavior.
+Overlapping 73-test and one-test workspace integration selections pass but
+are not added to native denominators. Source/data pins, old 514 evidence
+files and all 154 initial local modifications were checked, with exact inverse
+proof for owned overlaps. Old six-case raw outputs and scores are unchanged.
+The new three cases are now seen, not reusable independent acceptance.
+
+The variant stays opt-in. The smallest next direction is coherent unknown
+cross-fields during generation, followed by concrete source-based control-flow
+verification. Neither direction is implemented or validated here, and no
+extra native round was started. Local-only receipts under
+`artifacts/implementation/diagnostic-semantic-contrast-01` bind protocol,
+captures, grading, resources and preservation. Private expected data, case
+payloads, runtime logs, models and personal configuration are not published.
