@@ -10,7 +10,7 @@ from uuid import UUID
 from debugger_fixtures import fixture_root, write_files
 from macr.agents.orchestrator import Orchestrator
 from macr.evals.diagnostic_compact import (
-    VERSION, REQUIREMENT_PRESERVING_PROMPT, protocol_schema, restore_scope)
+    VERSION, LEGACY_VERSION, REQUIREMENT_PRESERVING_PROMPT, protocol_schema, restore_scope)
 from macr.memory.trace_store import TraceStore
 from macr.providers.base import ModelBudget, ModelResponse, ProviderCapabilities, ProviderError
 from macr.providers.local_http import LocalHTTPProvider
@@ -53,7 +53,7 @@ def candidate(request, *, verdict="supported_defect", refs=None, unknowns=None):
         "unknowns": (["The dependency access contract is absent."] if unknown else []) if unknowns is None else unknowns}
 
 
-def verification(request, *, changes=None, unknowns=None, coverage="complete"):
+def verification(request, *, changes=None, unknowns=None, coverage="complete", version=VERSION):
     payload = json.loads(request.messages[-1]["content"])
     checks = {"requirement": "established", "trigger": "reachable", "behavior": "violates",
               "protection": "absent", "counterevidence": "not_found"}
@@ -63,8 +63,12 @@ def verification(request, *, changes=None, unknowns=None, coverage="complete"):
             or name == "trigger" and checks[name] == "excluded"
             or name == "protection" and checks[name] in ("effective", "ineffective")
             or name == "counterevidence" and checks[name] == "refutes")}
-    return {"scope": payload["scope"], "coverage": coverage, "checks": checks, "refs": refs,
-            "reason": "These explicit checks concern the stated domain.", "unknowns": unknowns or []}
+    result = {"scope": payload["scope"], "coverage": coverage,
+              "reason": "These explicit checks concern the stated domain.", "unknowns": unknowns or []}
+    if version == LEGACY_VERSION:
+        return result | {"checks": checks, "refs": refs}
+    return result | {"checks": {name: {"state": state, "refs": refs.get(name, [])}
+                               for name, state in checks.items()}}
 
 
 class FakeProvider:
@@ -88,8 +92,10 @@ class FakeProvider:
 class ProductionFakeTransport:
     def __init__(self, actions):
         self.actions, self.calls = list(actions), []
+        self.bodies = []
 
     def post(self, endpoint, body, timeout_seconds, max_response_bytes):
+        self.bodies.append(body)
         request = json.loads(body)
         self.calls.append(request)
         if not self.actions:
@@ -354,6 +360,9 @@ class DiagnosticOrchestratorTests(unittest.TestCase):
             self.assertEqual(self.persisted(trace)['diagnosis']['candidate_request'], asdict(requests[0]))
             self.assertEqual(requests[0].messages, transport.calls[0]['messages'])
             agent.verify_diagnostic(trace)
+            self.assertEqual(self.persisted(trace)['diagnosis']['verification_request'], asdict(requests[1]))
+            for body, actual_request in zip(transport.bodies, requests):
+                self.assertIn(b'"schema": ' + json.dumps(actual_request.response_schema).encode(), body)
             self.assertEqual(len(transport.calls), 2)
             self.assertEqual(trace.diagnosis['final'], trace.diagnosis['candidate'])
             self.assertFalse(trace.diagnosis['semantic_proof'])
@@ -441,8 +450,9 @@ class DiagnosticOrchestratorTests(unittest.TestCase):
                 "unknowns": []}
         def check_caller(request):
             result = verification(request)
-            result.update(reason="OR grants the mixed caller; AND requires denial. The full supplied path is explained.",
-                refs={"behavior": ["e1"], "trigger": ["e2", "e3"]})
+            result.update(reason="OR grants the mixed caller; AND requires denial. The full supplied path is explained.")
+            result["checks"]["behavior"]["refs"] = ["e1"]
+            result["checks"]["trigger"]["refs"] = ["e2", "e3"]
             return result
         trace = self.run_semantic_development({"access.py": CALLER_SOURCE}, CALLER_QUESTION,
             ["allowed", "staff", "paid", "access_status"], complete_caller, check_caller)
@@ -506,11 +516,11 @@ class DiagnosticOrchestratorTests(unittest.TestCase):
                     result = verification(request, changes={"behavior": "satisfies" if state == "effective" else "violates",
                         "protection": state, "counterevidence": "refutes" if state == "effective" else "does_not_refute"})
                     if mutation == "missing":
-                        result["refs"].pop("protection")
+                        result["checks"]["protection"].pop("refs")
                     elif mutation == "empty":
-                        result["refs"]["protection"] = []
+                        result["checks"]["protection"]["refs"] = []
                     elif mutation == "foreign":
-                        result["refs"]["protection"] = ["unretrieved"]
+                        result["checks"]["protection"]["refs"] = ["unretrieved"]
                     raw.append(json.dumps(result))
                     return result
                 repo = write_files(fixture_root(), {"access.py": source})
@@ -535,8 +545,7 @@ class DiagnosticOrchestratorTests(unittest.TestCase):
                     self.assertEqual(trace.diagnosis["rejection_code"], "verification_cross_field_conflict")
                 else:
                     self.assertEqual(trace.diagnosis["status"], "failed")
-                    self.assertEqual(trace.diagnosis["error_type"], "compact_contract_invalid"
-                                     if mutation == "foreign" else "verification_citation_missing")
+                    self.assertEqual(trace.diagnosis["error_type"], "compact_contract_invalid")
                     self.assertEqual(trace.diagnosis["failure_kind"], "invalid_contract")
                 stored = self.persisted(trace)
                 self.assertEqual([row["payload"]["raw_output"] for row in stored["board"]["diagnostic"]
@@ -561,8 +570,9 @@ class DiagnosticOrchestratorTests(unittest.TestCase):
                 "unknowns": []}
         def check_domain(request):
             result = verification(request, changes={"behavior": "satisfies"})
-            result.update(reason="Clamp covers nonnegative inputs and the above-total caller; its result is correctly zero.",
-                refs={"behavior": ["e1"], "trigger": ["e2", "e3"]})
+            result.update(reason="Clamp covers nonnegative inputs and the above-total caller; its result is correctly zero.")
+            result["checks"]["behavior"]["refs"] = ["e1"]
+            result["checks"]["trigger"]["refs"] = ["e2", "e3"]
             return result
         trace = self.run_semantic_development({"jobs.py": source}, question,
             ["pending", "job_status", "done", "total"], healthy_caller, check_domain)
@@ -608,16 +618,19 @@ class DiagnosticOrchestratorTests(unittest.TestCase):
             payload = json.loads(request.messages[-1]["content"])
             self.assertEqual(payload["candidate"]["cause"], original["cause"])
             self.assertEqual(payload["candidate"]["when"], original["when"])
-            result = verification(request, coverage="incomplete")
+            result = verification(request, coverage="incomplete", version=LEGACY_VERSION)
             result.update(reason="The candidate omits mixed_access and access_status argument propagation and result.")
             return result
-        provider, transport = self.production([raw_envelope, incomplete], bound=700)
+        provider, transport = self.production([raw_envelope, incomplete], bound=700, diagnostic_schema_decoding=True)
         repo = write_files(fixture_root(), {"access.py": CALLER_SOURCE})
         agent = self.orchestrator(provider)
         with patch("macr.schemas.uuid4", return_value=UUID("438d09d6-8af2-4ae1-b875-9b757f831aa5")), \
                 patch("macr.agents.orchestrator.uuid4", return_value=UUID("41814965-0eb5-435f-a872-2182bb85341f")):
-            trace = agent.run_diagnostic(repo, CALLER_QUESTION, scenario=CALLER_SCENARIO,
+            trace = agent.prepare_diagnostic(repo, CALLER_QUESTION, scenario=CALLER_SCENARIO,
                 assumptions=[], budget=BUDGET, search_terms=["allowed", "staff", "paid", "access_status"])
+            trace.diagnosis["protocol"] = LEGACY_VERSION
+            agent.diagnostic_candidate(trace)
+            agent.verify_diagnostic(trace)
         self.assertEqual(restore_scope(trace.diagnosis["scope"]).binding, original["scope"])
         self.assertEqual(trace.diagnosis["status"], "rejected")
         self.assertEqual(trace.diagnosis["rejection_code"], "verification_task_incomplete")
@@ -635,6 +648,13 @@ class DiagnosticOrchestratorTests(unittest.TestCase):
         self.assertFalse(trace.diagnosis["semantic_proof"])
         self.assertEqual(len(transport.calls), 2)
         stored = self.persisted(trace)
+        self.assertEqual(stored["diagnosis"]["protocol"], LEGACY_VERSION)
+        self.assertEqual(stored["diagnosis"]["candidate_request"]["metadata"]["diagnostic_protocol"], LEGACY_VERSION)
+        self.assertEqual(stored["diagnosis"]["verification_request"]["metadata"]["diagnostic_protocol"], LEGACY_VERSION)
+        scope = restore_scope(trace.diagnosis["scope"])
+        for body, verifier in zip(transport.bodies, (False, True)):
+            schema = protocol_schema(scope, verifier=verifier, version=LEGACY_VERSION)
+            self.assertIn(b'"schema": ' + json.dumps(schema).encode(), body)
         attempts = [row["payload"] for row in stored["board"]["diagnostic"] if row["kind"] == "attempt"]
         self.assertEqual(attempts[0]["raw_output"], RETAINED_DEV01_RAW)
         self.assertEqual(stored["llm_calls"][0]["usage"], {"input_tokens": 658, "output_tokens": 128})
@@ -661,7 +681,7 @@ class DiagnosticOrchestratorTests(unittest.TestCase):
         self.assertEqual(stored["llm_calls"][-1]["usage"], {"input_tokens": 100, "output_tokens": 40})
         self.assertEqual(stored["llm_calls"][-1]["finish_reason"], "stop")
 
-    def test_v1_trace_or_request_cannot_silently_resume_under_v2_contract(self):
+    def test_unsupported_or_mismatched_protocol_cannot_silently_resume(self):
         provider = FakeProvider([candidate])
         agent = self.orchestrator(provider)
         trace = agent.prepare_diagnostic(self.repo, QUESTION, scenario=SCENARIO, assumptions=[], budget=BUDGET)
@@ -672,6 +692,18 @@ class DiagnosticOrchestratorTests(unittest.TestCase):
         self.assertEqual(provider.requests, [])
         trace.diagnosis["protocol"] = VERSION
         agent.diagnostic_candidate(trace)
+        trace.diagnosis["protocol"] = LEGACY_VERSION
+        with self.assertRaisesRegex(ProviderError, 'diagnostic_protocol_mismatch'):
+            agent.verify_diagnostic(trace)
+        self.assertEqual(trace.diagnosis["status"], "candidate_completed")
+        self.assertEqual(len(provider.requests), 1)
+        scope = restore_scope(trace.diagnosis["scope"])
+        for version in (None, {}, 'diagnostic-compact-v1'):
+            with self.subTest(version=version), self.assertRaisesRegex(ProviderError, 'compact_protocol_mismatch'):
+                agent.solver.diagnostic_candidate(scope, question=QUESTION, scenario=SCENARIO,
+                    assumptions=[], model_budget=BUDGET, version=version)
+            self.assertEqual(len(provider.requests), 1)
+        trace.diagnosis["protocol"] = VERSION
         trace.diagnosis["candidate_request"]["metadata"]["diagnostic_protocol"] = "diagnostic-compact-v1"
         with self.assertRaises(ProviderError) as error:
             agent.verify_diagnostic(trace)

@@ -113,9 +113,14 @@ def offline_context(tmp):
 
 
 def run_suite(suite, *, runs_root=RUNS_ROOT, timeout_seconds=120, max_allocated_bytes=64 * MIB):
-    """Create one exclusive run; retain failures, clean only owned successful tmp."""
-    if not 0 < timeout_seconds <= 120 or not 0 < max_allocated_bytes <= 64 * MIB:
-        raise ValueError('offline limits may only be narrowed')
+    """Create one exclusive run; retain failures, clean only owned successful tmp.
+
+    Fixture allocation defaults to 64 MiB; the API permits up to 128 MiB for
+    filesystems with large allocation units. The wall deadline stays <=120s.
+    """
+    if not 0 < timeout_seconds <= 120 or not 0 < max_allocated_bytes <= 128 * MIB:
+        raise ValueError('offline limits require 0 < wall seconds <= 120 and '
+                         '0 < allocated bytes <= 128 MiB')
     runs_root = Path(runs_root).absolute()
     if runs_root != runs_root.resolve() or not runs_root.is_relative_to(RUNS_ROOT):
         raise ValueError('run output must stay under artifacts/test-runs without links')

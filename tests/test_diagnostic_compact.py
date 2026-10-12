@@ -4,15 +4,24 @@ from dataclasses import FrozenInstanceError, asdict
 import hashlib
 import json
 import unittest
+from functools import partial
+
+from macr.evals import diagnostic_compact as compact_v3
 
 from macr.evals.diagnostic_compact import (
-    CHECK_STATES, VERSION, REQUIREMENT_PRESERVING_PROMPT, CompactScope,
+    CHECK_STATES, LEGACY_VERSION as VERSION, REQUIREMENT_PRESERVING_PROMPT, CompactScope,
     build_candidate_request, build_verification_request,
     candidate_quality_warnings,
     parse_candidate, prepare_scope, protocol_schema, restore_scope, validate_verification,
 )
 from macr.providers.base import ProviderError
 from macr.schemas import Evidence
+
+# Existing retained/development witnesses exercise the explicit historical v2 protocol.
+protocol_schema = partial(protocol_schema, version=VERSION)
+parse_candidate = partial(parse_candidate, version=VERSION)
+validate_verification = partial(validate_verification, version=VERSION)
+build_candidate_request = partial(build_candidate_request, version=VERSION)
 
 
 class DiagnosticCompactTests(unittest.TestCase):
@@ -489,6 +498,209 @@ class DevelopmentReplayTests(unittest.TestCase):
                 result = validate_verification(json.dumps(checked), candidate, scope)
                 self.assertEqual(result['final'], candidate)
                 self.assertFalse(result['semantic_proof'])
+
+
+class V3DiagnosticCompactTests(unittest.TestCase):
+    def setUp(self):
+        self.scope = prepare_scope([Evidence('logic.py', 10, 11, 'Located implementation.',
+            'def demo():\n    return 2\n', None, 'parse_ast')], case_id='case-a', attempt_id='attempt-a')
+        self.wire = {'verdict': 'no_defect_supported', 'cause': 'The literal returned is 2.',
+            'when': 'demo is called.', 'refs': ['e1'], 'unknowns': [], 'scope': self.scope.binding}
+        self.checked = {'scope': self.scope.binding, 'coverage': 'complete', 'checks': {
+            'requirement': {'state': 'established', 'refs': []},
+            'trigger': {'state': 'reachable', 'refs': []},
+            'behavior': {'state': 'satisfies', 'refs': ['e1']},
+            'protection': {'state': 'absent', 'refs': []},
+            'counterevidence': {'state': 'not_found', 'refs': []}},
+            'reason': 'The returned literal satisfies the complete stated domain.', 'unknowns': []}
+
+    def parse(self, wire=None, scope=None, **options):
+        return compact_v3.parse_candidate(json.dumps(self.wire if wire is None else wire),
+                                           self.scope if scope is None else scope, **options)
+
+    def verify(self, checked=None, candidate=None, scope=None):
+        return compact_v3.validate_verification(json.dumps(self.checked if checked is None else checked),
+            self.parse() if candidate is None else candidate, self.scope if scope is None else scope)
+
+    def test_three_states_keep_original_candidate_and_require_human_semantic_review(self):
+        for verdict in compact_v3.VERDICTS:
+            with self.subTest(verdict=verdict):
+                wire = self.wire | {'verdict': verdict}
+                checked = copy.deepcopy(self.checked)
+                if verdict == 'supported_defect':
+                    wire.update(cause='The literal is 2 although this case requires 3.', when='Call demo expecting 3.')
+                    checked['checks']['behavior']['state'] = 'violates'
+                elif verdict == 'unknown':
+                    wire.update(cause=None, when=None, refs=[], unknowns=['The required return guarantee is absent.'])
+                    checked['checks']['behavior'] = {'state': 'unknown', 'refs': []}
+                    checked['unknowns'] = wire['unknowns']
+                original = copy.deepcopy(wire)
+                candidate = self.parse(wire)
+                result = self.verify(checked, candidate)
+                self.assertEqual(result['final'], candidate)
+                self.assertEqual(wire, original)
+                self.assertFalse(result['semantic_proof'])
+                self.assertTrue(result['accepted'])
+
+    def test_top_level_branches_reject_inconsistent_candidate_shapes(self):
+        unknown = self.wire | {'verdict': 'unknown', 'cause': None, 'when': None,
+                               'refs': [], 'unknowns': ['A necessary guarantee is absent.']}
+        bad = [unknown | {'cause': 'A guessed explanation.'}, unknown | {'when': 'A guessed trigger.'},
+               unknown | {'unknowns': []}, self.wire | {'unknowns': ['Unresolved guarantee.']},
+               self.wire | {'refs': []}, self.wire | {'cause': None}, self.wire | {'when': ' '},
+               self.wire | {'verdict': 'healthy'}, self.wire | {'extra': True}]
+        for wire in bad:
+            with self.subTest(wire=wire), self.assertRaises(ProviderError):
+                self.parse(wire)
+        schema = compact_v3.protocol_schema(self.scope)
+        self.assertEqual(set(schema), {'oneOf'})
+        self.assertEqual([branch['properties']['verdict']['const'] for branch in schema['oneOf']],
+                         list(compact_v3.VERDICTS))
+        self.assertTrue(all(list(branch['properties'])[0] == 'verdict' for branch in schema['oneOf']))
+
+    def test_complete_long_explanations_do_not_flow_through_legacy_field_limits(self):
+        cause = 'The source returns the literal independently of the supplied domain. ' * 11
+        when = 'A call follows this complete visible function and returns its literal. ' * 6
+        candidate = self.parse(self.wire | {'cause': cause, 'when': when})
+        reason = 'The visible literal matches every call in the stated domain, with no extra assumption. ' * 5
+        result = self.verify(self.checked | {'reason': reason}, candidate)
+        self.assertEqual((result['final']['cause'], result['final']['when'], result['reason']), (cause, when, reason))
+        unknown_wire = self.wire | {'verdict': 'unknown', 'cause': None, 'when': None, 'refs': [],
+            'unknowns': ['The caller reaches an external dependency whose required return relation is absent. ' * 4]}
+        unknown = self.parse(unknown_wire)
+        checked = copy.deepcopy(self.checked)
+        checked['checks']['behavior'] = {'state': 'unknown', 'refs': []}
+        checked['unknowns'] = unknown['unknowns']
+        self.assertEqual(self.verify(checked, unknown)['final'], unknown)
+        self.assertTrue(candidate_quality_warnings(candidate))
+        with self.assertRaises(ProviderError):
+            self.parse(self.wire | {'cause': cause}, version=VERSION)
+
+    def test_total_bytes_empty_text_unicode_and_scope_still_fail(self):
+        explanation = '源码中的常量对所有允许输入保持不变。' * 100
+        valid_content = json.dumps(self.wire | {'cause': explanation}, ensure_ascii=False)
+        self.assertLess(len(valid_content.encode('utf-8')), 8192)
+        self.assertEqual(compact_v3.parse_candidate(valid_content, self.scope)['cause'], explanation)
+        content = json.dumps(self.wire | {'cause': '界' * 2800}, ensure_ascii=False)
+        self.assertLess(len(content), 8192)
+        self.assertGreater(len(content.encode('utf-8')), 8192)
+        with self.assertRaises(ProviderError):
+            compact_v3.parse_candidate(content, self.scope)
+        for wire in [self.wire | {'cause': '界' * 3000}, self.wire | {'cause': '\ud800'},
+                     self.wire | {'cause': ' '}, self.wire | {'scope': 'other-attempt'},
+                     self.wire | {'refs': ['e99']}]:
+            with self.subTest(field=list(wire)), self.assertRaises(ProviderError):
+                self.parse(wire)
+        for reason in [' ', '\ud800', '界' * 3000]:
+            with self.subTest(reason_length=len(reason)), self.assertRaises(ProviderError):
+                self.verify(self.checked | {'reason': reason})
+
+    def test_each_required_ref_state_is_local_and_cannot_hide_empty_or_foreign_refs(self):
+        schema = compact_v3.protocol_schema(self.scope, verifier=True)
+        self.assertNotIn('refs', schema['properties'])
+        for name, states in compact_v3.REQUIRED_REF_STATES.items():
+            for state in states:
+                for refs in [[], ['e99']]:
+                    checked = copy.deepcopy(self.checked)
+                    checked['checks'][name] = {'state': state, 'refs': refs}
+                    with self.subTest(name=name, state=state, refs=refs), self.assertRaises(ProviderError):
+                        self.verify(checked)
+                row = next(branch for branch in schema['properties']['checks']['properties'][name]['oneOf']
+                           if branch['properties']['state']['const'] == state)
+                self.assertEqual(row['properties']['refs']['minItems'], 1)
+                self.assertEqual(row['properties']['refs']['maxItems'], 2)
+                checked = copy.deepcopy(self.checked)
+                checked['checks'][name] = {'state': state, 'refs': ['e1']}
+                self.assertTrue(compact_v3._shape(checked, schema))
+                # A coherent state result is accepted; an explicit conflict is rejected after parsing.
+                self.assertIn(self.verify(checked)['status'], ('accepted', 'rejected'))
+
+    def test_coverage_missing_invalid_or_incomplete_never_publishes_final(self):
+        for checked in [{k: v for k, v in self.checked.items() if k != 'coverage'},
+                        self.checked | {'coverage': 'unknown'}]:
+            with self.assertRaises(ProviderError):
+                self.verify(checked)
+        candidate = self.parse()
+        result = self.verify(self.checked | {'coverage': 'incomplete'}, candidate)
+        self.assertEqual(result['error_code'], 'verification_task_incomplete')
+        self.assertIsNone(result['final'])
+        self.assertEqual(candidate, self.parse())
+        checked = copy.deepcopy(self.checked)
+        checked['checks']['behavior']['state'] = 'violates'
+        self.assertEqual(self.verify(checked)['error_code'], 'verification_cross_field_conflict')
+
+    def test_v3_local_rows_reject_old_flat_refs_unknown_enum_and_fabricated_basis(self):
+        invalid = []
+        for row in ['satisfies', {'state': 'certain', 'refs': ['e1']},
+                    {'state': True, 'refs': ['e1']}, {'state': 'satisfies'},
+                    {'state': 'satisfies', 'refs': 'e1'},
+                    {'state': 'satisfies', 'refs': ['e1'], 'basis': 'Invented per-check prose.'}]:
+            checked = copy.deepcopy(self.checked)
+            checked['checks']['behavior'] = row
+            invalid.append(checked)
+        invalid.append(self.checked | {'refs': {'behavior': ['e1']}})
+        for checked in invalid:
+            with self.subTest(row=checked['checks']['behavior']), self.assertRaises(ProviderError):
+                self.verify(checked)
+
+    def test_zero_and_locator_only_scope_has_no_impossible_reference_branch(self):
+        scopes = [prepare_scope([], case_id='zero', attempt_id='one'),
+                  prepare_scope([Evidence('logic.py', 1, 3, 'Only a locator.', '', None, 'parse_ast')],
+                                case_id='locator', attempt_id='one')]
+        for scope in scopes:
+            with self.subTest(scope=scope.case_id):
+                schema = compact_v3.protocol_schema(scope)
+                self.assertEqual(len(schema['oneOf']), 1)
+                self.assertEqual(schema['oneOf'][0]['properties']['verdict']['const'], 'unknown')
+                wire = self.wire | {'scope': scope.binding, 'verdict': 'unknown', 'cause': None,
+                    'when': None, 'refs': [], 'unknowns': ['The source guarantee necessary for this task is absent.']}
+                candidate = self.parse(wire, scope)
+                checked = {'scope': scope.binding, 'coverage': 'complete', 'checks': {
+                    name: {'state': 'unknown' if 'unknown' in states else 'missing', 'refs': []}
+                    for name, states in CHECK_STATES.items()}, 'reason': 'The necessary implementation guarantee is absent.',
+                    'unknowns': wire['unknowns']}
+                self.assertEqual(self.verify(checked, candidate, scope)['final'], candidate)
+                with self.assertRaises(ProviderError):
+                    self.parse(self.wire | {'scope': scope.binding}, scope)
+                verifier = compact_v3.protocol_schema(scope, verifier=True)
+                for name, row in verifier['properties']['checks']['properties'].items():
+                    for branch in row['oneOf']:
+                        self.assertNotIn(branch['properties']['state']['const'],
+                                         compact_v3.REQUIRED_REF_STATES.get(name, ()))
+                        self.assertEqual(branch['properties']['refs']['maxItems'], 0)
+
+    def test_v3_builders_expose_valid_examples_and_soft_lengths_only(self):
+        request = compact_v3.build_candidate_request(self.scope, question='Does demo satisfy the requirement?',
+            scenario='Every call returns 2.', assumptions=['Ordinary Python integers.'],
+            prompt_variant='requirement_preserving')
+        verification = compact_v3.build_verification_request(request, self.scope, self.parse())
+        for req, verifier in [(request, False), (verification, True)]:
+            self.assertEqual(req.metadata['diagnostic_protocol'], compact_v3.VERSION)
+            self.assertNotIn('maxLength', json.dumps(req.response_schema))
+            self.assertNotIn('max_chars', req.messages[-1]['content'])
+            payload = json.loads(req.messages[-1]['content'])
+            samples = [payload['shape_example']] if verifier else payload['shape_examples']
+            self.assertTrue(all(compact_v3._shape(sample, req.response_schema) for sample in samples))
+            self.assertEqual((req.max_input_tokens, req.max_output_tokens, req.timeout_seconds), (1536, 512, 300))
+        self.assertTrue(request.messages[0]['content'].endswith(REQUIREMENT_PRESERVING_PROMPT))
+        self.assertNotIn('basis', json.dumps(json.loads(verification.messages[-1]['content'])['shape_example']))
+
+    def test_legacy_v2_exact_request_schema_messages_and_limits_remain_reproducible(self):
+        from macr.memory.run_store import encoded
+        request = build_candidate_request(self.scope, question='Does demo satisfy the requirement?',
+            scenario='Every call returns 2.', assumptions=['Ordinary Python integers.'])
+        candidate = parse_candidate(json.dumps(self.wire), self.scope)
+        verifier = compact_v3.build_verification_request(request, self.scope, candidate)
+        # Frozen from 0b3b7b3 using this existing generic fixture, not an evaluation oracle.
+        self.assertEqual(hashlib.sha256(encoded(asdict(request))).hexdigest(),
+                         '569bb61b75443fc4db57d5e84ea4b686be686379a7feaea00d8aa69f445122f3')
+        self.assertEqual(hashlib.sha256(encoded(asdict(verifier))).hexdigest(),
+                         'a159548b1a0b9647950ef67d431a8d195076f510eb04c267c937eab2a3a82a47')
+        self.assertEqual(verifier.metadata['diagnostic_protocol'], VERSION)
+        with self.assertRaisesRegex(ProviderError, 'compact_protocol_mismatch'):
+            compact_v3.build_verification_request(request, self.scope, candidate, version=compact_v3.VERSION)
+        with self.assertRaisesRegex(ProviderError, 'compact_protocol_mismatch'):
+            compact_v3.parse_candidate(json.dumps(self.wire), self.scope, version='unrecognized')
 
 
 if __name__ == '__main__':

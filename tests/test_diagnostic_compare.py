@@ -37,6 +37,22 @@ class DiagnosticCompareTests(unittest.TestCase):
         self.reference = {'version': 'fixture-rubric-v1', 'cases': {
             'defect': 'supported_defect', 'healthy': 'no_defect_supported', 'unknown': 'unknown'}}
 
+    def test_shared_diagnosis_keeps_source_boundary_without_legacy_text_caps(self):
+        value = json.loads(self.response().content)
+        value['cause'] = 'This complete mechanism is supported by the supplied source. ' * 12
+        value['when'] = 'The call reaches the observed statement and returns its concrete result. ' * 6
+        source = json.loads(self.cases[0]['request']['messages'][-1]['content'])['source']
+        self.assertEqual(self.compare.validate_diagnosis(value, source), value)
+        with self.assertRaisesRegex(ProviderError, 'eval_contract_invalid'):
+            self.compare._parse(json.dumps(value), source)
+        outside = copy.deepcopy(value)
+        outside['refs'][0]['end'] = 99
+        with self.assertRaisesRegex(ProviderError, 'eval_citation_invalid'):
+            self.compare.validate_diagnosis(outside, source)
+        invalid = value | {'unknowns': ['A necessary relation remains missing.']}
+        with self.assertRaisesRegex(ProviderError, 'eval_contract_invalid'):
+            self.compare.validate_diagnosis(invalid, source, allow_definite_gaps=False)
+
     def prepare(self):
         return self.compare.prepare_comparison(self.root, self.cases, self.profiles,
             prompt_version='fixture-prompt-v1', dataset_version='fixture-dataset-v1', reference=self.reference)

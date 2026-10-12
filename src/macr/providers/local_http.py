@@ -137,17 +137,47 @@ class LocalHTTPProvider:
                            and profile.capabilities.json_mode else None)
         role = request.metadata.get('role')
         if self.diagnostic_schema_decoding and role in ('diagnostic_candidate', 'diagnostic_verifier'):
-            from macr.evals.diagnostic_compact import VERSION
+            from macr.evals.diagnostic_compact import CHECK_STATES, LEGACY_VERSION, SUPPORTED_VERSIONS
             schema = request.response_schema
-            properties = schema.get('properties') if type(schema) is dict else None
+            version = request.metadata.get('diagnostic_protocol')
             verifier = role == 'diagnostic_verifier'
-            fields = ({'scope', 'coverage', 'checks', 'refs', 'reason', 'unknowns'} if verifier
+            legacy = version == LEGACY_VERSION
+            fields = ({'scope', 'coverage', 'checks', 'reason', 'unknowns'} if verifier
                       else {'scope', 'verdict', 'cause', 'when', 'refs', 'unknowns'})
-            if (request.metadata.get('diagnostic_protocol') != VERSION or request.tools
-                    or type(schema) is not dict or schema.get('type') != 'object'
-                    or type(properties) is not dict or set(properties) != fields
-                    or type(properties['refs']) is not dict
-                    or properties['refs'].get('type') != ('object' if verifier else 'array')):
+            if verifier and legacy:
+                fields.add('refs')
+            branches = ([schema] if verifier or legacy else schema.get('oneOf')) if type(schema) is dict else None
+            valid = (type(version) is str and version in SUPPORTED_VERSIONS and not request.tools
+                     and type(branches) is list and bool(branches))
+            if valid and not (verifier or legacy):
+                valid = schema.get('type', 'object') == 'object' and 'properties' not in schema
+            for branch in branches if valid else []:
+                properties = branch.get('properties') if type(branch) is dict else None
+                valid = (type(branch) is dict and branch.get('type') == 'object'
+                         and type(properties) is dict and set(properties) == fields)
+                if valid and (not verifier or legacy):
+                    valid = (type(properties['refs']) is dict
+                             and properties['refs'].get('type') == ('object' if verifier else 'array'))
+                elif valid:
+                    checks = properties['checks'].get('properties') if type(properties['checks']) is dict else None
+                    valid = (type(checks) is dict and set(checks) == set(CHECK_STATES)
+                             and properties['checks'].get('type') == 'object')
+                    for check in checks.values() if valid else []:
+                        local = check.get('oneOf') if type(check) is dict else None
+                        valid = type(local) is list and bool(local)
+                        for state in local if valid else []:
+                            row = state.get('properties') if type(state) is dict else None
+                            valid = (type(state) is dict and state.get('type') == 'object'
+                                     and type(row) is dict and set(row) == {'state', 'refs'}
+                                     and type(row['state']) is dict
+                                     and type(row['refs']) is dict and row['refs'].get('type') == 'array')
+                            if not valid:
+                                break
+                        if not valid:
+                            break
+                if not valid:
+                    break
+            if not valid:
                 raise ProviderError('model_schema_decoding_request_invalid', failure_kind='invalid_contract')
             response_format = {'type': 'json_schema', 'json_schema': {'schema': schema}}
         try:

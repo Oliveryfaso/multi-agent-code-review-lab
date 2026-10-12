@@ -657,3 +657,95 @@ extra native round was started. Local-only receipts under
 `artifacts/implementation/diagnostic-semantic-contrast-01` bind protocol,
 captures, grading, resources and preservation. Private expected data, case
 payloads, runtime logs, models and personal configuration are not published.
+
+
+## Protocol repair v3 and separate argument facts (2026-10-12)
+
+Batch `diagnostic-protocol-repair-01` fixes three protocol issues as a coupled
+intervention. The supervisor now preserves the production schema's insertion
+order in actual urllib generation bytes; `cache_prompt=false` is its declared
+added field. v3 removes short per-field character caps while retaining the
+8192-byte JSON boundary and the frozen 1536-input/512-output token limits.
+Candidate branches encode mutually exclusive definite/unknown fields, and each
+verifier check carries its own conditional references. Shared host validation
+retains source authority and cross-field coherence without manufacturing five
+basis strings from one reason. Explicit v2 requests/parsing remain reproducible.
+Technical failures still have no final and cannot become healthy or unknown.
+
+A separately frozen change adds exact consumed argument expressions, caller
+locations, UTF-8 byte columns and direct JSON-safe scalar literals to already
+eligible static bindings. Existing control-flow, alias, one-hop and truncation
+guards remain. These observations do not propagate Name values or prove callee
+returns. `static_locate` preview inputs can grow and need fresh token admission;
+this native compact experiment did not receive these descriptors.
+
+Offline checks passed: the P0 workflow selection 342/342 with 77 production
+modules imported, static-facts regression 21/21, and the offline-fixture API
+regression 11/11. Actual-byte/phase/callback interception covered seven focused
+cases with zero native requests. After scoped local merging, 156 distinct
+integration tests passed. Three earlier fixture-allocation failures remain
+recorded; they are not relabelled as passes. The test API now permits an explicit
+128 MiB fixture budget for large allocation units, retaining its 64 MiB default,
+120-second deadline and network/native dispatch blocks. Real local 128 MiB runs
+peaked at 113,901,568 bytes; the batch record budget remains 512 MiB.
+
+The sole cached 4B CPU service generated only the three already-seen development
+candidate/verifier pairs. All six responses used the actual production provider,
+finished `stop`, and had measured usage and qualified release/idle proofs.
+Reasons were complete sentences of 702–900 characters; some candidate clauses
+also exceeded the old caps. Longer complete prose did not establish correctness.
+
+| Development measure | Result |
+| --- | --- |
+| Candidate / verifier business parse | 3/3 / 3/3 |
+| Host retained original final, with human review required | 3/3 |
+| Correct labels | 2/3 |
+| Correct complete actual finals | 1/3 |
+| Complete correct caller paths | 2/3 |
+| Complete prose / faithful candidate facts | 3/3 / 1/3 |
+| Healthy false positive / complete healthy final | 0/1 / 1/1 |
+| Defect label recall / complete defect final | 1/1 / 0/1 |
+| Correct essential abstention | 0/1 |
+| New independent cases generated | 0/3 (not evaluated) |
+| Whole native execution | Failed before the original development gate manifest |
+
+The missing-guarantee case was incorrectly called healthy after both model roles
+changed the signed-only requirement into an AND with the dependency result.
+The healthy case correctly explained the equality guard, inequality predicate
+and actual caller. The defect case found the swapped-argument witness but made
+false claims about the protected branch and other inputs. Coherent states,
+citations and `coverage=complete` did not independently prove these claims;
+`semantic_proof=false` and the human-review boundary remain.
+
+The service stopped with `RuntimeError:read_file_drift` during gate construction.
+No original gate manifest or allow receipt was created, and no fresh generation
+was dispatched. A separate posthoc manifest binds the closed outputs for scoring
+without converting the failed execution into a success. PID, listener and worker
+threads were observed closed. Usage was 6,430 input plus 1,811 output tokens over
+298.79387575 seconds; peak RSS was 5,253,939,200 bytes (below 5.5 GiB), available
+memory was 79% at startup and at least 61% in samples. This added one service
+(cumulative 31), no VM, download, new model or external model API.
+
+A zero-generation reproduction confirmed that the frozen reader can reject a
+new APFS regular file when reading changes only access time. The original failure
+record lacks the path/stat details, so attribution of that specific incident is
+still inferred. The [minimal reader correction](patches/diagnostic-native-reader-atime.patch)
+excludes access time while retaining file identity/content/permission checks and
+adds path/changed-field diagnostics. It is applied to a separate derived helper;
+5/5 offline controls accepted benign reading and rejected content change, atomic
+replacement, symlinks and excessive size. The executed frozen helper, execution
+result, ledger and raw outputs remain unchanged. The corrected helper has no
+native verification, and this batch starts no further service.
+
+Project caches contain Q4_K_M weights for Qwen2.5-1.5B, Qwen2.5-Coder-3B,
+Qwen3-4B-Instruct-2507 and Qwen2.5-Coder-7B. 7B remains a comparison cache;
+this batch used `qwen4b-b11521-cpu`. Ordinary CLI defaults remain `rules` and
+mock diagnostics; model use requires an explicit profile. No 14B was found in
+these configured cache directories; this is not a whole-Mac inventory.
+
+Local-only records under `artifacts/implementation/diagnostic-protocol-repair-01`
+bind freezes, actual wire bytes, closed outputs, independent posthoc scores and
+the derived reader correction. Private case expectations, fresh payloads,
+models, runtime logs, databases and personal configuration are not published.
+Old captures and scores remain unchanged. The coupled P0 changes and seen-only
+results do not demonstrate an isolated semantic gain or independent acceptance.

@@ -63,6 +63,71 @@ class StaticFactsTests(unittest.TestCase):
         self.assertEqual(binding['status'], 'syntactic_binding')
         self.assertTrue(any(f['kind'] == 'assignment_type' and f['name'] == 'amount' and f['type'] == 'float' for f in package['facts']))
 
+    def test_argument_expressions_locations_and_direct_scalars_are_source_faithful(self):
+        source = (
+            'def receiver(left, *, right):\n    return left\n'
+            'def start():\n    amount = 2.5\n'
+            '    receiver(True, right=0)\n'
+            '    receiver(False, right=None)\n'
+            '    receiver("é", right="é\\nline")\n'
+            '    receiver((True,\n              False), right=0)\n'
+            '    return receiver(\n        right=amount,\n        left=True,\n    )\n')
+        package, bundle, _, seed_ids = self.package({'entry.py': source})
+        bindings = [b for b in package['bindings'] if b['callee_name'] == 'receiver']
+        self.assertEqual(len(bindings), 5)
+        first, second, unicode, multiline, keywords = [b['arguments'] for b in bindings]
+        self.assertEqual([a['literal'] for a in first],
+                         [{'type': 'bool', 'value': True}, {'type': 'int', 'value': 0}])
+        self.assertEqual([a['literal'] for a in second],
+                         [{'type': 'bool', 'value': False}, {'type': 'NoneType', 'value': None}])
+        self.assertEqual(unicode[1]['expression'], '"é\\nline"')
+        self.assertEqual(unicode[1]['literal'], {'type': 'str', 'value': 'é\nline'})
+        self.assertEqual(unicode[1]['argument_columns_utf8'],
+                         {'start': len('    receiver("é", right='.encode('utf-8')),
+                          'end': len('    receiver("é", right="é\\nline"'.encode('utf-8'))})
+        self.assertEqual(multiline[0]['expression'], '(True,\n              False)')
+        self.assertEqual((multiline[0]['argument_location']['start'],
+                          multiline[0]['argument_location']['end']), (8, 9))
+        self.assertNotIn('literal', multiline[0])
+        self.assertEqual([(a['parameter'], a['expression'], a['type']) for a in keywords],
+                         [('left', 'True', 'bool'), ('right', 'amount', 'float')])
+        self.assertNotIn('literal', keywords[1])
+        self.assertEqual(keywords[0]['argument_location']['start'], 12)
+        self.assertEqual(keywords[1]['argument_location']['start'], 11)
+        evidence = {e['evidence_id']: e for e in package['evidence']}
+        for binding in bindings:
+            self.assertTrue(all(evidence[e]['snapshot_id'] == bundle.ref.snapshot_id
+                                for e in binding['evidence_ids']))
+            for argument in binding['arguments']:
+                self.assertEqual(argument['argument_location']['file'], 'entry.py')
+                self.assertEqual(argument['argument_location']['symbol_id'], seed_ids[0])
+        self.assertFalse(package['data_flow_proven'])
+        self.assertFalse(package['repository_code_executed'])
+
+    def test_literal_argument_does_not_promote_declared_bool_or_call_result_to_a_value(self):
+        package, _, _, _ = self.package({'entry.py':
+            'def negate(flag):\n    return not flag\n'
+            'def sink(value):\n    return value\n'
+            'def start():\n    derived: bool = negate(True)\n'
+            '    sink(b"bytes")\n    sink(2j)\n    sink(...)\n'
+            '    sink(1e309)\n    sink(-1)\n    sink("\\ud800")\n'
+            '    return sink(derived)\n'})
+        negate = next(b for b in package['bindings'] if b['callee_name'] == 'negate')
+        self.assertEqual(negate['arguments'][0]['expression'], 'True')
+        self.assertEqual(negate['arguments'][0]['literal'], {'type': 'bool', 'value': True})
+        sinks = [b for b in package['bindings'] if b['callee_name'] == 'sink']
+        self.assertEqual([b['arguments'][0]['expression'] for b in sinks],
+                         ['b"bytes"', '2j', '...', '1e309', '-1', '"\\ud800"', 'derived'])
+        self.assertTrue(all('literal' not in b['arguments'][0] for b in sinks))
+        self.assertEqual(sinks[-1]['arguments'][0]['type'], 'unknown')
+        self.assertTrue(any(f['kind'] == 'annotation' and f['annotation'] == 'bool'
+                            and f['declared_only'] for f in package['facts']))
+        self.assertEqual([f['type'] for f in package['facts']
+                          if f['kind'] == 'return_type' and f['name'] == 'negate'], ['unknown'])
+        self.assertTrue(any(u['reason'] == 'call_result_unknown' for u in package['unknowns']))
+        self.assertFalse(package['data_flow_proven'])
+        self.assertFalse(package['repository_code_executed'])
+
     def test_conversion_result_is_unknown_not_the_input_string_type(self):
         package, _, _, _ = self.package({'entry.py':
             "def consume(value):\n    return value\ndef start():\n    converted = int('6')\n    return consume(converted)\n"})

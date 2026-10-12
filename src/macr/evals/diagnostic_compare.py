@@ -140,26 +140,31 @@ def _load(out):
     return out, manifest, reference, state, rows
 
 
-def _parse(content, source, *, normalize_refs=True):
+def validate_diagnosis(answer, source, *, normalize_refs=True,
+                       text_limits=None, allow_definite_gaps=True):
+    """Shared diagnosis/source contract; transport and legacy text limits belong to callers."""
     try:
-        _require(len(content.encode('utf-8')) <= 8192)
-        answer = _object(content)
-    except (ValueError, UnicodeError, ProviderError):
-        raise ProviderError('model_output_invalid') from None
-    try:
-        _require(set(answer) == {'verdict', 'cause', 'when', 'refs', 'unknowns'} and answer['verdict'] in VERDICTS)
+        _require(type(answer) is dict and set(answer) == {'verdict', 'cause', 'when', 'refs', 'unknowns'}
+                 and answer['verdict'] in VERDICTS)
         unknown = answer['verdict'] == 'unknown'
-        for name, limit in [('cause', 600), ('when', 300)]:
+        for name in ('cause', 'when'):
             value = answer[name]
-            _require(value is None if unknown else type(value) is str and 0 < len(value.strip()) <= limit)
+            _require(value is None if unknown else type(value) is str and bool(value.strip())
+                     and (text_limits is None or len(value.strip()) <= text_limits[name]))
+            if type(value) is str:
+                value.encode('utf-8')
         refs, gaps = answer['refs'], answer['unknowns']
         _require(type(refs) is list and len(refs) <= 3 and (refs or unknown)
             and type(gaps) is list and len(gaps) <= 6 and (gaps or not unknown)
-            and all(type(gap) is str and 0 < len(gap.strip()) <= 200 for gap in gaps))
+            and all(type(gap) is str and bool(gap.strip())
+                    and (text_limits is None or len(gap.strip()) <= text_limits['unknowns']) for gap in gaps)
+            and (allow_definite_gaps or unknown or not gaps))
+        for gap in gaps:
+            gap.encode('utf-8')
         for ref in refs:
             _require(type(ref) is dict and set(ref) == {'file', 'start', 'end'} and type(ref['file']) is str
                 and type(ref['start']) is type(ref['end']) is int and 1 <= ref['start'] <= ref['end'])
-    except (ValueError, TypeError, KeyError):
+    except (ValueError, TypeError, KeyError, UnicodeError):
         raise ProviderError('eval_contract_invalid') from None
     for ref in refs:
         try:
@@ -176,8 +181,18 @@ def _parse(content, source, *, normalize_refs=True):
             seen.add(key)
     if not normalize_refs and len(unique) != len(refs):
         raise ProviderError('eval_contract_invalid')
-    answer['refs'] = unique
-    return answer
+    return answer | {'refs': unique}
+
+
+def _parse(content, source, *, normalize_refs=True):
+    """Historical v1 parser, retaining its original byte/field limits."""
+    try:
+        _require(len(content.encode('utf-8')) <= 8192)
+        answer = _object(content)
+    except (ValueError, UnicodeError, ProviderError):
+        raise ProviderError('model_output_invalid') from None
+    return validate_diagnosis(answer, source, normalize_refs=normalize_refs,
+                              text_limits={'cause': 600, 'when': 300, 'unknowns': 200})
 
 
 def record_response(out, profile_id, case_id, *, response=None, error=None, proof=None, provenance):

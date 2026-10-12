@@ -1,0 +1,45 @@
+--- a/artifacts/implementation/diagnostic-protocol-repair-01/native_runner.py
++++ b/artifacts/implementation/diagnostic-protocol-repair-01/native_runner.py
+@@ -57,14 +57,37 @@
+ 
+ 
+ def bounded_bytes(path, limit=MIB):
+-    insist(path.is_absolute() and path.resolve() == path, 'original_regular_path_required')
++    def fail(reason, changed=None):
++        raise RuntimeError(reason + ': ' + json.dumps(
++            {'path': str(path), 'changed_fields': changed or {}}, sort_keys=True))
++
++    def stable(value):
++        names = ('st_dev', 'st_ino', 'st_mode', 'st_nlink', 'st_uid', 'st_gid',
++                 'st_size', 'st_mtime_ns', 'st_ctime_ns', 'st_flags', 'st_gen',
++                 'st_birthtime_ns', 'st_birthtime')
++        return {name: getattr(value, name) for name in names if hasattr(value, name)}
++
++    def check(value, expected, reason):
++        observed = stable(value)
++        changed = {name: {'before': expected[name], 'after': observed[name]}
++                   for name in expected if expected[name] != observed[name]}
++        if changed:
++            fail(reason, changed)
++
++    if not path.is_absolute() or path.resolve() != path:
++        fail('original_regular_path_required')
+     before = path.lstat()
+-    insist(stat.S_ISREG(before.st_mode) and before.st_size <= limit, 'bounded_regular_file_required')
++    if not stat.S_ISREG(before.st_mode) or before.st_size > limit:
++        fail('bounded_regular_file_required', {'st_mode': before.st_mode,
++             'st_size': before.st_size, 'limit': limit})
++    identity = stable(before)
+     with path.open('rb') as stream:
+-        insist(os.fstat(stream.fileno()) == before, 'opened_file_drift')
++        check(os.fstat(stream.fileno()), identity, 'opened_file_drift')
+         raw = stream.read(limit + 1)
+-        insist(os.fstat(stream.fileno()) == before, 'read_file_drift')
+-    insist(path.lstat() == before and len(raw) == before.st_size, 'read_path_drift')
++        check(os.fstat(stream.fileno()), identity, 'read_file_drift')
++    check(path.lstat(), identity, 'read_path_drift')
++    if len(raw) != before.st_size:
++        fail('read_path_drift', {'read_size': {'before': before.st_size, 'after': len(raw)}})
+     return raw
+ 
+ 

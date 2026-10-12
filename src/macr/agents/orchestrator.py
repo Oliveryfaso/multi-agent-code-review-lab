@@ -859,7 +859,8 @@ class Orchestrator:
         trace.diagnosis = {"protocol": VERSION, "task": {key: task[key] for key in
             ("question", "scenario", "assumptions")}, "budget": asdict(budget),
             "status": "preparing", "candidate": None, "verification": None, "final": None,
-            "candidate_request": None, "scope": None, "attempts": [], "semantic_proof": False,
+            "candidate_request": None, "verification_request": None, "scope": None,
+            "attempts": [], "semantic_proof": False,
             "candidate_quality_warnings": [], "candidate_parsed": False, "verification_parsed": False,
             "coverage_role": "model_task_coverage_not_semantic_proof",
             "confidence_role": "retrieval_description_only", "automatic_retries": 0}
@@ -914,11 +915,11 @@ class Orchestrator:
 
     def diagnostic_candidate(self, trace: Trace, *, prompt_variant: str = 'baseline') -> Trace:
         from macr.evals.diagnostic_compact import (
-            VERSION, candidate_quality_warnings, restore_scope, validate_candidate_prompt_variant)
+            SUPPORTED_VERSIONS, candidate_quality_warnings, restore_scope, validate_candidate_prompt_variant)
         data = trace.diagnosis
         if not data or data["status"] != "prepared":
             raise ProviderError("diagnostic_stage_invalid", failure_kind="invalid_contract")
-        if data["protocol"] != VERSION:
+        if type(data["protocol"]) is not str or data["protocol"] not in SUPPORTED_VERSIONS:
             raise ProviderError("diagnostic_protocol_mismatch", failure_kind="invalid_contract")
         validate_candidate_prompt_variant(prompt_variant)
         scope = restore_scope(data["scope"])
@@ -926,7 +927,8 @@ class Orchestrator:
             raise ProviderError("compact_scope_mismatch", failure_kind="invalid_contract")
         data["status"] = "candidate_running"
         candidate, response, error, request = self.solver.diagnostic_candidate(
-            scope, **data["task"], model_budget=ModelBudget(**data["budget"]), prompt_variant=prompt_variant)
+            scope, **data["task"], model_budget=ModelBudget(**data["budget"]),
+            prompt_variant=prompt_variant, version=data["protocol"])
         data.update(candidate=candidate, candidate_request=asdict(request),
                     candidate_parsed=candidate is not None and error is None,
                     candidate_quality_warnings=candidate_quality_warnings(candidate) if candidate is not None else [])
@@ -942,24 +944,24 @@ class Orchestrator:
         return trace
 
     def verify_diagnostic(self, trace: Trace) -> Trace:
-        from macr.evals.diagnostic_compact import VERSION, restore_scope
+        from macr.evals.diagnostic_compact import SUPPORTED_VERSIONS, restore_scope
         data = trace.diagnosis
         if not data or data["status"] != "candidate_completed":
             raise ProviderError("diagnostic_stage_invalid", failure_kind="invalid_contract")
-        if data["protocol"] != VERSION:
+        if type(data["protocol"]) is not str or data["protocol"] not in SUPPORTED_VERSIONS:
             raise ProviderError("diagnostic_protocol_mismatch", failure_kind="invalid_contract")
         scope = restore_scope(data["scope"])
         request = ModelRequest(**data["candidate_request"])
-        if request.metadata.get("diagnostic_protocol") != VERSION:
+        if request.metadata.get("diagnostic_protocol") != data["protocol"]:
             raise ProviderError("diagnostic_protocol_mismatch", failure_kind="invalid_contract")
         payload = json.loads(request.messages[-1]["content"])
         if scope.case_id != trace.task_id or any(payload[key] != data["task"][key]
                 for key in ("question", "scenario", "assumptions")):
             raise ProviderError("compact_scope_mismatch", failure_kind="invalid_contract")
         data["status"] = "verification_running"
-        verification, response, error = self.solver.diagnostic_verification(
+        verification, response, error, verification_request = self.solver.diagnostic_verification(
             scope, request, data["candidate"], model_budget=ModelBudget(**data["budget"]))
-        data["verification"] = verification
+        data.update(verification=verification, verification_request=asdict(verification_request))
         data["verification_parsed"] = verification is not None and error is None
         self._record_diagnostic_attempt(trace, "diagnostic_verifier", response, error)
         if error:

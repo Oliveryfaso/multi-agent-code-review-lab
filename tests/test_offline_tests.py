@@ -122,6 +122,48 @@ class OfflineLifecycleTests(unittest.TestCase):
 
         report = runner.run_suite(synthetic_suite(action), runs_root=base / 'runs')
         self.assertEqual(report['status'], 'passed')
+        self.assertEqual(report['limits']['allocated_bytes'], 64 * runner.MIB)
+
+    def test_explicit_128mib_budget_keeps_native_dispatch_blocked(self):
+        runner = self.runner()
+        base = fixtures.fixture_root()
+
+        def action(case):
+            import socket
+            import subprocess
+            fixtures.write_files(fixtures.fixture_root(), {'tiny.txt': 'tiny'})
+            with case.assertRaisesRegex(RuntimeError, 'native_dispatch_forbidden'):
+                subprocess.Popen(['never-execute'])
+            with case.assertRaisesRegex(RuntimeError, 'native_dispatch_forbidden'):
+                socket.create_connection(('127.0.0.1', 1))
+
+        # Exercise the boundary without physically allocating 128 MiB.
+        with patch.object(runner, 'tree_usage', return_value={
+                'files': 1, 'logical_bytes': 4, 'allocated_bytes': 128 * runner.MIB}):
+            report = runner.run_suite(synthetic_suite(action), runs_root=base / 'runs',
+                                      max_allocated_bytes=128 * runner.MIB)
+        self.assertEqual(report['status'], 'passed')
+        self.assertEqual(report['limits']['allocated_bytes'], 128 * runner.MIB)
+        self.assertEqual(report['allocated_peak_bytes'], 128 * runner.MIB)
+        self.assertEqual(report['cleanup'], 'removed_owned_tmp')
+
+    def test_budget_above_128mib_rejects_before_mutation_or_dispatch(self):
+        runner = self.runner()
+        base = fixtures.fixture_root()
+        called = []
+        with patch.object(Path, 'mkdir') as mkdir, \
+             patch.object(runner, 'offline_context') as context, \
+             patch('subprocess.Popen') as process, \
+             patch('socket.create_connection') as socket:
+            with self.assertRaisesRegex(ValueError, 'allocated bytes <= 128 MiB'):
+                runner.run_suite(synthetic_suite(lambda case: called.append(True)),
+                                 runs_root=base / 'runs',
+                                 max_allocated_bytes=128 * runner.MIB + 1)
+            mkdir.assert_not_called()
+            context.assert_not_called()
+            process.assert_not_called()
+            socket.assert_not_called()
+        self.assertFalse(called)
 
     def test_allocation_threshold_stops_before_tests_and_keeps_run(self):
         runner = self.runner()

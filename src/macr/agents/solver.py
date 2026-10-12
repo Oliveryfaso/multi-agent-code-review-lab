@@ -8,6 +8,8 @@ from macr.providers.base import LLMProvider, LLMResponse, ModelBudget, ModelRequ
 from macr.prompts import system_prompt
 from macr.schemas import AgentAnswer, Evidence, Plan
 
+_DEFAULT_DIAGNOSTIC_VERSION = object()
+
 
 class SolverAgent:
     OUTPUT_SCHEMA = {
@@ -207,15 +209,16 @@ class SolverAgent:
 
     def diagnostic_candidate(self, scope, *, question: str, scenario: str,
                              assumptions: list[str], model_budget: ModelBudget,
-                             prompt_variant: str = 'baseline'):
-        from macr.evals.diagnostic_compact import build_candidate_request, parse_candidate
+                             prompt_variant: str = 'baseline', version=_DEFAULT_DIAGNOSTIC_VERSION):
+        from macr.evals.diagnostic_compact import VERSION, build_candidate_request, parse_candidate
+        if version is _DEFAULT_DIAGNOSTIC_VERSION:
+            version = VERSION
         request = build_candidate_request(scope, question=question, scenario=scenario,
-                                          assumptions=assumptions, prompt_variant=prompt_variant)
+                                          assumptions=assumptions, prompt_variant=prompt_variant, version=version)
         request.metadata.update({"role": "diagnostic_candidate", "run_id": scope.case_id,
                                  "attempt_id": scope.attempt_id})
-        result, response, error = self._diagnostic_call(
-            request, lambda content: parse_candidate(content, scope), model_budget)
-        return result, response, error, model_budget.apply(request)
+        return self._diagnostic_call(
+            request, lambda content: parse_candidate(content, scope, version=version), model_budget)
 
     def diagnostic_verification(self, scope, candidate_request: ModelRequest, candidate: dict,
                                 *, model_budget: ModelBudget):
@@ -223,26 +226,27 @@ class SolverAgent:
         request = build_verification_request(candidate_request, scope, candidate)
         request.metadata.update({"role": "diagnostic_verifier", "run_id": scope.case_id,
                                  "attempt_id": scope.attempt_id})
-        return self._diagnostic_call(request, lambda content: validate_verification(content, candidate, scope),
-                                     model_budget)
+        return self._diagnostic_call(request, lambda content: validate_verification(
+            content, candidate, scope, version=request.metadata['diagnostic_protocol']), model_budget)
 
     def _diagnostic_call(self, request: ModelRequest, parse, budget: ModelBudget):
         response = None
         try:
+            request = budget.apply(request)
             if self.provider is None:
                 raise ProviderError("provider_unavailable", failure_kind="invalid_contract")
-            response = invoke(self.provider, budget.apply(request))
+            response = invoke(self.provider, request)
             if (not isinstance(response.finish_reason, str)
                     or type(response.tool_calls) is not list or response.tool_calls):
                 raise ProviderError("provider_contract", response=response, failure_kind="invalid_contract")
             if response.finish_reason not in {"stop", "end_turn"}:
                 raise ProviderError("model_output_incomplete", response=response, failure_kind="incomplete")
-            return parse(response.content), response, None
+            return parse(response.content), response, None, request
         except ProviderError as error:
             # Failed output keeps its known envelope; it never becomes a candidate/final report.
             return None, error.response or response, {
                 "error_type": error.code, "failure_kind": error.failure_kind or "invalid_contract",
-            }
+            }, request
 
     def _failure(self, code: str, kind: str, retryable: bool) -> AgentAnswer:
         return AgentAnswer(

@@ -7,6 +7,7 @@ from macr.evals.diagnostic_compare import OUTPUT_SCHEMA
 from macr.evals.diagnostic_dataset import SYSTEM
 from macr.evals.diagnostic_verification import (
     build_verification_request, run_pipeline, scope_sha256, validate_verification,
+    validate_assessment, validate_check_rows,
 )
 from macr.providers.base import ModelRequest, ModelResponse, ProviderError
 
@@ -205,6 +206,44 @@ class DiagnosticVerificationTests(unittest.TestCase):
         self.candidate['unknowns'] = ['Unresolved requirement.']
         with self.assertRaisesRegex(ProviderError, 'verification_candidate_gaps'):
             validate_verification(json.dumps(self.checked), self.candidate, self.scope['source'])
+
+    def test_shared_actual_check_rows_do_not_require_fabricated_basis(self):
+        checks = {name: {key: value for key, value in row.items() if key != 'basis'}
+                  for name, row in self.checked['checks'].items()}
+        validate_check_rows(checks, self.scope['source'])
+        self.assertEqual(validate_assessment(checks, 'no_defect_supported', [],
+            candidate_verdict='no_defect_supported')['behavior'], 'satisfies')
+        missing = copy.deepcopy(checks)
+        missing['behavior']['refs'] = []
+        with self.assertRaisesRegex(ProviderError, 'verification_citation_missing'):
+            validate_check_rows(missing, self.scope['source'])
+        outside = copy.deepcopy(checks)
+        outside['counterevidence']['refs'] = [self.ref | {'end': 99}]
+        with self.assertRaisesRegex(ProviderError, 'eval_citation_invalid'):
+            validate_check_rows(outside, self.scope['source'])
+
+    def test_shared_truth_table_preserves_three_assessments_and_conflict_codes(self):
+        checks = {name: {key: value for key, value in row.items() if key != 'basis'}
+                  for name, row in self.checked['checks'].items()}
+        checks['behavior']['state'] = 'violates'
+        checks['counterevidence']['state'] = 'does_not_refute'
+        validate_assessment(checks, 'supported_defect', [], candidate_verdict='supported_defect')
+        with self.assertRaisesRegex(ProviderError, 'verification_candidate_conflict'):
+            validate_assessment(checks, 'supported_defect', [], candidate_verdict='unknown')
+        checks['protection']['state'] = 'effective'
+        with self.assertRaisesRegex(ProviderError, 'verification_cross_field_conflict'):
+            validate_assessment(checks, 'supported_defect', [], candidate_verdict='supported_defect')
+        checks['behavior']['state'] = 'unknown'
+        validate_assessment(checks, 'unknown', ['The necessary return guarantee is missing.'],
+                            candidate_verdict='unknown')
+        with self.assertRaisesRegex(ProviderError, 'verification_cross_field_conflict'):
+            validate_assessment(checks, 'unknown', [], candidate_verdict='unknown')
+
+    def test_historical_v1_basis_limit_is_still_explicit(self):
+        checked = copy.deepcopy(self.checked)
+        checked['checks']['behavior']['basis'] = 'A complete explanation beyond the legacy basis field. ' * 3
+        with self.assertRaisesRegex(ProviderError, 'verification_contract_invalid'):
+            validate_verification(json.dumps(checked), self.candidate, self.scope['source'])
 
 
 if __name__ == '__main__':

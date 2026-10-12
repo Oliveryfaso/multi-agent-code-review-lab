@@ -8,7 +8,9 @@ from __future__ import annotations
 
 import ast
 from collections import Counter
+from copy import copy
 from dataclasses import asdict
+from math import isfinite
 
 from .context import ContextReader
 from .records import ContextRequest, IndexQuery, Location
@@ -61,7 +63,7 @@ def _module_bindings(tree):
     return counts, conditional
 
 
-def _bind_arguments(call, function, known):
+def _bind_arguments(call, function, known, snippet):
     args = function.args
     if args.vararg or args.kwarg or args.defaults or any(x is not None for x in args.kw_defaults):
         return None, 'signature_unsupported'
@@ -79,9 +81,39 @@ def _bind_arguments(call, function, known):
         values[keyword.arg] = keyword.value
     if set(values) != set(required):
         return None, 'argument_binding_unknown'
-    return [{'parameter': name, 'type': _expression_type(values[name], known),
-             'type_basis': 'source_expression' if _expression_type(values[name], known) != 'unknown' else 'unknown'}
-            for name in required], None
+    arguments = []
+    location = snippet['location']
+    for name in required:
+        value = values[name]
+        if not location['start'] <= value.lineno <= value.end_lineno <= location['end']:
+            return None, 'argument_source_unavailable'
+        # AST columns are UTF-8 byte offsets; extract from consumed source only.
+        relative = copy(value)
+        relative.lineno -= location['start'] - 1
+        relative.end_lineno -= location['start'] - 1
+        expression = ast.get_source_segment(snippet['text'], relative)
+        if expression is None:
+            return None, 'argument_source_unavailable'
+        value_type = _expression_type(value, known)
+        argument = {'parameter': name, 'type': value_type,
+            'type_basis': 'source_expression' if value_type != 'unknown' else 'unknown',
+            'expression': expression,
+            'argument_location': asdict(Location(location['file'], value.lineno, value.end_lineno,
+                                                location['symbol_id'])),
+            'argument_columns_utf8': {'start': value.col_offset, 'end': value.end_col_offset}}
+        if isinstance(value, ast.Constant):
+            literal = value.value
+            safe = type(literal) in (type(None), bool, int, str) or (
+                type(literal) is float and isfinite(literal))
+            if type(literal) is str:
+                try:
+                    literal.encode('utf-8')
+                except UnicodeError:
+                    safe = False
+            if safe:
+                argument['literal'] = {'type': type(literal).__name__, 'value': literal}
+        arguments.append(argument)
+    return arguments, None
 
 
 def collect_static_facts(bundle, index, seed_symbol_ids: list[str], *, max_context_bytes: int = 1200) -> dict:
@@ -146,6 +178,7 @@ def collect_static_facts(bundle, index, seed_symbol_ids: list[str], *, max_conte
     selected_ids = {s.symbol_id for s in selected}
     evidence = {snippet['location']['symbol_id']: record['evidence_id']
                 for snippet, record in zip(context.snippets, packet['evidence'])}
+    snippets = {snippet['location']['symbol_id']: snippet for snippet in context.snippets}
     modules, functions, straight = {}, {}, {}
     for symbol in selected:
         if symbol.file not in modules:
@@ -218,7 +251,7 @@ def collect_static_facts(bundle, index, seed_symbol_ids: list[str], *, max_conte
                 if root_name is None or counts[root_name] != 1 or root_name in conditional:
                     unknown('alias_or_module_binding_ambiguous', symbol.symbol_id, location)
                     continue
-                arguments, reason = _bind_arguments(call, callee, known)
+                arguments, reason = _bind_arguments(call, callee, known, snippets[symbol.symbol_id])
                 if reason:
                     unknown(reason, symbol.symbol_id, location)
                     continue
