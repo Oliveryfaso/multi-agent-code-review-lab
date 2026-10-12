@@ -1011,9 +1011,12 @@ class Orchestrator:
             "semantic_proof": False, "confidence_role": "retrieval_description_only",
             "rejection_code": data.get("rejection_code")}
         trace.metrics["run_outcome"] = {"status": state, "end_to_end_completed": complete}
-        trace.metrics["final_review"] = {"ok": complete, "human_review_required": not complete,
+        # Contract/model-state acceptance does not establish semantic task coverage.
+        trace.metrics["final_review"] = {"ok": False, "human_review_required": True,
             "issues": [data["error_type"]] if data.get("error_type") else
-                      [data["rejection_code"]] if data.get("rejection_code") else [], "diagnostic_mode": True}
+                      [data["rejection_code"]] if data.get("rejection_code") else
+                      ["contract/source checks passed; semantic/task coverage needs review"] if complete else [],
+            "diagnostic_mode": True}
         self._state(trace, data["status"], state, "Diagnostic stage persisted; no automatic recovery")
         self.trace_store.save(trace)
 

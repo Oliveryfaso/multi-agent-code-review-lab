@@ -1,6 +1,7 @@
 """Real diagnostic retrieval, solver, host gating and persistence; zero native calls."""
 from copy import deepcopy
 from dataclasses import replace
+import io
 import json
 import unittest
 from unittest.mock import patch
@@ -144,6 +145,8 @@ class DiagnosticOrchestratorTests(unittest.TestCase):
         self.assertTrue(trace.diagnosis["verification_parsed"])
         self.assertEqual(trace.diagnosis["verification"]["coverage"], "complete")
         self.assertTrue(trace.metrics["run_outcome"]["end_to_end_completed"])
+        self.assertFalse(trace.metrics["final_review"]["ok"])
+        self.assertTrue(trace.metrics["final_review"]["human_review_required"])
         self.assertEqual(trace.metrics["diagnostic"]["automatic_retries"], 0)
         payloads = [json.loads(request.messages[-1]["content"]) for request in provider.requests]
         self.assertEqual(payloads[0]["source"], payloads[1]["source"])
@@ -155,6 +158,7 @@ class DiagnosticOrchestratorTests(unittest.TestCase):
             self.assertEqual(request.tools, [])
         stored = self.persisted(trace)
         self.assertEqual(stored["diagnosis"]["final"], trace.diagnosis["candidate"])
+        self.assertEqual(stored["metrics"]["final_review"], trace.metrics["final_review"])
         self.assertEqual(len(stored["llm_calls"]), 2)
         self.assertTrue(any(row["kind"] == "final" for row in stored["board"]["diagnostic"]))
         graph = stored["board"]["workflow"][0]["payload"]
@@ -202,6 +206,7 @@ class DiagnosticOrchestratorTests(unittest.TestCase):
         self.assertIsNone(trace.answer)
         self.assertFalse(trace.metrics["run_outcome"]["end_to_end_completed"])
         self.assertEqual(trace.metrics["final_review"]["issues"], [trace.diagnosis["verification"]["error_code"]])
+        self.assertTrue(self.persisted(trace)["metrics"]["final_review"]["human_review_required"])
         # Rejection follows explicit contradictory checks, not an NLP relevance proof.
         self.assertFalse(trace.diagnosis["verification"]["semantic_proof"])
 
@@ -360,6 +365,9 @@ class DiagnosticOrchestratorTests(unittest.TestCase):
         self.assertEqual(payloads[1]["candidate"]["when"], trace.diagnosis["candidate"]["when"])
         self.assertNotIn("candidate_quality_warnings", payloads[1]["candidate"])
         self.assertEqual(trace.diagnosis["final"], trace.diagnosis["candidate"])
+        self.assertTrue(trace.metrics["run_outcome"]["end_to_end_completed"])
+        self.assertFalse(trace.metrics["final_review"]["ok"])
+        self.assertTrue(self.persisted(trace)["metrics"]["final_review"]["human_review_required"])
         return trace
 
     def test_three_layer_correct_boolean_caller_with_three_refs_completes(self):
@@ -610,6 +618,8 @@ class DiagnosticOrchestratorTests(unittest.TestCase):
         self.assertEqual(len(provider.requests), 1)
 
     def test_actual_production_parser_success_through_full_entry(self):
+        from macr.cli import _print_trace
+        from macr.viewer import TraceViewer
         provider, transport = self.production([candidate, verification])
         trace = self.run_agent(provider)
         self.assertEqual(trace.diagnosis["status"], "accepted")
@@ -618,6 +628,31 @@ class DiagnosticOrchestratorTests(unittest.TestCase):
         self.assertEqual(trace.llm_calls[0]["provider"], "local_http")
         self.assertEqual(trace.llm_calls[0]["usage_kind"], "measured")
         self.assertEqual(restore_scope(trace.diagnosis["scope"]).source[0].body, SOURCE)
+        self.assertTrue(trace.metrics["run_outcome"]["end_to_end_completed"])
+        self.assertFalse(trace.metrics["final_review"]["ok"])
+        self.assertTrue(trace.metrics["final_review"]["human_review_required"])
+        self.assertFalse(trace.diagnosis["semantic_proof"])
+        stored = self.persisted(trace)
+        self.assertEqual(stored["metrics"]["final_review"], trace.metrics["final_review"])
+        review_issue = "contract/source checks passed; semantic/task coverage needs review"
+        self.assertEqual(stored["metrics"]["final_review"]["issues"], [review_issue])
+        output = io.StringIO()
+        with patch("sys.stdout", output):
+            _print_trace(trace, as_json=False)
+        self.assertIn("Human Review Required", output.getvalue())
+        self.assertIn(review_issue, output.getvalue())
+        self.assertNotIn("Rerun with --clarification", output.getvalue())
+        rendered = TraceViewer(root=fixture_root(), trace_path=self.store.root / f"{trace.task_id}.json").render()
+        self.assertIn("Final Audit Needs Review", rendered)
+        self.assertIn(review_issue, rendered)
+        generic = deepcopy(trace)
+        generic.metrics["final_review"] = {"ok": False, "human_review_required": True,
+                                          "questions": ["Which retrieved source needs clarification?"]}
+        output = io.StringIO()
+        with patch("sys.stdout", output):
+            _print_trace(generic, as_json=False)
+        self.assertIn("Rerun with --clarification", output.getvalue())
+        self.assertIn(generic.metrics["final_review"]["questions"][0], output.getvalue())
 
     def test_production_length_invalid_json_shape_and_timeout_have_no_repair_or_fallback(self):
         for content, finish, code, kind in (("{\"verdict\":", "length", "model_output_incomplete", "incomplete"),

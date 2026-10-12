@@ -433,3 +433,104 @@ template or token-count requests. The owned process, listener and monitor
 threads closed. No VM, download, external model API or additional round was
 used. Full Offline Core passed 323/323; overlapping related and scripted
 boundary selections are not summed or counted as native semantic evidence.
+
+## Publication boundary and six independent cases: 2026-10-12
+
+**Independent acceptance failed: 2/6 final diagnoses met the frozen minimum
+semantic requirement, although the interface completed 6/6.** This batch does
+not establish improved diagnostic accuracy or successful three-state handling.
+
+The previous development result exposed a deterministic publication error:
+diagnostic host acceptance set `final_review.ok=true` and suppressed human
+review, even though the diagnostic branch does not invoke the final reviewer.
+The source-bound validator checks shape, allowed references and model-state
+coherence; `coverage=complete` is a model judgment and `semantic_proof=false`
+remains the boundary. It cannot establish complete caller coverage, per-claim
+citation support or complete explanatory prose.
+
+The diagnostic publisher now always records `final_review.ok=false` and
+`human_review_required=true`. An accepted result explains that its contract and
+source checks passed but semantic/task coverage needs review. The CLI prints
+that diagnostic issue, and the existing viewer shows its review warning.
+The original candidate, verifier, verdict, host acceptance and interface
+completion remain intact. Generic clarification behavior is unchanged. No
+minimum-reference threshold, keyword verdict repair, prompt, schema, field
+limit, sampling parameter or model profile was changed for this batch.
+
+Before new inputs were used, implementation and the exact Offline Core
+selection were frozen. A separate author prepared six unused cases, balanced
+as two defects, two healthy implementations and two essential dependency gaps.
+All eighteen local functions were complete; the gap cases lack a necessary
+external behavioral guarantee rather than a function snippet. Public inputs
+were separated from a private expected/scoring file, neither supplied to the
+model nor used as capacity-preflight answers. Capacity used the production
+syntax examples. A different ordinary reviewer scored the retained raw
+candidate and final against the precommitted rubric. No model validator,
+post-output tuning, repair, retry or additional native round was used.
+
+| Measure | Candidate | Retained final |
+| --- | --- | --- |
+| Business contract and source binding | 6/6 | 6/6 two-stage interface completion |
+| Correct three-state label | 3/6 | 3/6 |
+| Minimum whole-task semantics | 2/6 | 2/6 |
+| Defect causal/caller examples satisfied | 2/2 | 2/2 |
+| Healthy false-defect reports | 1/2 | 1/2 |
+| Correct healthy label | 1/2 | 1/2 |
+| Healthy whole-task minimum, including requested caller | 0/2 | 0/2 |
+| Correct essential-gap unknown | 0/2 | 0/2 |
+| Complete candidate explanatory prose | 4/6 | 4/6, unchanged candidate |
+| Correct complete caller explanation | 2/6 | 2/6 |
+| Explicit references to all caller blocks | 5/6 | 5/6 |
+| Complete verifier reason | Not applicable | 0/6 |
+
+The two defect examples describe concrete actual-versus-required caller
+outcomes. One still misstates an argument position in `cause`, while its
+`when` already contains the correct concrete counterexample; its trailing
+clause is unfinished. Minimum causal success does not erase these quality
+faults or constitute a population recall estimate.
+
+One healthy result correctly covers the complete boolean domain but omits the
+requested entry-caller connection. It is therefore a correct label with
+partial task coverage. Its partial reference coverage is recorded separately;
+no new three-reference gate causes that failure. The other healthy example is
+misread as a defect: the model says a false condition enters its branch and
+reports the wrong result. The verifier repeats and accepts that source error.
+
+Both essential-gap results are labelled healthy. They reason conditionally
+about unknown callback outputs, then claim the stated requirement is satisfied
+without the missing dependency guarantee. The verifier also accepts those
+claims. A fixed callable returning a bool does not establish its necessary
+input/output relation. This is unsupported certainty, not a technical failure
+or a correct unknown assessment.
+
+Every native response was complete structured JSON with `finish_reason=stop`:
+12/12, with no `length` finish. All six verifier reasons are 96 characters and
+end mid-clause; two candidate explanations are also unfinished. Character
+caps and a native stop do not establish linguistically complete prose, and
+these captures do not prove a native token-length cutoff. The accepted final
+is exactly the original candidate in all six cases; verifier prose does not
+repair a missing or incorrect candidate explanation. Both raw captures and
+independent scoring remain unchanged, and all six cases are marked seen for
+future development rather than reusable independent acceptance.
+
+Actual cost was one cached 4B CPU service (cumulative start 29), twelve unique
+generations and 13,737 measured tokens: 11,609 input plus 2,128 output. The
+whole run including cleanup took 422.49 seconds. All 89 HTTP events were
+recorded: twelve generations and seventy-seven health, identity, template or
+token-count calls. Per-call native idle-release evidence, cache-disabled
+usage and raw-to-typed accounting were audited. The owned process, listener
+and monitor threads closed. RSS peaked at 5.23 GiB under the 5.5 GiB limit;
+available memory was 82% at startup and at least 76% in recorded runtime
+samples. No VM, download or external model API was used. The legacy trace
+cost rollup still shows zero prompt tokens in this path; these measured
+native totals are the cost evidence, and that rollup remains a known gap.
+
+Full Offline Core passed 323/323 before acceptance, and a real CLI/viewer
+integration check passed after applying the patch in the main workspace.
+Overlapping scripted selections are not added to the native denominators.
+These checks verify the deterministic publication fix; they do not reverse
+the independent acceptance failure. Local-only receipts under
+`artifacts/implementation/diagnostic-three-state-01` bind the input/rubric
+hashes, frozen implementation, twelve request/response pairs, scoring,
+resource audit and preservation checks. Runtime logs, private scoring data,
+model assets and personal configuration are excluded from publication.

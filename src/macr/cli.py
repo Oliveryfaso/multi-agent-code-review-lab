@@ -263,9 +263,14 @@ def _print_trace(trace, as_json: bool) -> None:
             print(f"- {hotspot.get('file')}:{hotspot.get('line')}{symbol} [{hotspot.get('kind')}] {hotspot.get('reason')}")
     if final_review.get("human_review_required"):
         print("\n## Human Review Required")
-        for question in final_review.get("questions", []):
-            print(f"- {question}")
-        print("\nRerun with --clarification \"...\" after answering the relevant question.")
+        if final_review.get("diagnostic_mode"):
+            for issue in final_review.get("issues", []):
+                print(f"- {issue}")
+            print("\nReview the captured source, task coverage and diagnostic outcome before using this result.")
+        else:
+            for question in final_review.get("questions", []):
+                print(f"- {question}")
+            print("\nRerun with --clarification \"...\" after answering the relevant question.")
     print(f"\nTrace: traces/{trace.task_id}.json")
 
 
