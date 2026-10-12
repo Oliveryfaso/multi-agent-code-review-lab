@@ -62,7 +62,7 @@ def otool_rpaths(capture,*,path):
         rpaths.append(value[1])
     return rpaths
 
-def validate_preflight(version,help_text,argv,*,port_mode='fixed',output_tokens=384):
+def validate_preflight(version,help_text,argv,*,port_mode='fixed',output_tokens=384,context_tokens=2048):
     """Reject the old verbosity1 argv before an owner can spawn a model."""
     _require(type(version) is str and re.match(r'^version: 0\.6\.0-dev \(build 11521, commit b42b7e6d3\)(?:\r?\n|$)',version),'runtime_version')
     _require(type(help_text) is str and len(help_text.encode())<=1024**2,'runtime_help')
@@ -70,9 +70,10 @@ def validate_preflight(version,help_text,argv,*,port_mode='fixed',output_tokens=
         _require(len(re.findall(r'^\s*- '+str(level)+': '+re.escape(name)+r'\s*$',help_text,re.M))==1,'log_level_semantics')
     _require(type(argv) is list and all(type(s) is str for s in argv),'argv_invalid')
     _require(port_mode in ('fixed','kernel'),'port_mode')
-    _require(type(output_tokens) is int and 0<output_tokens<2048,'output_token_budget')
+    _require(type(context_tokens) is int and context_tokens>0,'context_token_budget')
+    _require(type(output_tokens) is int and 0<output_tokens<context_tokens,'output_token_budget')
     pairs={'--log-verbosity':'5','--log-colors':'off','--host':'127.0.0.1','--port':'0' if port_mode=='kernel' else '18080','--device':'none','--n-gpu-layers':'0',
-        '--cache-ram':'0','--threads':'2','--threads-batch':'2','--threads-http':'2','--parallel':'1','--ctx-size':'2048','--predict':str(output_tokens),'--chat-template':'chatml',
+        '--cache-ram':'0','--threads':'2','--threads-batch':'2','--threads-http':'2','--parallel':'1','--ctx-size':str(context_tokens),'--predict':str(output_tokens),'--chat-template':'chatml',
         '--batch-size':'128','--ubatch-size':'128','--temp':'0','--top-p':'1','--top-k':'0','--min-p':'0','--seed':'0'}
     flags=['--no-log-prefix','--no-log-timestamps','--no-log-jsonl','--offline','--no-cache-prompt','--no-context-shift','--no-webui','--no-agent','--no-kv-offload','--no-cont-batching','--no-warmup']
     value_flags=set(pairs)|{'--model','--alias'};seen=set();i=1
@@ -119,28 +120,33 @@ def listener_port(log,*,pid,returncode,output):
     _require(int(match[1])==ports[0],'listener_port_drift')
     return ports[0]
 
-def validate_model(props,models,*,weight_path,model_id):
+def validate_model(props,models,*,weight_path,model_id,context_tokens=2048):
+    _require(type(context_tokens) is int and context_tokens>0,'context_token_budget')
     _require(type(props) is dict and type(models) is dict and type(props.get('total_slots')) is int and props['total_slots']==1
         and props.get('model_path')==weight_path and type(props.get('default_generation_settings')) is dict
-        and type(props['default_generation_settings'].get('n_ctx')) is int and props['default_generation_settings']['n_ctx']==2048,'native_context_identity')
+        and type(props['default_generation_settings'].get('n_ctx')) is int and props['default_generation_settings']['n_ctx']==context_tokens,'native_context_identity')
     data=models.get('data');_require(type(data) is list and len(data)==1 and type(data[0]) is dict and data[0].get('id')==model_id,'native_alias')
 
-def validate_prompt(messages,template,tokenized):
+def validate_prompt(messages,template,tokenized,*,max_input_tokens=1536):
+    _require(type(max_input_tokens) is int and max_input_tokens>0,'input_token_budget')
     _require(type(messages) is list and len(messages)==2 and all(type(m) is dict and set(m)=={'role','content'} and type(m['content']) is str for m in messages)
         and [m['role'] for m in messages]==['system','user'],'native_prompt_roles')
     expected=''.join('<|im_start|>'+m['role']+'\n'+m['content']+'<|im_end|>\n' for m in messages)+'<|im_start|>assistant\n'
     _require(type(template) is dict and template.get('prompt')==expected,'native_template_mismatch')
     ids=tokenized.get('tokens') if type(tokenized) is dict else None
-    _require(type(ids) is list and 0<len(ids)<=1536 and all(type(t) is int and t>=0 for t in ids) and ids.count(151644)==3 and ids.count(151645)==2,'native_tokens_or_context')
+    _require(type(ids) is list and 0<len(ids)<=max_input_tokens and all(type(t) is int and t>=0 for t in ids) and ids.count(151644)==3 and ids.count(151645)==2,'native_tokens_or_context')
     return len(ids)
 
-def validate_response(raw,*,http_status,model_id,input_tokens,max_output_tokens=384):
+def validate_response(raw,*,http_status,model_id,input_tokens,max_output_tokens=384,
+                      context_tokens=2048,max_input_tokens=1536):
     """Outer native contract/usage only; content JSON is graded after idle proof."""
     _require(type(http_status) is int and http_status==200,'native_http_status')
     _require(type(raw) is dict and raw.get('system_fingerprint')==FINGERPRINT and raw.get('model')==model_id,'native_response_identity')
-    _require(type(input_tokens) is int and 0<input_tokens<=1536,'input_token_count')
-    _require(type(max_output_tokens) is int and 0<max_output_tokens<2048
-        and input_tokens+max_output_tokens<=2048,'output_token_budget')
+    _require(type(context_tokens) is int and context_tokens>0,'context_token_budget')
+    _require(type(max_input_tokens) is int and 0<max_input_tokens<=context_tokens,'input_token_budget')
+    _require(type(input_tokens) is int and 0<input_tokens<=max_input_tokens,'input_token_count')
+    _require(type(max_output_tokens) is int and 0<max_output_tokens<context_tokens
+        and input_tokens+max_output_tokens<=context_tokens,'output_token_budget')
     u=raw.get('usage');_require(type(u) is dict and all(type(u.get(k)) is int for k in ['prompt_tokens','completion_tokens','total_tokens'])
         and u['prompt_tokens']==input_tokens and 0<u['completion_tokens']<=max_output_tokens and u['total_tokens']==input_tokens+u['completion_tokens'],'native_usage_mismatch')
     details=u.get('prompt_tokens_details');_require(type(details) is dict and type(details.get('cached_tokens')) is int and details['cached_tokens']==0,'native_cache_reuse')

@@ -819,6 +819,49 @@ class DiagnosticOrchestratorTests(unittest.TestCase):
         for call, verifier in zip(transport.calls, (False, True)):
             self.assertEqual(call['response_format']['json_schema']['schema'], protocol_schema(scope, verifier=verifier))
 
+    def test_enlarged_budget_reaches_both_actual_requests_and_keeps_length_incomplete(self):
+        budget = ModelBudget(3072, 1024, 600)
+        for truncated_role in (None, 'candidate', 'verifier'):
+            with self.subTest(truncated_role=truncated_role):
+                provider, transport = self.production([candidate, verification], diagnostic_schema_decoding=True)
+                provider.profile = replace(provider.profile, context_limit=4096, output_limit=1024,
+                                           timeout_seconds=600)
+                provider.token_counter = lambda request, profile: 2500
+                original_post = transport.post
+                timeouts = []
+                def post(endpoint, body, timeout_seconds, max_response_bytes):
+                    timeouts.append(timeout_seconds)
+                    envelope = original_post(endpoint, body, timeout_seconds, max_response_bytes)
+                    role = 'candidate' if len(transport.calls) == 1 else 'verifier'
+                    if role == truncated_role:
+                        envelope['choices'][0]['finish_reason'] = 'length'
+                        envelope['usage'] = {'prompt_tokens': 100, 'completion_tokens': 1024,
+                                             'total_tokens': 1124}
+                    return envelope
+                transport.post = post
+                agent = self.orchestrator(provider)
+                trace = agent.run_diagnostic(self.repo, QUESTION, scenario=SCENARIO, assumptions=[],
+                    budget=budget, fact_checks=True)
+                expected_calls = 1 if truncated_role == 'candidate' else 2
+                self.assertEqual(len(transport.calls), expected_calls)
+                self.assertEqual(timeouts, [600] * expected_calls)
+                self.assertEqual([row['max_tokens'] for row in transport.calls], [1024] * expected_calls)
+                stored = self.persisted(trace)
+                for name in ('candidate_request', 'verification_request')[:expected_calls]:
+                    self.assertEqual({key: stored['diagnosis'][name][key] for key in asdict(budget)},
+                                     asdict(budget))
+                if truncated_role is None:
+                    self.assertEqual(trace.diagnosis['status'], 'accepted')
+                    self.assertEqual(trace.diagnosis['final'], trace.diagnosis['candidate'])
+                else:
+                    self.assertIsNone(trace.diagnosis['final'])
+                    self.assertEqual(trace.diagnosis['error_type'], 'model_output_incomplete')
+                    self.assertEqual(stored['llm_calls'][-1]['finish_reason'], 'length')
+                    self.assertEqual(stored['llm_calls'][-1]['usage']['output_tokens'], 1024)
+                    attempts = [row['payload'] for row in stored['board']['diagnostic']
+                                if row['kind'] == 'attempt']
+                    self.assertIsInstance(json.loads(attempts[-1]['raw_output']), dict)
+
     def test_fact_aids_allow_verifier_refusal_of_false_requirement_or_guard_without_flip(self):
         scenarios = [
             ('def gate(approved, dependency):\n    return approved and dependency()\n',

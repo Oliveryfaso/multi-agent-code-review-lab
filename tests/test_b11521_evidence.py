@@ -237,4 +237,76 @@ class B11521EvidenceTests(unittest.TestCase):
         for output in ['p42\nfcwd\nn127.0.0.1:49152\n','p42\nf3\nn127.0.0.1:49152\nf4\nn127.0.0.1:49152\n']:
             with self.assertRaises(ValueError):a.listener_port(log,pid=42,returncode=0,output=output)
 
+    def test_explicit_widened_budget_matches_actual_argv_runtime_tokens_and_usage(self):
+        a=self.adapter();args=ARGV.copy()
+        args[args.index('--ctx-size')+1]='4096';args[args.index('--predict')+1]='1024'
+        original=copy.deepcopy(args)
+        self.assertEqual(a.validate_preflight(VERSION,HELP,args,context_tokens=4096,output_tokens=1024),
+                         a.validate_preflight(VERSION,HELP,ARGV))
+        self.assertEqual(args,original)
+        props={'total_slots':1,'model_path':'/fixture/model.gguf','default_generation_settings':{'n_ctx':4096}}
+        a.validate_model(props,{'data':[{'id':'fixture-model'}]},weight_path='/fixture/model.gguf',
+                         model_id='fixture-model',context_tokens=4096)
+        messages=[{'role':'system','content':'fixture'},{'role':'user','content':'fixture-data'}]
+        prompt='<|im_start|>system\nfixture<|im_end|>\n<|im_start|>user\nfixture-data<|im_end|>\n<|im_start|>assistant\n'
+        ids=[151644,1,151645,151644,2,151645,151644]+[1]*(3072-7)
+        self.assertEqual(a.validate_prompt(messages,{'prompt':prompt},{'tokens':ids},max_input_tokens=3072),3072)
+        raw={'model':'fixture-model','system_fingerprint':a.FINGERPRINT,
+            'usage':{'prompt_tokens':3072,'completion_tokens':1024,'total_tokens':4096,
+                     'prompt_tokens_details':{'cached_tokens':0}},
+            'choices':[{'index':0,'finish_reason':'length','message':{'role':'assistant','content':'partial'}}]}
+        untouched=copy.deepcopy(raw)
+        self.assertEqual(a.validate_response(raw,http_status=200,model_id='fixture-model',input_tokens=3072,
+            context_tokens=4096,max_input_tokens=3072,max_output_tokens=1024),
+            {'input_tokens':3072,'output_tokens':1024,'finish_reason':'length'})
+        self.assertEqual(raw,untouched)
+        with self.assertRaises(ValueError):a.validate_preflight(VERSION,HELP,args,output_tokens=1024)
+        with self.assertRaises(ValueError):a.validate_prompt(messages,{'prompt':prompt},{'tokens':ids})
+        with self.assertRaises(ValueError):a.validate_response(raw,http_status=200,model_id='fixture-model',input_tokens=3072)
+
+    def test_widened_budget_rejects_actual_context_mismatch_and_overflow_not_metadata(self):
+        a=self.adapter();args=ARGV.copy();args[args.index('--predict')+1]='1024'
+        with self.assertRaisesRegex(ValueError,'argv_ctx_size'):
+            a.validate_preflight(VERSION,HELP,args,context_tokens=4096,output_tokens=1024)
+        props={'total_slots':1,'model_path':'/fixture/model.gguf',
+            'default_generation_settings':{'n_ctx':2048},'metadata':{'context_tokens':4096}}
+        with self.assertRaisesRegex(ValueError,'native_context_identity'):
+            a.validate_model(props,{'data':[{'id':'fixture-model'}]},weight_path='/fixture/model.gguf',
+                             model_id='fixture-model',context_tokens=4096)
+        messages=[{'role':'system','content':'fixture'},{'role':'user','content':'fixture-data'}]
+        prompt='<|im_start|>system\nfixture<|im_end|>\n<|im_start|>user\nfixture-data<|im_end|>\n<|im_start|>assistant\n'
+        ids=[151644,1,151645,151644,2,151645,151644]+[1]*(3073-7)
+        with self.assertRaises(ValueError):a.validate_prompt(messages,{'prompt':prompt},{'tokens':ids},max_input_tokens=3072)
+        raw={'model':'fixture-model','system_fingerprint':a.FINGERPRINT,
+            'usage':{'prompt_tokens':3072,'completion_tokens':1024,'total_tokens':4096,
+                     'prompt_tokens_details':{'cached_tokens':0}},
+            'choices':[{'index':0,'finish_reason':'stop','message':{'role':'assistant','content':'{}'}}]}
+        for limits in [{'context_tokens':2048,'max_input_tokens':3072,'max_output_tokens':1024},
+                       {'context_tokens':4096,'max_input_tokens':3071,'max_output_tokens':1024},
+                       {'context_tokens':4096,'max_input_tokens':3072,'max_output_tokens':1025},
+                       {'context_tokens':4096,'max_input_tokens':4097,'max_output_tokens':1024}]:
+            with self.subTest(limits=limits),self.assertRaises(ValueError):
+                a.validate_response(raw,http_status=200,model_id='fixture-model',input_tokens=3072,**limits)
+        cached=copy.deepcopy(raw);cached['usage']['prompt_tokens_details']['cached_tokens']=1
+        with self.assertRaisesRegex(ValueError,'native_cache_reuse'):
+            a.validate_response(cached,http_status=200,model_id='fixture-model',input_tokens=3072,
+                                context_tokens=4096,max_input_tokens=3072,max_output_tokens=1024)
+
+    def test_new_budget_parameters_require_positive_integers_not_bool(self):
+        a=self.adapter();models={'data':[{'id':'fixture-model'}]}
+        props={'total_slots':1,'model_path':'/fixture/model.gguf','default_generation_settings':{'n_ctx':2048}}
+        messages=[{'role':'system','content':'fixture'},{'role':'user','content':'fixture-data'}]
+        prompt='<|im_start|>system\nfixture<|im_end|>\n<|im_start|>user\nfixture-data<|im_end|>\n<|im_start|>assistant\n'
+        tokens={'tokens':[151644,1,151645,151644,2,151645,151644]}
+        raw={'model':'fixture-model','system_fingerprint':a.FINGERPRINT,
+            'usage':{'prompt_tokens':7,'completion_tokens':2,'total_tokens':9,'prompt_tokens_details':{'cached_tokens':0}},
+            'choices':[{'index':0,'finish_reason':'stop','message':{'role':'assistant','content':'{}'}}]}
+        for invalid in [True,False,0,-1,4096.0,'4096',None]:
+            with self.subTest(invalid=invalid):
+                with self.assertRaises(ValueError):a.validate_preflight(VERSION,HELP,ARGV,context_tokens=invalid)
+                with self.assertRaises(ValueError):a.validate_model(props,models,weight_path='/fixture/model.gguf',model_id='fixture-model',context_tokens=invalid)
+                with self.assertRaises(ValueError):a.validate_prompt(messages,{'prompt':prompt},tokens,max_input_tokens=invalid)
+                with self.assertRaises(ValueError):a.validate_response(raw,http_status=200,model_id='fixture-model',input_tokens=7,context_tokens=invalid)
+                with self.assertRaises(ValueError):a.validate_response(raw,http_status=200,model_id='fixture-model',input_tokens=7,max_input_tokens=invalid)
+
 if __name__=='__main__':unittest.main()

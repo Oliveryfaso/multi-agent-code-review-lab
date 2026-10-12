@@ -730,6 +730,23 @@ class DiagnosticFactContextTests(unittest.TestCase):
             'when': None, 'refs': [], 'unknowns': ['The necessary dependency return guarantee is absent.'],
             'scope': self.scope.binding}), self.scope)
 
+    def test_fact_candidate_example_control_keeps_defaults_and_identical_verifier(self):
+        from macr.memory.run_store import encoded
+        request = compact_v3.build_candidate_request(self.scope, **self.task, fact_checks=True)
+        payload = json.loads(request.messages[-1]['content'])
+        self.assertTrue(payload['shape_examples'])
+        # Keep the published fact-enabled default; omission remains an explicit experiment.
+        self.assertEqual(hashlib.sha256(encoded(asdict(request))).hexdigest(),
+                         'd15334a03bf576310a95e5c7189fcf56ddf5d4fc5192337d2d0c741d7cf18ee6')
+        controlled = copy.deepcopy(request)
+        payload['shape_examples'] = []
+        controlled.messages[-1]['content'] = encoded(payload).decode()
+        for candidate_request in (request, controlled):
+            compact_v3.validate_candidate_context(candidate_request, self.scope)
+        verifier = compact_v3.build_verification_request(request, self.scope, self.candidate())
+        controlled_verifier = compact_v3.build_verification_request(controlled, self.scope, self.candidate())
+        self.assertEqual(encoded(asdict(verifier)), encoded(asdict(controlled_verifier)))
+
     def test_fact_packet_and_exact_task_are_shared_without_changing_output_protocol(self):
         request = compact_v3.build_candidate_request(self.scope, **self.task, fact_checks=True,
                                                      prompt_variant='requirement_preserving')
