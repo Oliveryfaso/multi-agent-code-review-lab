@@ -51,6 +51,24 @@ original text for verification. Two unknowns, the verifier's 96-character reason
 8192-byte parsing bound, source binding and explicit token/context budgets remain
 hard limits. No truncation, verdict repair or additional generation occurs.
 
+For the confirmed llama.cpp `b11521` backend, a dedicated diagnostic provider can
+opt in with `LocalHTTPProvider(profile, diagnostic_schema_decoding=True, ...)`.
+The default remains disabled. The option requires the declared runtime/version
+and JSON capability; only compact candidate and verifier routes receive their
+original nonempty object schema as
+`response_format={"type": "json_schema", "json_schema": {"schema": request.response_schema}}`.
+Other routes retain their generic JSON behavior. Unsupported declarations or
+invalid diagnostic routing fail before dispatch, without a generic-mode retry.
+
+The fixed parser reads that nested `schema` value. Its converter implements the
+current protocol's object, nullable type, enum/const, required/property, closed
+object, string-length and array-length constraints. These are runtime decoding
+constraints, not a replacement for source binding, per-state citation requirements,
+cross-field validation or semantic review. Neither prompts nor diagnostic limits
+change with this option. The fixed-version sources are
+[the request parser](https://github.com/ggml-org/llama.cpp/blob/b11521/tools/server/server-common.cpp)
+and [the schema converter](https://github.com/ggml-org/llama.cpp/blob/b11521/common/json-schema-to-grammar.cpp).
+
 `ModelBudget` applies explicit caller limits without changing generic request
 defaults. `LocalHTTPProvider` retains a validated response envelope when a model
 returns incomplete output, invalid JSON or the wrong top-level shape. Known raw
@@ -237,3 +255,71 @@ without increasing the guard; each successful partition removed its owned
 temporary fixtures. No additional native request was used. The five owned files
 were integrated while preserving the bytes of all 153 unrelated initial local
 modifications and leaving the outer checkout's HEAD unchanged.
+
+## Schema decoding follow-up: 2026-10-12
+
+This separately frozen experiment changed the production decoder mode only.
+The compact-v2 prompts, business schema, sampling, cached 4B model, ChatML,
+1536-input/512-output/2048-context budget and timeout stayed unchanged. One
+service and at most twelve generations were allowed: the complete defect case
+first, then healthy/essential-gap cases only after an independently correct
+final, and three sealed cases only after both latter tasks completed correctly.
+No old Solver arm, retry, repair generation or semantic-prompt change was used.
+
+The first pair completed with legal JSON and `finish_reason=stop`. Both responses
+met the wire JSON schema: the verifier included the exact scope, keyed reference
+object, allowed fields and enums, and a reason within the hard length bound.
+The candidate passed application validation. The verifier did not: it chose
+`protection=ineffective` but supplied only `refs.behavior=["e1"]`, omitting the
+required `refs.protection`. The unchanged host rejected it as
+`verification_citation_missing`; verification and final remained absent. These
+state-dependent citation rules are application rules, not represented by the
+wire schema's optional reference keys. Decoding does not fill or guess them.
+
+The original candidate explained OR versus AND and the complete
+`mixed_access()` → `access_status(True, False)` → `allowed(True, False)` path,
+with actual access incorrectly granted under a policy requiring both flags.
+Its cause was 203 characters, trigger 287, and it cited `e1`. Independent review
+found the causal facts and caller explanation met the frozen rubric's minimum
+semantic criteria; the single citation supports the faulty function but leaves
+caller citation coverage partial. No new three-reference threshold was imposed.
+The verifier's 96-character reason ended with “violating the stated”.
+This is a linguistically incomplete reason at the character bound; neither
+response exhausted the token budget or returned `length`. No host text cropping
+or conclusion repair occurred, and no length limit was relaxed after the result.
+
+A-stage final delivery was 0/1 attempted. The planned three-case development
+denominator remains 0/3 final reports, with two cases unattempted; all three
+independent acceptance cases were also unattempted. The stage ended after its
+two requests as frozen. Healthy false alarms, essential-gap abstention and
+independent diagnostic quality have no new measurement. Structural schema
+compliance is established for this pair; a correct diagnostic closed loop is not.
+
+Two auxiliary typed `/apply-template` probes, one per role, were accepted by the
+cached server and produced prompts byte-identical to the messages-only render.
+They generated no model tokens. Twelve representative requests fit at 696–904
+input tokens; candidate capacity examples used 76–102 output tokens and verifier
+examples 93–107. Actual generation used 733/165 and 936/132 input/output tokens,
+1669 input plus 297 output (1966 total), with no cache reuse. Guarded service
+time was 60.90 seconds; generation wire times were 24.26 and 27.30 seconds.
+
+The 224 RSS samples peaked at 5,508,579,328 bytes, below 5.5 GiB. Available memory
+was 81% at startup and at least 78% across twelve samples. The owned PID and
+listener were absent and monitor threads completed after cleanup; a fresh OS
+process check found no remaining model or runner. There were no downloads, new
+VMs or external model calls. Ten generation slots remained unused, with no
+remaining service start or automatic extension.
+
+Before execution, the exact Offline Core selection passed 320/320 tests and all
+77 public modules imported. The affected 74-test selection, independent provider
+26-test selection, 37 inert adapter tests and twelve actual Orchestrator callback
+tests also passed; the callback tests used sixteen scripted fixtures. Overlapping
+selections are not summed. Four retained v2 captures replayed through unchanged
+shared validators with their original outcomes. Scripted tests and schema
+compliance establish application behavior, not semantic accuracy improvement.
+
+The A manifest records the suite before its terminal status change. The callback
+then writes `stage_A_failed`, changing that suite file's hash; the four raw/request
+files and trace still match. Independent review reproduced the earlier hash by
+changing only the status in memory and separately bound the final suite hash.
+No semantic gate was consumed or later stage released.

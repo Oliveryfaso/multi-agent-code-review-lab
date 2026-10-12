@@ -380,6 +380,182 @@ class LocalHTTPProviderTests(unittest.TestCase):
             self.assertEqual(factory.return_value.calls, [])
 
 
+class DiagnosticSchemaDecodingTests(unittest.TestCase):
+    def setUp(self):
+        from macr.evals.diagnostic_compact import build_candidate_request, parse_candidate, prepare_scope
+        from macr.schemas import Evidence
+        self.profile = fixture_profile(runtime='llama.cpp', runtime_version='b11521',
+            context_limit=2048, output_limit=512, timeout_seconds=300,
+            sampling={'seed': 0, 'temperature': 0, 'top_p': 1},
+            capabilities=ProviderCapabilities(json_mode=True, usage=True))
+        self.budget = ModelBudget(1536, 512, 300)
+        self.scope = prepare_scope([Evidence('logic.py', 1, 2, 'Located implementation.',
+            'def demo():\n    return 2\n', None, 'parse_ast')], case_id='schema-case', attempt_id='schema-attempt')
+        self.task = {'question': 'Does demo meet the requirement?',
+                     'scenario': 'Every call returns 2.', 'assumptions': []}
+        self.request = build_candidate_request(self.scope, **self.task)
+        self.wire = {'verdict': 'no_defect_supported', 'cause': 'The literal returned is 2.',
+            'when': 'demo is called.', 'refs': ['e1'], 'unknowns': [], 'scope': self.scope.binding}
+        self.candidate = parse_candidate(json.dumps(self.wire), self.scope)
+        self.checked = {'scope': self.scope.binding, 'coverage': 'complete',
+            'checks': {'requirement': 'established', 'trigger': 'reachable', 'behavior': 'satisfies',
+                       'protection': 'absent', 'counterevidence': 'refutes'},
+            'refs': {'behavior': ['e1'], 'counterevidence': ['e1']},
+            'reason': 'The literal return meets the stated domain.', 'unknowns': []}
+
+    def provider(self, raw, *, enabled=True, finish='stop'):
+        data = completion(raw, usage={'prompt_tokens': 9, 'completion_tokens': 4, 'total_tokens': 13})
+        data['choices'][0]['finish_reason'] = finish
+        transport = FakeTransport(data)
+        transport.requests = []
+        def count(request, profile):
+            transport.requests.append(copy.deepcopy(request))
+            return 9
+        return LocalHTTPProvider(self.profile, transport=transport, token_counter=count,
+                                 diagnostic_schema_decoding=enabled), transport
+
+    def test_candidate_and_verifier_wire_differ_only_by_full_response_schema(self):
+        from macr.agents.solver import SolverAgent
+        from macr.evals.diagnostic_compact import protocol_schema
+        captures = []
+        for enabled in (False, True):
+            provider, transport = self.provider(json.dumps(self.wire), enabled=enabled)
+            solver = SolverAgent(provider)
+            candidate, response, error, request = solver.diagnostic_candidate(
+                self.scope, **self.task, model_budget=self.budget)
+            self.assertIsNone(error)
+            self.assertEqual(candidate, self.candidate)
+            self.assertEqual(request.response_schema, protocol_schema(self.scope))
+            transport.response = completion(json.dumps(self.checked),
+                usage={'prompt_tokens': 9, 'completion_tokens': 4, 'total_tokens': 13})
+            checked, response, error = solver.diagnostic_verification(self.scope, request, candidate,
+                                                                     model_budget=self.budget)
+            self.assertIsNone(error)
+            self.assertTrue(checked['accepted'])
+            self.assertEqual(checked['final'], candidate)
+            self.assertFalse(checked['semantic_proof'])
+            self.assertEqual(len(transport.calls), 2)
+            if enabled:
+                for call, actual_request in zip(transport.calls, transport.requests):
+                    self.assertEqual(call[1]['response_format']['json_schema']['schema'], actual_request.response_schema)
+            captures.append(copy.deepcopy(transport.calls))
+        schemas = [protocol_schema(self.scope), protocol_schema(self.scope, verifier=True)]
+        self.assertNotEqual(*schemas)
+        for index, schema in enumerate(schemas):
+            generic, typed = captures[0][index], captures[1][index]
+            self.assertEqual(generic[1].pop('response_format'), {'type': 'json_object'})
+            self.assertEqual(typed[1].pop('response_format'),
+                             {'type': 'json_schema', 'json_schema': {'schema': schema}})
+            self.assertEqual(generic, typed)
+
+    def test_opt_in_requires_exact_bool_frozen_runtime_and_declared_json_mode(self):
+        for enabled in (None, 0, 1, 'true'):
+            with self.subTest(enabled=enabled), self.assertRaisesRegex(ProviderError, 'model_request_invalid'):
+                LocalHTTPProvider(self.profile, diagnostic_schema_decoding=enabled)
+        for profile in (replace(self.profile, runtime='other-runtime'),
+                        replace(self.profile, runtime_version='b5083'),
+                        replace(self.profile, capabilities=ProviderCapabilities())):
+            transport = FakeTransport()
+            with self.subTest(profile=profile), self.assertRaisesRegex(ProviderError, 'model_schema_decoding_unsupported'):
+                LocalHTTPProvider(profile, transport=transport, diagnostic_schema_decoding=True)
+            self.assertEqual(transport.calls, [])
+
+    def test_metadata_cannot_enable_typed_generic_or_misroute_a_schema(self):
+        from macr.evals.diagnostic_compact import VERSION
+        for enabled, role in ((False, 'diagnostic_candidate'), (True, 'solver'), (True, None)):
+            request = copy.deepcopy(self.request)
+            request.metadata.update(role=role, diagnostic_schema_decoding=True)
+            provider, transport = self.provider(json.dumps(self.wire), enabled=enabled)
+            provider.complete(request)
+            self.assertEqual(transport.calls[0][1]['response_format'], {'type': 'json_object'})
+        for schema, metadata, tools in (
+                (None, {'role': 'diagnostic_candidate', 'diagnostic_protocol': VERSION}, []),
+                ({}, {'role': 'diagnostic_candidate', 'diagnostic_protocol': VERSION}, []),
+                ({'type': 'object'}, {'role': 'diagnostic_candidate', 'diagnostic_protocol': VERSION}, []),
+                ({'type': 'array'}, {'role': 'diagnostic_candidate', 'diagnostic_protocol': VERSION}, []),
+                (self.request.response_schema, {'role': 'diagnostic_verifier', 'diagnostic_protocol': VERSION}, []),
+                (self.request.response_schema, {'role': 'diagnostic_candidate', 'diagnostic_protocol': 'foreign'}, []),
+                (self.request.response_schema, {'role': 'diagnostic_candidate', 'diagnostic_protocol': VERSION}, [{}])):
+            request = replace(self.request, response_schema=schema, metadata=metadata, tools=tools)
+            provider, transport = self.provider(json.dumps(self.wire))
+            with self.subTest(schema=schema, metadata=metadata), self.assertRaisesRegex(
+                    ProviderError, 'model_schema_decoding_request_invalid'):
+                provider.complete(request)
+            self.assertEqual(transport.calls, [])
+            self.assertEqual(transport.requests, [])
+        provider, transport = self.provider(json.dumps(self.wire))
+        transport.error = ProviderError('model_http_error')
+        request = replace(self.request, metadata=self.request.metadata | {'role': 'diagnostic_candidate'})
+        with self.assertRaisesRegex(ProviderError, 'model_http_error'):
+            provider.complete(request)
+        self.assertEqual(len(transport.calls), 1)
+        self.assertEqual(transport.calls[0][1]['response_format']['type'], 'json_schema')
+
+    def test_typed_candidate_keeps_shared_validation_and_failed_raw(self):
+        from macr.agents.solver import SolverAgent
+        for changes, finish, expected in (
+                ({'extra': True}, 'stop', 'compact_contract_invalid'),
+                ({'refs': {}}, 'stop', 'compact_contract_invalid'),
+                ({'verdict': 'healthy'}, 'stop', 'compact_contract_invalid'),
+                ({'cause': 'x' * 601}, 'stop', 'compact_contract_invalid'),
+                ({'scope': '0' * 16}, 'stop', 'compact_scope_mismatch'),
+                ({'refs': ['foreign']}, 'stop', 'compact_contract_invalid'),
+                ({}, 'length', 'model_output_incomplete')):
+            raw = json.dumps(self.wire | changes)
+            provider, transport = self.provider(raw, finish=finish)
+            candidate, response, error, request = SolverAgent(provider).diagnostic_candidate(
+                self.scope, **self.task, model_budget=self.budget)
+            with self.subTest(changes=changes, finish=finish):
+                self.assertIsNone(candidate)
+                self.assertEqual(error['error_type'], expected)
+                self.assertEqual(response.content, raw)
+                self.assertEqual(response.finish_reason, finish)
+                self.assertEqual((response.usage_kind, response.usage),
+                                 ('measured', {'input_tokens': 9, 'output_tokens': 4}))
+                self.assertEqual(len(transport.calls), 1)
+                self.assertEqual(transport.calls[0][1]['response_format']['type'], 'json_schema')
+
+    def test_typed_verifier_keeps_structure_source_coverage_and_state_gates(self):
+        from macr.agents.solver import SolverAgent
+        missing_coverage = copy.deepcopy(self.checked)
+        missing_coverage.pop('coverage')
+        bad_enum = copy.deepcopy(self.checked)
+        bad_enum['checks']['trigger'] = 'possible'
+        conflict = copy.deepcopy(self.checked)
+        conflict['checks']['behavior'] = 'violates'
+        for checked, finish, expected, parsed in (
+                (self.checked | {'verdict': 'no_defect_supported'}, 'stop', 'compact_contract_invalid', False),
+                (self.checked | {'refs': ['e1']}, 'stop', 'compact_contract_invalid', False),
+                (bad_enum, 'stop', 'compact_contract_invalid', False),
+                (missing_coverage, 'stop', 'compact_contract_invalid', False),
+                (self.checked | {'coverage': 'incomplete'}, 'stop', 'verification_task_incomplete', True),
+                (self.checked | {'scope': '0' * 16}, 'stop', 'compact_scope_mismatch', False),
+                (self.checked | {'refs': {'behavior': ['foreign']}}, 'stop', 'compact_contract_invalid', False),
+                (self.checked | {'refs': {}}, 'stop', 'verification_citation_missing', False),
+                (conflict, 'stop', 'verification_cross_field_conflict', True),
+                (self.checked | {'reason': 'x' * 97}, 'stop', 'compact_contract_invalid', False),
+                (self.checked, 'length', 'model_output_incomplete', False)):
+            raw = json.dumps(checked)
+            provider, transport = self.provider(raw, finish=finish)
+            result, response, error = SolverAgent(provider).diagnostic_verification(
+                self.scope, self.request, self.candidate, model_budget=self.budget)
+            with self.subTest(expected=expected, finish=finish):
+                if parsed:
+                    self.assertIsNone(error)
+                    self.assertFalse(result['accepted'])
+                    self.assertIsNone(result['final'])
+                    self.assertEqual(result['error_code'], expected)
+                else:
+                    self.assertIsNone(result)
+                    self.assertEqual(error['error_type'], expected)
+                self.assertEqual(response.content, raw)
+                self.assertEqual(response.finish_reason, finish)
+                self.assertEqual((response.usage_kind, response.usage),
+                                 ('measured', {'input_tokens': 9, 'output_tokens': 4}))
+                self.assertEqual(len(transport.calls), 1)
+                self.assertEqual(transport.calls[0][1]['response_format']['type'], 'json_schema')
+
+
 class TransportBoundaryTests(unittest.TestCase):
     def assert_code(self, code, fn):
         with self.assertRaises(ProviderError) as error:

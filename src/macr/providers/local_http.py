@@ -110,8 +110,15 @@ class LoopbackTransport:
 class LocalHTTPProvider:
     name = 'local_http'
 
-    def __init__(self, profile: ModelProfile, *, transport=None, token_counter=None):
+    def __init__(self, profile: ModelProfile, *, transport=None, token_counter=None,
+                 diagnostic_schema_decoding=False):
         self.profile = copy.deepcopy(validate_profile(profile))
+        if type(diagnostic_schema_decoding) is not bool:
+            raise ProviderError('model_request_invalid')
+        if diagnostic_schema_decoding and (self.profile.runtime != 'llama.cpp'
+                or self.profile.runtime_version != 'b11521' or not self.profile.capabilities.json_mode):
+            raise ProviderError('model_schema_decoding_unsupported', failure_kind='invalid_contract')
+        self.diagnostic_schema_decoding = diagnostic_schema_decoding
         self.capabilities = replace(self.profile.capabilities, cancel=False, health=False)
         self.transport = transport if transport is not None else LoopbackTransport()
         # Trusted caller supplies a bound including rendered template/tools/schema.
@@ -126,6 +133,23 @@ class LocalHTTPProvider:
             raise ProviderError('model_output_limit')
         if request.max_input_tokens + request.max_output_tokens > profile.context_limit:
             raise ProviderError('model_context_overflow')
+        response_format = ({'type': 'json_object'} if request.response_schema is not None
+                           and profile.capabilities.json_mode else None)
+        role = request.metadata.get('role')
+        if self.diagnostic_schema_decoding and role in ('diagnostic_candidate', 'diagnostic_verifier'):
+            from macr.evals.diagnostic_compact import VERSION
+            schema = request.response_schema
+            properties = schema.get('properties') if type(schema) is dict else None
+            verifier = role == 'diagnostic_verifier'
+            fields = ({'scope', 'coverage', 'checks', 'refs', 'reason', 'unknowns'} if verifier
+                      else {'scope', 'verdict', 'cause', 'when', 'refs', 'unknowns'})
+            if (request.metadata.get('diagnostic_protocol') != VERSION or request.tools
+                    or type(schema) is not dict or schema.get('type') != 'object'
+                    or type(properties) is not dict or set(properties) != fields
+                    or type(properties['refs']) is not dict
+                    or properties['refs'].get('type') != ('object' if verifier else 'array')):
+                raise ProviderError('model_schema_decoding_request_invalid', failure_kind='invalid_contract')
+            response_format = {'type': 'json_schema', 'json_schema': {'schema': schema}}
         try:
             bound = (self.token_counter(request, profile) if self.token_counter is not None
                      else request.metadata.get('input_token_upper_bound'))
@@ -144,10 +168,9 @@ class LocalHTTPProvider:
                        'chat_template_version': profile.chat_template_version}}
         if request.tools:
             payload.update(tools=request.tools, tool_choice='auto')
-        if request.response_schema is not None and profile.capabilities.json_mode:
-            # JSON mode does not imply schema-constrained decoding. Typed validation
-            # and the single budgeted format-repair request belong to the caller.
-            payload['response_format'] = {'type': 'json_object'}
+        if response_format is not None:
+            # Decoding constraints do not replace caller-owned business validation.
+            payload['response_format'] = response_format
         try:
             body = json.dumps(payload, allow_nan=False).encode('utf-8')
         except (ValueError, TypeError, UnicodeError, RecursionError):
