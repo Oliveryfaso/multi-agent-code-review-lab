@@ -1,12 +1,13 @@
 """Inert boundary tests; neither compact acceptance nor fixtures prove accuracy."""
 import copy
-from dataclasses import FrozenInstanceError
+from dataclasses import FrozenInstanceError, asdict
 import hashlib
 import json
 import unittest
 
 from macr.evals.diagnostic_compact import (
-    CHECK_STATES, VERSION, CompactScope, build_candidate_request, build_verification_request,
+    CHECK_STATES, VERSION, REQUIREMENT_PRESERVING_PROMPT, CompactScope,
+    build_candidate_request, build_verification_request,
     candidate_quality_warnings,
     parse_candidate, prepare_scope, protocol_schema, restore_scope, validate_verification,
 )
@@ -35,6 +36,24 @@ class DiagnosticCompactTests(unittest.TestCase):
     def checked_result(self, candidate=None, checked=None):
         return validate_verification(json.dumps(self.checked if checked is None else checked),
             self.candidate() if candidate is None else candidate, self.scope)
+
+    def test_candidate_prompt_variant_appends_only_and_preserves_baseline_and_verifier(self):
+        task = dict(question='Does demo satisfy the requirement?', scenario='Every call returns 2.',
+                    assumptions=['Ordinary Python integers.'])
+        baseline = build_candidate_request(self.scope, **task, prompt_variant='baseline')
+        self.assertEqual(baseline, self.request)
+        self.assertNotIn('diagnostic_prompt_variant', baseline.metadata)
+        variant = build_candidate_request(self.scope, **task, prompt_variant='requirement_preserving')
+        self.assertEqual(variant.messages[0]['content'],
+                         baseline.messages[0]['content'] + '\n\n' + REQUIREMENT_PRESERVING_PROMPT)
+        comparison = asdict(variant)
+        comparison['messages'][0]['content'] = baseline.messages[0]['content']
+        self.assertEqual(comparison['metadata'].pop('diagnostic_prompt_variant'), 'requirement_preserving')
+        self.assertEqual(comparison, asdict(baseline))
+        checks = [build_verification_request(request, self.scope, self.candidate())
+                  for request in (baseline, variant)]
+        self.assertEqual(checks[0].messages, checks[1].messages)
+        self.assertEqual(checks[0].response_schema, checks[1].response_schema)
 
     def test_single_visible_position_can_produce_accepted_host_final(self):
         candidate = self.candidate()

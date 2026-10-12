@@ -19,6 +19,19 @@ MAX_REFS = 3
 MAX_VERIFICATION_REFS = MAX_GAPS = 2
 REQUIRED_REF_STATES = {'behavior': ('violates', 'satisfies'), 'trigger': ('excluded',),
                        'protection': ('effective', 'ineffective'), 'counterevidence': ('refutes',)}
+REQUIREMENT_PRESERVING_PROMPT = (
+    'Keep the stated requirement unchanged; an extra condition in the implementation is not part of that requirement. '
+    'A dependency being fixed, deterministic or bool-returning does not establish the return relation the requirement needs. '
+    'Consider dependency behaviors compatible with the supplied contracts. '
+    'If both meeting and violating the requirement remain possible because a necessary guarantee is missing, choose unknown '
+    'and name that guarantee and the known caller path. A possible failure is not a proved defect: supported_defect needs '
+    'a concrete reachable violation established by visible behavior and stated guarantees; no_defect_supported needs positive '
+    'support for the full stated requirement, including guards and caller arguments.')
+
+
+def validate_candidate_prompt_variant(prompt_variant):
+    if type(prompt_variant) is not str or prompt_variant not in ('baseline', 'requirement_preserving'):
+        raise ProviderError('diagnostic_prompt_variant_invalid', failure_kind='invalid_contract')
 
 
 def _require(ok, code='compact_contract_invalid'):
@@ -308,7 +321,9 @@ def _contract(scope, *, verifier=False):
 
 
 def build_candidate_request(scope, *, question, scenario, assumptions,
-                            max_input_tokens=1536, max_output_tokens=512, timeout_seconds=300):
+                            max_input_tokens=1536, max_output_tokens=512, timeout_seconds=300,
+                            prompt_variant='baseline'):
+    validate_candidate_prompt_variant(prompt_variant)
     _require(all(type(value) is str and value.strip() for value in (question, scenario))
              and type(assumptions) is list and all(type(value) is str and value.strip()
              for value in assumptions), 'compact_input_invalid')
@@ -326,11 +341,15 @@ def build_candidate_request(scope, *, question, scenario, assumptions,
         'Preferred lengths are brevity targets; max_chars are hard limits. Preserve complete explanations '
         'within those limits, no tools, confidence, patches or extra fields. '
         'The three examples illustrate syntax only, not facts about this task; choose from source and domain.')
+    if prompt_variant == 'requirement_preserving':
+        system += '\n\n' + REQUIREMENT_PRESERVING_PROMPT
     request = ModelRequest([{'role': 'system', 'content': system},
         {'role': 'user', 'content': encoded(payload).decode()}], response_schema=schema,
         max_input_tokens=max_input_tokens, max_output_tokens=max_output_tokens,
         timeout_seconds=timeout_seconds,
         metadata={'diagnostic_protocol': VERSION, 'scope_sha256': scope.scope_sha256})
+    if prompt_variant != 'baseline':
+        request.metadata['diagnostic_prompt_variant'] = prompt_variant
     validate_request(request)
     return request
 

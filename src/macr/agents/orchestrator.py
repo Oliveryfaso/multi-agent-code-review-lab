@@ -94,11 +94,13 @@ class Orchestrator:
 
     def run_diagnostic(self, repo_path: Path, question: str, *, scenario: str,
                        assumptions: list[str], budget: ModelBudget,
-                       search_terms: list[str] | None = None) -> Trace:
+                       search_terms: list[str] | None = None, prompt_variant: str = 'baseline') -> Trace:
+        from macr.evals.diagnostic_compact import validate_candidate_prompt_variant
+        validate_candidate_prompt_variant(prompt_variant)
         trace = self.prepare_diagnostic(repo_path, question, scenario=scenario,
             assumptions=assumptions, budget=budget, search_terms=search_terms)
         if trace.diagnosis["status"] == "prepared":
-            self.diagnostic_candidate(trace)
+            self.diagnostic_candidate(trace, prompt_variant=prompt_variant)
         if trace.diagnosis["status"] == "candidate_completed":
             self.verify_diagnostic(trace)
         return trace
@@ -910,19 +912,21 @@ class Orchestrator:
                 break
         return chosen
 
-    def diagnostic_candidate(self, trace: Trace) -> Trace:
-        from macr.evals.diagnostic_compact import VERSION, candidate_quality_warnings, restore_scope
+    def diagnostic_candidate(self, trace: Trace, *, prompt_variant: str = 'baseline') -> Trace:
+        from macr.evals.diagnostic_compact import (
+            VERSION, candidate_quality_warnings, restore_scope, validate_candidate_prompt_variant)
         data = trace.diagnosis
         if not data or data["status"] != "prepared":
             raise ProviderError("diagnostic_stage_invalid", failure_kind="invalid_contract")
         if data["protocol"] != VERSION:
             raise ProviderError("diagnostic_protocol_mismatch", failure_kind="invalid_contract")
+        validate_candidate_prompt_variant(prompt_variant)
         scope = restore_scope(data["scope"])
         if scope.case_id != trace.task_id:
             raise ProviderError("compact_scope_mismatch", failure_kind="invalid_contract")
         data["status"] = "candidate_running"
         candidate, response, error, request = self.solver.diagnostic_candidate(
-            scope, **data["task"], model_budget=ModelBudget(**data["budget"]))
+            scope, **data["task"], model_budget=ModelBudget(**data["budget"]), prompt_variant=prompt_variant)
         data.update(candidate=candidate, candidate_request=asdict(request),
                     candidate_parsed=candidate is not None and error is None,
                     candidate_quality_warnings=candidate_quality_warnings(candidate) if candidate is not None else [])

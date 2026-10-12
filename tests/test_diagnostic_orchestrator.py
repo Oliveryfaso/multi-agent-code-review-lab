@@ -1,6 +1,6 @@
 """Real diagnostic retrieval, solver, host gating and persistence; zero native calls."""
 from copy import deepcopy
-from dataclasses import replace
+from dataclasses import asdict, replace
 import io
 import json
 import unittest
@@ -9,7 +9,8 @@ from uuid import UUID
 
 from debugger_fixtures import fixture_root, write_files
 from macr.agents.orchestrator import Orchestrator
-from macr.evals.diagnostic_compact import VERSION, protocol_schema, restore_scope
+from macr.evals.diagnostic_compact import (
+    VERSION, REQUIREMENT_PRESERVING_PROMPT, protocol_schema, restore_scope)
 from macr.memory.trace_store import TraceStore
 from macr.providers.base import ModelBudget, ModelResponse, ProviderCapabilities, ProviderError
 from macr.providers.local_http import LocalHTTPProvider
@@ -336,6 +337,67 @@ class DiagnosticOrchestratorTests(unittest.TestCase):
         provider = LocalHTTPProvider(profile, transport=transport, token_counter=lambda request, profile: bound,
                                      diagnostic_schema_decoding=diagnostic_schema_decoding)
         return provider, transport
+
+    def test_prompt_variant_only_changes_candidate_wire_and_persists_actual_request(self):
+        prepared = self.orchestrator().prepare_diagnostic(self.repo, QUESTION, scenario=SCENARIO,
+            assumptions=[], budget=BUDGET)
+        wires = []
+        for variant in ('baseline', 'requirement_preserving'):
+            provider, transport = self.production([candidate, verification], diagnostic_schema_decoding=True)
+            requests = []
+            def count(request, profile):
+                requests.append(deepcopy(request))
+                return 100
+            provider.token_counter = count
+            agent, trace = self.orchestrator(provider), deepcopy(prepared)
+            agent.diagnostic_candidate(trace, prompt_variant=variant)
+            self.assertEqual(self.persisted(trace)['diagnosis']['candidate_request'], asdict(requests[0]))
+            self.assertEqual(requests[0].messages, transport.calls[0]['messages'])
+            agent.verify_diagnostic(trace)
+            self.assertEqual(len(transport.calls), 2)
+            self.assertEqual(trace.diagnosis['final'], trace.diagnosis['candidate'])
+            self.assertFalse(trace.diagnosis['semantic_proof'])
+            self.assertTrue(trace.metrics['final_review']['human_review_required'])
+            wires.append(deepcopy(transport.calls))
+        self.assertEqual(wires[1][0]['messages'][0]['content'],
+                         wires[0][0]['messages'][0]['content'] + '\n\n' + REQUIREMENT_PRESERVING_PROMPT)
+        wires[1][0]['messages'][0]['content'] = wires[0][0]['messages'][0]['content']
+        self.assertEqual(wires[0], wires[1])
+        provider, transport = self.production([candidate, verification], diagnostic_schema_decoding=True)
+        trace = self.orchestrator(provider).run_diagnostic(self.repo, QUESTION, scenario=SCENARIO,
+            assumptions=[], budget=BUDGET, prompt_variant='requirement_preserving')
+        stored = self.persisted(trace)['diagnosis']['candidate_request']
+        self.assertEqual(len(transport.calls), 2)
+        self.assertEqual(stored['messages'], transport.calls[0]['messages'])
+        self.assertEqual(stored['response_schema'], transport.calls[0]['response_format']['json_schema']['schema'])
+        self.assertEqual(stored['metadata']['diagnostic_prompt_variant'], 'requirement_preserving')
+        self.assertTrue(stored['messages'][0]['content'].endswith('\n\n' + REQUIREMENT_PRESERVING_PROMPT))
+        self.assertEqual(transport.calls[1]['messages'][0]['content'], wires[0][1]['messages'][0]['content'])
+
+    def test_invalid_prompt_variant_has_zero_dispatch_and_keeps_prepared_state(self):
+        class StringSubclass(str):
+            pass
+        provider, transport = self.production([], diagnostic_schema_decoding=True)
+        agent = self.orchestrator(provider)
+        trace = agent.prepare_diagnostic(self.repo, QUESTION, scenario=SCENARIO, assumptions=[], budget=BUDGET)
+        original = deepcopy(trace.diagnosis)
+        scope = restore_scope(trace.diagnosis['scope'])
+        for variant in ('unknown', '', None, True, [], {}, StringSubclass('baseline')):
+            with self.subTest(variant=variant):
+                with patch.object(agent, 'prepare_diagnostic', side_effect=AssertionError('invalid variant retrieved')):
+                    with self.assertRaises(ProviderError) as error:
+                        agent.run_diagnostic(self.repo, QUESTION, scenario=SCENARIO, assumptions=[],
+                                             budget=BUDGET, prompt_variant=variant)
+                self.assertEqual(error.exception.code, 'diagnostic_prompt_variant_invalid')
+                self.assertEqual(error.exception.failure_kind, 'invalid_contract')
+                with self.assertRaisesRegex(ProviderError, 'diagnostic_prompt_variant_invalid'):
+                    agent.diagnostic_candidate(trace, prompt_variant=variant)
+                with self.assertRaisesRegex(ProviderError, 'diagnostic_prompt_variant_invalid'):
+                    agent.solver.diagnostic_candidate(scope, question=QUESTION, scenario=SCENARIO,
+                        assumptions=[], model_budget=BUDGET, prompt_variant=variant)
+                self.assertEqual(trace.diagnosis, original)
+                self.assertEqual(self.persisted(trace)['diagnosis'], original)
+                self.assertEqual(transport.calls, [])
 
     def run_semantic_development(self, files, question, terms, candidate_action, verifier_action,
                                  *, diagnostic_schema_decoding=False):

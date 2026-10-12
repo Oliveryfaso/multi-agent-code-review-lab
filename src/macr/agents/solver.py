@@ -206,9 +206,11 @@ class SolverAgent:
                            self._evidence_confidence(unique) if unique else 0.2, payload["next_steps"])
 
     def diagnostic_candidate(self, scope, *, question: str, scenario: str,
-                             assumptions: list[str], model_budget: ModelBudget):
+                             assumptions: list[str], model_budget: ModelBudget,
+                             prompt_variant: str = 'baseline'):
         from macr.evals.diagnostic_compact import build_candidate_request, parse_candidate
-        request = build_candidate_request(scope, question=question, scenario=scenario, assumptions=assumptions)
+        request = build_candidate_request(scope, question=question, scenario=scenario,
+                                          assumptions=assumptions, prompt_variant=prompt_variant)
         request.metadata.update({"role": "diagnostic_candidate", "run_id": scope.case_id,
                                  "attempt_id": scope.attempt_id})
         result, response, error = self._diagnostic_call(
