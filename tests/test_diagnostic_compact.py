@@ -703,5 +703,91 @@ class V3DiagnosticCompactTests(unittest.TestCase):
             compact_v3.parse_candidate(json.dumps(self.wire), self.scope, version='unrecognized')
 
 
+class DiagnosticFactContextTests(unittest.TestCase):
+    def setUp(self):
+        self.scope = prepare_scope([Evidence('policy.py', 1, 2, 'Complete visible source.',
+            'def gate(flag, policy):\n    return flag and policy()\n', 'gate', 'parse_ast')],
+            case_id='fact-case', attempt_id='fact-attempt')
+        self.task = {'question': 'Does gate meet the supplied contract?',
+                     'scenario': 'Assess boolean flag inputs under the supplied dependency contract.',
+                     'assumptions': ['The deployed dependency is fixed and returns bool.']}
+
+    def test_fact_checks_is_opt_in_and_default_request_remains_exact(self):
+        from macr.memory.run_store import encoded
+        original = compact_v3.build_candidate_request(self.scope, **self.task)
+        # Frozen on the published baseline before adding the opt-in API.
+        self.assertEqual(hashlib.sha256(encoded(asdict(original))).hexdigest(),
+                         '6dcc1bbbd9324ea0cca14aa87cbe802f6837015ea0b7b0d5dd7455bc951ca73f')
+        enabled = compact_v3.build_candidate_request(self.scope, **self.task, fact_checks=True)
+        disabled = compact_v3.build_candidate_request(self.scope, **self.task, fact_checks=False)
+        self.assertEqual(original, disabled)
+        self.assertEqual(enabled.response_schema, original.response_schema)
+        self.assertNotIn('observations', json.loads(original.messages[-1]['content']))
+        self.assertIn('observations', json.loads(enabled.messages[-1]['content']))
+
+    def candidate(self):
+        return compact_v3.parse_candidate(json.dumps({'verdict': 'unknown', 'cause': None,
+            'when': None, 'refs': [], 'unknowns': ['The necessary dependency return guarantee is absent.'],
+            'scope': self.scope.binding}), self.scope)
+
+    def test_fact_packet_and_exact_task_are_shared_without_changing_output_protocol(self):
+        request = compact_v3.build_candidate_request(self.scope, **self.task, fact_checks=True,
+                                                     prompt_variant='requirement_preserving')
+        verifier = compact_v3.build_verification_request(request, self.scope, self.candidate())
+        before, after = [json.loads(value.messages[-1]['content']) for value in (request, verifier)]
+        self.assertEqual(before['observations'], after['observations'])
+        self.assertEqual(before['source'], after['source'])
+        self.assertEqual({name: after[name] for name in self.task}, self.task)
+        self.assertEqual(request.response_schema, compact_v3.protocol_schema(self.scope))
+        self.assertEqual(verifier.response_schema, compact_v3.protocol_schema(self.scope, verifier=True))
+        self.assertEqual(request.metadata['diagnostic_observation_version'], 'visible_syntax_v1')
+        self.assertEqual(request.metadata['diagnostic_observation_sha256'],
+                         verifier.metadata['diagnostic_observation_sha256'])
+        self.assertTrue(request.messages[0]['content'].endswith(REQUIREMENT_PRESERVING_PROMPT))
+        self.assertFalse(after['observations']['repository_code_executed'])
+        self.assertFalse(after['observations']['semantic_proof'])
+
+    def test_fact_context_missing_mutated_or_misdeclared_binding_is_refused(self):
+        original = compact_v3.build_candidate_request(self.scope, **self.task, fact_checks=True)
+        for mutation in ('rows', 'task', 'missing_packet', 'missing_version', 'digest', 'source', 'hidden'):
+            with self.subTest(mutation=mutation):
+                request = copy.deepcopy(original)
+                payload = json.loads(request.messages[-1]['content'])
+                if mutation == 'rows':
+                    payload['observations']['rows'][0]['ref'] = 'foreign'
+                elif mutation == 'task':
+                    payload['scenario'] = 'A substituted requirement.'
+                elif mutation == 'missing_packet':
+                    del payload['observations']
+                elif mutation == 'missing_version':
+                    del request.metadata['diagnostic_observation_version']
+                elif mutation == 'digest':
+                    request.metadata['diagnostic_observation_sha256'] = '0' * 64
+                elif mutation == 'source':
+                    payload['source'][0]['body'] = 'def gate():\n    return True\n'
+                else:
+                    payload['expected_verdict'] = 'unknown'
+                request.messages[-1]['content'] = json.dumps(payload)
+                with self.assertRaises(ProviderError):
+                    compact_v3.build_verification_request(request, self.scope, self.candidate())
+        for value in (None, 1, 'enabled'):
+            with self.assertRaisesRegex(ProviderError, 'compact_observation_mode_invalid'):
+                compact_v3.build_candidate_request(self.scope, **self.task, fact_checks=value)
+        with self.assertRaisesRegex(ProviderError, 'compact_protocol_mismatch'):
+            compact_v3.build_candidate_request(self.scope, **self.task, version=VERSION, fact_checks=True)
+
+    def test_incomplete_and_invalid_syntax_are_observations_not_verdict_or_proof(self):
+        for body, end, size, reason in [('def broken(\n', 1, 1200, 'source_syntax_unavailable'),
+                ('first = 1\nsecond = 2\n', 2, 10, 'incomplete_or_locator')]:
+            with self.subTest(reason=reason):
+                scope = prepare_scope([Evidence('partial.py', 1, end, 'Captured source.', body)],
+                    case_id='partial', attempt_id='one', max_body_chars=size)
+                request = compact_v3.build_candidate_request(scope, **self.task, fact_checks=True)
+                packet = json.loads(request.messages[-1]['content'])['observations']
+                self.assertEqual(packet['rows'][0]['unsupported'], reason)
+                self.assertNotIn('verdict', packet)
+                self.assertFalse(packet['semantic_proof'])
+
+
 if __name__ == '__main__':
     unittest.main()

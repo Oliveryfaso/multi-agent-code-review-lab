@@ -75,11 +75,12 @@ class Orchestrator:
 
     def prepare_diagnostic(self, repo_path: Path, question: str, *, scenario: str,
                            assumptions: list[str], budget: ModelBudget,
-                           search_terms: list[str] | None = None) -> Trace:
+                           search_terms: list[str] | None = None, fact_checks: bool = False) -> Trace:
         """Retrieve once without generation; only explicit user scope enters the model."""
         if not isinstance(budget, ModelBudget):
             raise ProviderError("diagnostic_budget_required", failure_kind="invalid_contract")
-        if (not all(type(value) is str and value.strip() for value in (question, scenario))
+        if (type(fact_checks) is not bool
+                or not all(type(value) is str and value.strip() for value in (question, scenario))
                 or type(assumptions) is not list or not all(type(value) is str and value.strip() for value in assumptions)
                 or search_terms is not None and (type(search_terms) is not list
                     or not all(type(value) is str and value.strip() for value in search_terms))):
@@ -90,15 +91,17 @@ class Orchestrator:
         except UnicodeError:
             raise ProviderError("diagnostic_input_invalid", failure_kind="invalid_contract") from None
         return self._run(repo_path, question, diagnostic_task={"question": question,
-            "scenario": scenario, "assumptions": assumptions, "search_terms": search_terms}, diagnostic_budget=budget)
+            "scenario": scenario, "assumptions": assumptions, "search_terms": search_terms,
+            **({"fact_checks": True} if fact_checks else {})}, diagnostic_budget=budget)
 
     def run_diagnostic(self, repo_path: Path, question: str, *, scenario: str,
                        assumptions: list[str], budget: ModelBudget,
-                       search_terms: list[str] | None = None, prompt_variant: str = 'baseline') -> Trace:
+                       search_terms: list[str] | None = None, prompt_variant: str = 'baseline',
+                       fact_checks: bool = False) -> Trace:
         from macr.evals.diagnostic_compact import validate_candidate_prompt_variant
         validate_candidate_prompt_variant(prompt_variant)
         trace = self.prepare_diagnostic(repo_path, question, scenario=scenario,
-            assumptions=assumptions, budget=budget, search_terms=search_terms)
+            assumptions=assumptions, budget=budget, search_terms=search_terms, fact_checks=fact_checks)
         if trace.diagnosis["status"] == "prepared":
             self.diagnostic_candidate(trace, prompt_variant=prompt_variant)
         if trace.diagnosis["status"] == "candidate_completed":
@@ -852,7 +855,7 @@ class Orchestrator:
         return trace
 
     def _prepare_diagnostic_trace(self, trace, board, repo_path, evidence, task, budget):
-        from macr.evals.diagnostic_compact import VERSION, prepare_scope
+        from macr.evals.diagnostic_compact import VERSION, prepare_scope, source_observation_packet
         board.post("evidence", "evidence_memory", "evidence_set", "Original retrieved evidence",
             {"count": len(evidence), "items": evidence.to_payload_items()})
         trace.board = board.to_dict()
@@ -864,12 +867,16 @@ class Orchestrator:
             "candidate_quality_warnings": [], "candidate_parsed": False, "verification_parsed": False,
             "coverage_role": "model_task_coverage_not_semantic_proof",
             "confidence_role": "retrieval_description_only", "automatic_retries": 0}
+        if task.get("fact_checks", False):
+            trace.diagnosis["fact_checks"] = True
         try:
             sources = self._diagnostic_sources(repo_path, evidence.items())
             if not sources:
                 raise ProviderError("missing_context", failure_kind="invalid_contract")
             scope = prepare_scope(sources, case_id=trace.task_id, attempt_id=str(uuid4()))
             trace.diagnosis.update(scope=scope.to_dict(), status="prepared")
+            if task.get("fact_checks", False):
+                trace.diagnosis["observations"] = source_observation_packet(scope)
             self._diagnostic_post(trace, "scope", "Captured model-visible diagnostic source", scope.to_dict())
         except ProviderError as error:
             trace.diagnosis.update(status="failed", error_type=error.code,
@@ -915,7 +922,8 @@ class Orchestrator:
 
     def diagnostic_candidate(self, trace: Trace, *, prompt_variant: str = 'baseline') -> Trace:
         from macr.evals.diagnostic_compact import (
-            SUPPORTED_VERSIONS, candidate_quality_warnings, restore_scope, validate_candidate_prompt_variant)
+            VERSION, SUPPORTED_VERSIONS, candidate_quality_warnings, restore_scope, source_observation_packet,
+            validate_candidate_prompt_variant)
         data = trace.diagnosis
         if not data or data["status"] != "prepared":
             raise ProviderError("diagnostic_stage_invalid", failure_kind="invalid_contract")
@@ -925,10 +933,18 @@ class Orchestrator:
         scope = restore_scope(data["scope"])
         if scope.case_id != trace.task_id:
             raise ProviderError("compact_scope_mismatch", failure_kind="invalid_contract")
+        fact_checks = data.get("fact_checks", False)
+        if type(fact_checks) is not bool:
+            raise ProviderError("compact_observation_mode_invalid", failure_kind="invalid_contract")
+        if fact_checks and data["protocol"] != VERSION:
+            raise ProviderError("compact_protocol_mismatch", failure_kind="invalid_contract")
+        if (fact_checks and data.get("observations") != source_observation_packet(scope)
+                or not fact_checks and "observations" in data):
+            raise ProviderError("compact_observation_binding_invalid", failure_kind="invalid_contract")
         data["status"] = "candidate_running"
         candidate, response, error, request = self.solver.diagnostic_candidate(
             scope, **data["task"], model_budget=ModelBudget(**data["budget"]),
-            prompt_variant=prompt_variant, version=data["protocol"])
+            prompt_variant=prompt_variant, version=data["protocol"], fact_checks=fact_checks)
         data.update(candidate=candidate, candidate_request=asdict(request),
                     candidate_parsed=candidate is not None and error is None,
                     candidate_quality_warnings=candidate_quality_warnings(candidate) if candidate is not None else [])
@@ -944,7 +960,7 @@ class Orchestrator:
         return trace
 
     def verify_diagnostic(self, trace: Trace) -> Trace:
-        from macr.evals.diagnostic_compact import SUPPORTED_VERSIONS, restore_scope
+        from macr.evals.diagnostic_compact import SUPPORTED_VERSIONS, restore_scope, validate_candidate_context
         data = trace.diagnosis
         if not data or data["status"] != "candidate_completed":
             raise ProviderError("diagnostic_stage_invalid", failure_kind="invalid_contract")
@@ -954,10 +970,16 @@ class Orchestrator:
         request = ModelRequest(**data["candidate_request"])
         if request.metadata.get("diagnostic_protocol") != data["protocol"]:
             raise ProviderError("diagnostic_protocol_mismatch", failure_kind="invalid_contract")
-        payload = json.loads(request.messages[-1]["content"])
+        payload = validate_candidate_context(request, scope)
         if scope.case_id != trace.task_id or any(payload[key] != data["task"][key]
                 for key in ("question", "scenario", "assumptions")):
             raise ProviderError("compact_scope_mismatch", failure_kind="invalid_contract")
+        fact_checks = data.get("fact_checks", False)
+        if type(fact_checks) is not bool:
+            raise ProviderError("compact_observation_mode_invalid", failure_kind="invalid_contract")
+        if (fact_checks != ("observations" in payload)
+                or fact_checks and data.get("observations") != payload["observations"]):
+            raise ProviderError("compact_observation_binding_invalid", failure_kind="invalid_contract")
         data["status"] = "verification_running"
         verification, response, error, verification_request = self.solver.diagnostic_verification(
             scope, request, data["candidate"], model_budget=ModelBudget(**data["budget"]))

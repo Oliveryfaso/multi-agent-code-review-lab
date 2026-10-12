@@ -793,3 +793,141 @@ class DiagnosticOrchestratorTests(unittest.TestCase):
         with self.assertRaises(ProviderError) as error:
             agent.prepare_diagnostic(self.repo, "\ud800", scenario=SCENARIO, assumptions=[], budget=BUDGET)
         self.assertEqual(error.exception.code, "diagnostic_input_invalid")
+
+    def test_fact_checks_reach_both_production_requests_and_persist_exact_packet(self):
+        provider, transport = self.production([candidate, verification], diagnostic_schema_decoding=True)
+        agent = self.orchestrator(provider)
+        trace = agent.run_diagnostic(self.repo, QUESTION, scenario=SCENARIO, assumptions=[],
+            budget=BUDGET, fact_checks=True, prompt_variant='requirement_preserving')
+        self.assertEqual(len(transport.calls), 2)
+        payloads = [json.loads(call['messages'][-1]['content']) for call in transport.calls]
+        self.assertEqual(payloads[0]['observations'], payloads[1]['observations'])
+        self.assertEqual(trace.diagnosis['observations'], payloads[0]['observations'])
+        self.assertEqual(payloads[0]['question'], QUESTION)
+        self.assertEqual(payloads[0]['scenario'], SCENARIO)
+        self.assertEqual(payloads[0]['observations']['rows'][0]['return'], 'staff or paid')
+        self.assertEqual(trace.diagnosis['final'], trace.diagnosis['candidate'])
+        self.assertFalse(trace.diagnosis['semantic_proof'])
+        self.assertTrue(trace.metrics['final_review']['human_review_required'])
+        stored = self.persisted(trace)['diagnosis']
+        for name in ('candidate_request', 'verification_request'):
+            self.assertEqual(stored[name]['metadata']['diagnostic_observation_version'], 'visible_syntax_v1')
+            self.assertEqual((stored[name]['max_input_tokens'], stored[name]['max_output_tokens']), (1536, 512))
+        self.assertEqual(stored['candidate_request']['metadata']['diagnostic_observation_sha256'],
+                         stored['verification_request']['metadata']['diagnostic_observation_sha256'])
+        scope = restore_scope(trace.diagnosis['scope'])
+        for call, verifier in zip(transport.calls, (False, True)):
+            self.assertEqual(call['response_format']['json_schema']['schema'], protocol_schema(scope, verifier=verifier))
+
+    def test_fact_aids_allow_verifier_refusal_of_false_requirement_or_guard_without_flip(self):
+        scenarios = [
+            ('def gate(approved, dependency):\n    return approved and dependency()\n',
+             'The fixed dependency returns bool; only approved determines the required result.', 'no_defect_supported'),
+            ('def gate(stale, pinned):\n    if pinned:\n        return "keep"\n    return helper(pinned, stale)\n',
+             'Pinned records must be kept; inspect the known guard before claiming a helper call.', 'supported_defect')]
+        for source, scenario, verdict in scenarios:
+            with self.subTest(verdict=verdict):
+                repo = write_files(fixture_root(), {'gate.py': source})
+                def false_report(request):
+                    report = candidate(request, verdict=verdict)
+                    report.update(cause='The implementation condition is the complete requirement.',
+                                  when='The protected branch calls the helper and proves its result.')
+                    return report
+                def refuse(request):
+                    payload = json.loads(request.messages[-1]['content'])
+                    self.assertEqual(payload['scenario'], scenario)
+                    self.assertTrue(payload['observations']['rows'])
+                    checked = verification(request, changes={'behavior': 'satisfies'} if verdict == 'no_defect_supported' else {})
+                    checked.update(coverage='incomplete', reason='The original requirement/guard claim is unsupported; do not repair this candidate.')
+                    return checked
+                provider, transport = self.production([false_report, refuse], diagnostic_schema_decoding=True)
+                trace = self.orchestrator(provider).run_diagnostic(repo, 'Check the gate caller and requirement.',
+                    scenario=scenario, assumptions=[], budget=BUDGET, search_terms=['gate'], fact_checks=True)
+                self.assertEqual(len(transport.calls), 2)
+                self.assertEqual(trace.diagnosis['candidate']['verdict'], verdict)
+                self.assertEqual(trace.diagnosis['status'], 'rejected')
+                self.assertEqual(trace.diagnosis['rejection_code'], 'verification_task_incomplete')
+                self.assertIsNone(trace.diagnosis['final'])
+                self.assertTrue(all(call['usage_kind'] == 'measured' for call in trace.llm_calls))
+
+    def test_fact_packet_mutation_or_downgrade_has_zero_new_dispatch_and_keeps_stage(self):
+        for phase, mutation in (('candidate', 'packet'), ('candidate', 'mode'),
+                                ('verifier', 'packet'), ('verifier', 'digest'), ('verifier', 'downgrade')):
+            with self.subTest(phase=phase, mutation=mutation):
+                provider = FakeProvider([candidate, verification])
+                agent = self.orchestrator(provider)
+                trace = agent.prepare_diagnostic(self.repo, QUESTION, scenario=SCENARIO,
+                                                assumptions=[], budget=BUDGET, fact_checks=True)
+                if phase == 'verifier':
+                    agent.diagnostic_candidate(trace)
+                if mutation == 'packet':
+                    trace.diagnosis['observations']['rows'][0]['ref'] = 'foreign'
+                elif mutation == 'mode':
+                    trace.diagnosis['fact_checks'] = None
+                elif mutation == 'digest':
+                    trace.diagnosis['candidate_request']['metadata']['diagnostic_observation_sha256'] = '0' * 64
+                else:
+                    request = trace.diagnosis['candidate_request']
+                    payload = json.loads(request['messages'][-1]['content'])
+                    del payload['observations']
+                    request['messages'][-1]['content'] = json.dumps(payload)
+                    for key in ('diagnostic_observation_version', 'diagnostic_observation_sha256'):
+                        del request['metadata'][key]
+                before, calls = deepcopy(trace.diagnosis), len(provider.requests)
+                with self.assertRaises(ProviderError):
+                    agent.diagnostic_candidate(trace) if phase == 'candidate' else agent.verify_diagnostic(trace)
+                self.assertEqual(trace.diagnosis, before)
+                self.assertEqual(len(provider.requests), calls)
+        with self.assertRaisesRegex(ProviderError, 'diagnostic_input_invalid'):
+            self.orchestrator().prepare_diagnostic(self.repo, QUESTION, scenario=SCENARIO,
+                                                   assumptions=[], budget=BUDGET, fact_checks=1)
+
+    def test_fact_checks_preserve_length_failure_raw_usage_and_zero_overflow_dispatch(self):
+        failed = completion('{"verdict":', usage={'prompt_tokens': 100, 'completion_tokens': 40})
+        failed['choices'][0]['finish_reason'] = 'length'
+        provider, transport = self.production([failed], diagnostic_schema_decoding=True)
+        trace = self.orchestrator(provider).run_diagnostic(self.repo, QUESTION, scenario=SCENARIO,
+            assumptions=[], budget=BUDGET, fact_checks=True)
+        self.assertEqual(len(transport.calls), 1)
+        self.assertEqual(trace.diagnosis['error_type'], 'model_output_incomplete')
+        self.assertIsNone(trace.diagnosis['candidate'])
+        self.assertIsNone(trace.diagnosis['final'])
+        self.assertEqual(trace.llm_calls[0]['usage'], {'input_tokens': 100, 'output_tokens': 40})
+        self.assertEqual(trace.llm_calls[0]['finish_reason'], 'length')
+        self.assertIn('observations', json.loads(trace.diagnosis['candidate_request']['messages'][-1]['content']))
+        provider, transport = self.production([], bound=1537, diagnostic_schema_decoding=True)
+        trace = self.orchestrator(provider).run_diagnostic(self.repo, QUESTION, scenario=SCENARIO,
+            assumptions=[], budget=BUDGET, fact_checks=True)
+        self.assertEqual(transport.calls, [])
+        self.assertEqual(trace.diagnosis['error_type'], 'model_context_overflow')
+        self.assertIsNone(trace.diagnosis['final'])
+
+    def test_fact_checks_still_allow_faithful_healthy_domain_and_specific_missing_guarantee(self):
+        examples = [
+            ('def authorize(left, right):\n    return left and right\n',
+             'For boolean inputs, grant exactly when both inputs are true.', 'no_defect_supported'),
+            ('def authorize(approved, dependency):\n    return approved and dependency()\n',
+             'Require exactly approved; deployed dependency returns bool, with no return-value guarantee.', 'unknown')]
+        for source, scenario, verdict in examples:
+            with self.subTest(verdict=verdict):
+                repo = write_files(fixture_root(), {'access.py': source})
+                gap = 'For approved=True, the fixed dependency may return True or False; its missing deployed return guarantee prevents proving the approved-only requirement.'
+                def report(request):
+                    result = candidate(request, verdict=verdict, unknowns=[gap] if verdict == 'unknown' else [])
+                    if verdict == 'no_defect_supported':
+                        result.update(cause='AND grants both-True and denies every other boolean pair.',
+                                      when='authorize receives the two boolean inputs and returns exactly their conjunction, matching the whole required domain.')
+                    return result
+                def check(request):
+                    result = verification(request, changes={'behavior': 'satisfies'} if verdict == 'no_defect_supported'
+                        else {'trigger': 'unknown', 'behavior': 'unknown', 'protection': 'unknown'},
+                        unknowns=[gap] if verdict == 'unknown' else [])
+                    result['reason'] = 'The original requirement and supplied expression support this report without inventing the dependency value.'
+                    return result
+                provider, transport = self.production([report, check], diagnostic_schema_decoding=True)
+                trace = self.orchestrator(provider).run_diagnostic(repo, 'Review authorize against this requirement.',
+                    scenario=scenario, assumptions=[], budget=BUDGET, fact_checks=True)
+                self.assertEqual(len(transport.calls), 2)
+                self.assertEqual(trace.diagnosis['final']['verdict'], verdict)
+                self.assertFalse(trace.diagnosis['semantic_proof'])
+                self.assertTrue(trace.metrics['final_review']['human_review_required'])

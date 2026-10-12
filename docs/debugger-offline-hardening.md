@@ -75,3 +75,73 @@ The later [compact diagnostic loop](diagnostic-compact-loop.md) records its own
 production-entry changes and frozen native measurements. Its first compact
 candidate failed the explicit character contract; no verifier or independent
 acceptance case was dispatched. The historical results above remain unchanged.
+
+## Visible facts and the bounded 4B/7B comparison (2026-10-12)
+
+The opt-in `fact_checks=True` path now sends the same source-bound syntax
+observations to the production candidate and verifier. It records exact return
+expressions, call arguments/direct scalars and simple early-return guards from
+complete visible bodies. Guard observations describe necessary lexical conditions;
+they do not prove runtime reachability, name values or dependency return guarantees.
+Task/source/packet mismatches fail before dispatch. Default-off requests and the
+v3 output schema remain unchanged; fact-enabled v2 is refused.
+
+A frozen comparison used the same three seen development cases, candidate
+messages/scope/schema, sampling and 1536-input/512-output/2048-context budgets,
+with each verifier receiving its own model's original candidate. The two cached
+CPU models ran sequentially with independent quality gates. Actual consumption
+was **2 starts and 9 generations**, 9,325 input + 2,684 output = 12,009 tokens,
+zero retries, downloads, VMs or external model API calls. Both processes, listeners
+and monitor threads closed normally. Execution-assistant capacity resumptions
+retained the same claim and counters; they were separate from local model quality.
+
+| Development outcome | 4B | 7B |
+| --- | --- | --- |
+| Candidate contract parsing | 0/3 | 3/3 |
+| Verifier contract parsing | 0/0 (unavailable) | 3/3 |
+| Candidate label correctness | 0/0 (unavailable) | 2/3 |
+| Complete correct candidates | 0/0 (unavailable) | 0/3 |
+| Actual final delivery / end-to-end completion | 0/3 | 0/3 |
+| Specific essential-gap abstention among parsed candidates | 0/0 | 0/1 |
+| Candidate healthy false positives | 0/0 | 0/1 |
+| Candidate defect label recall / complete witness | 0/0 | 1/1 / 0/1 |
+| Fresh generations after own gate | 0 | 0 |
+| Input / output tokens | 2,989 / 1,536 | 6,336 / 1,148 |
+| Generation wire seconds | 189.963 | 453.615 |
+| Service seconds including preparation and grading wait | 682.523 | 1,152.830 |
+| Peak RSS, GiB | 5.02 | 7.42 |
+| Start / minimum observed memory-free percentage | 82 / 68 | 76 / 42 |
+
+All three 4B candidates reached the output limit and remained technical failures;
+no verifier was called and no fragment received semantic credit. The 7B verifier
+returned incomplete coverage on all three pairs, so the host preserved the original
+candidates and withheld every final. Its healthy candidate incorrectly abstained;
+its defect candidate blamed a correct protection branch rather than explaining the
+swapped-argument violation. Verifier reasons also contained false branch claims.
+Rejection therefore prevented publication but did not establish reliable correction.
+A healthy false-positive count of zero does not demonstrate health recognition, and
+a correct defect label does not establish a correct causal witness.
+
+All rates conditioned on actual finals are `null` with denominator 0. Each planned
+development cohort delivered 0/3 finals; each fresh cohort remained unattempted
+after its own gate failure. Offline checks passed 359 distinct core tests and
+77 production-module imports; the owner's 91 tests overlap that selection.
+Historical scripted replay still accepted the same old outputs and retains its
+old semantic grade. It is not native quality evidence.
+
+The [sanitized metrics](local-model-fact-check-contrast-results.json) retain the
+separate denominators and costs. These three seen cases do not establish general
+model superiority or a measured fact-packet gain. Compared with the preceding
+batch, packet and condensed instructions changed together. Neither model's
+failed gate supports promoting this opt-in path or switching the default model.
+The historical reader failure's unique cause remains unproved; the reviewed
+derived reader completed this run without that error. No additional batch started.
+
+The implementation borrows bounded output validation from
+[Pydantic AI](https://pydantic.dev/docs/ai/core-concepts/output/#output-validators),
+explicit failure classes from
+[LangGraph](https://docs.langchain.com/oss/python/langgraph/thinking-in-langgraph),
+and separate candidate validation from
+[Anthropic's review command](https://github.com/anthropics/claude-code/blob/main/plugins/code-review/commands/code-review.md).
+This batch keeps its own zero-retry limit and concrete-trigger criteria; it copies
+no confidence threshold and adds no framework dependency.

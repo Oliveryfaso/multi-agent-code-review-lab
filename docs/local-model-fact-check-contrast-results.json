@@ -1,0 +1,335 @@
+{
+  "schema_version": 1,
+  "batch": "diagnostic-fact-check-model-contrast-01",
+  "status": "native execution safely closed; development quality gates failed",
+  "date_utc": "2026-10-12",
+  "protocol": "diagnostic-compact-v3",
+  "fact_checks": true,
+  "prompt_variant": "baseline",
+  "design": {
+    "development_cases_per_model": 3,
+    "independent_fresh_cases_per_model": 3,
+    "shared_candidate_messages_scope_schema": true,
+    "verifier_uses_own_original_candidate": true,
+    "model_order": [
+      "qwen4b",
+      "qwen25coder7b"
+    ],
+    "no_post_4b_prompt_or_code_changes": true,
+    "versus_prior_batch": "fact packet and condensed system instructions changed together; no isolated packet effect"
+  },
+  "limits": {
+    "starts": 2,
+    "generations": 24,
+    "per_model_starts": 1,
+    "per_model_generations": 12,
+    "input_tokens": 1536,
+    "output_tokens": 512,
+    "context_tokens": 2048,
+    "per_call_seconds": 300,
+    "per_model_active_seconds": 1740,
+    "per_model_total_seconds": 1800,
+    "whole_batch_seconds": 3600,
+    "record_bytes": 536870912
+  },
+  "actual": {
+    "starts": 2,
+    "generations": 9,
+    "unused_request_keys": 15,
+    "input_tokens": 9325,
+    "output_tokens": 2684,
+    "total_tokens": 12009,
+    "cache_tokens": 0,
+    "wire_generation_seconds": 643.5785439999308,
+    "batch_elapsed_seconds": 1835.5064183749491,
+    "automatic_retries": 0,
+    "new_virtual_machines": 0,
+    "downloads": 0,
+    "external_model_api_calls": 0,
+    "infra_success": true,
+    "capacity_interruptions": "Execution assistant capacity resumptions were external to local model outcomes. Same session, claims and consumption were retained; no restart or replay."
+  },
+  "offline_validation": {
+    "offline_core_distinct_tests_passed": 359,
+    "production_modules_imported": 77,
+    "owner91_tests_overlap_core": true,
+    "historical_replay": "three seen cases/six inert outputs; original semantic grade remains unchanged, not six new native generations"
+  },
+  "models": {
+    "qwen4b": {
+      "model_name": "Qwen3-4B-Instruct-2507 Q4_K_M",
+      "starts": 1,
+      "generations": 3,
+      "development": {
+        "planned_cases": 3,
+        "candidate_contract": {
+          "numerator": 0,
+          "denominator": 3,
+          "rate": 0.0
+        },
+        "verifier_contract": {
+          "numerator": 0,
+          "denominator": 0,
+          "rate": null
+        },
+        "candidate_labels": {
+          "numerator": 0,
+          "denominator": 0,
+          "rate": null
+        },
+        "candidate_complete_reports": {
+          "numerator": 0,
+          "denominator": 0,
+          "rate": null
+        },
+        "final_labels": {
+          "numerator": 0,
+          "denominator": 0,
+          "rate": null
+        },
+        "final_complete_reports_conditioned_on_finals": {
+          "numerator": 0,
+          "denominator": 0,
+          "rate": null
+        },
+        "final_delivery_planned_cohort": {
+          "numerator": 0,
+          "denominator": 3,
+          "rate": 0.0
+        },
+        "end_to_end": {
+          "numerator": 0,
+          "denominator": 3,
+          "rate": 0.0
+        },
+        "candidate_healthy_false_positives": {
+          "numerator": 0,
+          "denominator": 0,
+          "rate": null
+        },
+        "final_healthy_false_positives": {
+          "numerator": 0,
+          "denominator": 0,
+          "rate": null
+        },
+        "candidate_defect_label_recall": {
+          "numerator": 0,
+          "denominator": 0,
+          "rate": null
+        },
+        "final_defect_label_recall": {
+          "numerator": 0,
+          "denominator": 0,
+          "rate": null
+        },
+        "candidate_specific_essential_abstention": {
+          "numerator": 0,
+          "denominator": 0,
+          "rate": null
+        },
+        "final_specific_essential_abstention": {
+          "numerator": 0,
+          "denominator": 0,
+          "rate": null
+        },
+        "gate_passed": false,
+        "disposition": "three candidate length failures"
+      },
+      "fresh": {
+        "planned_cases": 3,
+        "attempted_cases": 0,
+        "generations": 0,
+        "native_template_or_tokenizer_exposure": 0,
+        "semantic_rate": {
+          "numerator": 0,
+          "denominator": 0,
+          "rate": null
+        },
+        "status": "unattempted after own development gate denial"
+      },
+      "cost": {
+        "basis": "Three actual native candidate envelopes and lifecycle/trace usage; no historical replay usage or tokenizer auxiliary calls are counted as new generations.",
+        "actual_native_calls": 3,
+        "measured_input_tokens": 2989,
+        "measured_output_tokens": 1536,
+        "measured_cache_tokens": 0,
+        "wire_generation_elapsed_seconds": 189.96327245794237,
+        "native_prompt_ms_sum": 62909.066000000006,
+        "native_predicted_ms_sum": 126368.665,
+        "estimated_cost_usd": null,
+        "cost_per_correct_complete_actual_final": null,
+        "tokens_per_correct_complete_actual_final": null,
+        "generic_trace_llm_cost_warning": "Generic llm_cost aggregate zeros do not replace measured local_http envelope usage or prove a zero measured cost.",
+        "session_elapsed_seconds": 682.5233670000453,
+        "peak_rss_bytes": 5388795904,
+        "memory_start_percent": 82,
+        "memory_min_percent": 68,
+        "auxiliary_elapsed_seconds": 0.15037149703130126,
+        "local_http_events": 32
+      },
+      "safety": {
+        "infrastructure_success": true,
+        "process_absent": true,
+        "listener_absent": true,
+        "returncode": 0,
+        "threads_completed": true,
+        "monitor_failures": [],
+        "persistence_error": null
+      },
+      "original_independent_grade_sha256": "d532aec34fda6b323a323220be776f9cf4a32408475d78ab646136c922df19cd"
+    },
+    "qwen25coder7b": {
+      "model_name": "Qwen2.5-Coder-7B-Instruct Q4_K_M",
+      "starts": 1,
+      "generations": 6,
+      "development": {
+        "planned_cases": 3,
+        "candidate_contract": {
+          "numerator": 3,
+          "denominator": 3,
+          "rate": 1.0
+        },
+        "verifier_contract": {
+          "numerator": 3,
+          "denominator": 3,
+          "rate": 1.0
+        },
+        "candidate_labels": {
+          "numerator": 2,
+          "denominator": 3,
+          "rate": 0.6666666666666666
+        },
+        "candidate_complete_reports": {
+          "numerator": 0,
+          "denominator": 3,
+          "rate": 0.0
+        },
+        "final_labels": {
+          "numerator": 0,
+          "denominator": 0,
+          "rate": null
+        },
+        "final_complete_reports_conditioned_on_finals": {
+          "numerator": 0,
+          "denominator": 0,
+          "rate": null
+        },
+        "final_delivery_planned_cohort": {
+          "numerator": 0,
+          "denominator": 3,
+          "rate": 0.0
+        },
+        "end_to_end": {
+          "numerator": 0,
+          "denominator": 3,
+          "rate": 0.0
+        },
+        "candidate_healthy_false_positives": {
+          "numerator": 0,
+          "denominator": 1,
+          "rate": 0.0
+        },
+        "final_healthy_false_positives": {
+          "numerator": 0,
+          "denominator": 0,
+          "rate": null
+        },
+        "candidate_defect_label_recall": {
+          "numerator": 1,
+          "denominator": 1,
+          "rate": 1.0
+        },
+        "final_defect_label_recall": {
+          "numerator": 0,
+          "denominator": 0,
+          "rate": null
+        },
+        "candidate_specific_essential_abstention": {
+          "numerator": 0,
+          "denominator": 1,
+          "rate": 0.0
+        },
+        "final_specific_essential_abstention": {
+          "numerator": 0,
+          "denominator": 0,
+          "rate": null
+        },
+        "gate_passed": false,
+        "disposition": "three verification_task_incomplete rejections"
+      },
+      "fresh": {
+        "planned_cases": 3,
+        "attempted_cases": 0,
+        "generations": 0,
+        "native_template_or_tokenizer_exposure": 0,
+        "semantic_rate": {
+          "numerator": 0,
+          "denominator": 0,
+          "rate": null
+        },
+        "status": "unattempted after own development gate denial"
+      },
+      "cost": {
+        "basis": "Six original native envelopes/lifecycle records and persisted LocalHTTPProvider calls. Historical replay, auxiliary tokenization and previous-model costs excluded.",
+        "actual_native_calls": 6,
+        "measured_input_tokens": 6336,
+        "measured_output_tokens": 1148,
+        "measured_cache_tokens": 0,
+        "wire_generation_elapsed_seconds": 453.6152715419885,
+        "per_role": {
+          "candidate": {
+            "calls": 3,
+            "input_tokens": 2989,
+            "output_tokens": 294,
+            "cache_tokens": 0,
+            "wire_elapsed_seconds": 165.50814545806497
+          },
+          "verifier": {
+            "calls": 3,
+            "input_tokens": 3347,
+            "output_tokens": 854,
+            "cache_tokens": 0,
+            "wire_elapsed_seconds": 288.1071260839235
+          }
+        },
+        "estimated_cost_usd": null,
+        "cost_per_correct_complete_actual_final": null,
+        "tokens_per_correct_complete_actual_final": null,
+        "generic_trace_llm_cost_warning": "Measured local_http envelope usage supersedes generic aggregate zero tokens/cost.",
+        "session_elapsed_seconds": 1152.8303342500003,
+        "peak_rss_bytes": 7962230784,
+        "memory_start_percent": 76,
+        "memory_min_percent": 42,
+        "auxiliary_elapsed_seconds": 0.22498733142856508,
+        "local_http_events": 41
+      },
+      "safety": {
+        "infrastructure_success": true,
+        "process_absent": true,
+        "listener_absent": true,
+        "returncode": 0,
+        "threads_completed": true,
+        "monitor_failures": [],
+        "persistence_error": null
+      },
+      "original_independent_grade_sha256": "3852554f00e6647e3155013b322f2f6ad6e200aeb496116e12e698969f985bd2"
+    }
+  },
+  "interpretation": [
+    "7B parsed all six business outputs but delivered no correct complete final; this does not support changing the default model.",
+    "No final is not a healthy or unknown answer; every zero-denominator conditional rate is null.",
+    "7B candidate healthy false positives0/1 coexist with incorrect unknown on that healthy case; label recall1/1 coexists with a false mechanism.",
+    "The 4B truncations make its conditional semantic metrics unavailable. Raw fragments are not repaired or credited.",
+    "Both fresh cohorts are unattempted, not semantic failures; three seen cases do not estimate general quality.",
+    "The historical read_file_drift incident remains causally unproven; this run used the reviewed derived reader and did not encounter that failure."
+  ],
+  "publication_exclusions": [
+    "raw model outputs",
+    "private acceptance sources/oracle",
+    "logs",
+    "runtime databases",
+    "weights",
+    "personal configuration",
+    "host paths"
+  ]
+}

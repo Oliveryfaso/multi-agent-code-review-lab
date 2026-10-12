@@ -258,3 +258,74 @@ class StaticFactsTests(unittest.TestCase):
                     'def receive(value):\n    return value\ndef start(flag):\n    return ' + expression + '\n'})
                 self.assertEqual(package['bindings'], [])
                 self.assertTrue(any(u['reason'] == 'control_flow_unsupported' for u in package['unknowns']))
+
+
+class VisibleSourceObservationTests(unittest.TestCase):
+    def observe(self, body, *, start=1, complete=True, citable=True):
+        from macr.investigation.static_facts import collect_visible_observations
+        return collect_visible_observations([{'id': 'e1', 'file': 'visible.py', 'start': start,
+            'end': start + len(body.splitlines()) - 1, 'body': body,
+            'complete': complete, 'citable': citable}])
+
+    def test_original_boolean_expression_and_calls_have_no_return_or_execution_proof(self):
+        packet = self.observe('def gate(signed, policy):\n    return signed and policy()\n', start=20)
+        returned = next(row for row in packet['rows'] if 'return' in row)
+        call = next(row for row in packet['rows'] if 'call' in row)
+        self.assertEqual((returned['line'], returned['return'], returned['operator']),
+                         (21, 'signed and policy()', 'And'))
+        self.assertEqual((call['ref'], call['call'], call['args']), ('e1', 'policy', []))
+        for name in ('semantic_proof', 'data_flow_proven', 'repository_code_executed'):
+            self.assertIs(packet[name], False)
+        self.assertNotIn('verdict', packet)
+        self.assertNotIn('return_value', call)
+
+    def test_consumed_argument_spellings_and_direct_literals_preserve_utf8_and_types(self):
+        packet = self.observe('def caller(value):\n    return target("é", right=True, count=0, other=None, missing=value)\n',
+                              start=11)
+        call = next(row for row in packet['rows'] if 'call' in row)
+        self.assertEqual(call['line'], 12)
+        self.assertEqual(call['args'][0], {'expr': '"é"', 'literal': {'type': 'str', 'value': 'é'}})
+        self.assertEqual(call['keywords']['right']['literal'], {'type': 'bool', 'value': True})
+        self.assertEqual(call['keywords']['count']['literal'], {'type': 'int', 'value': 0})
+        self.assertEqual(call['keywords']['other']['literal'], {'type': 'NoneType', 'value': None})
+        self.assertEqual(call['keywords']['missing'], {'expr': 'value'})
+        escaped = self.observe('def caller():\n    return target("\\ud800", 1e999, -1)\n')
+        arguments = next(row for row in escaped['rows'] if 'call' in row)['args']
+        self.assertTrue(all('literal' not in item for item in arguments))
+
+    def test_returning_guard_records_only_necessary_lexical_condition(self):
+        for condition in ('pinned', 'not pinned'):
+            with self.subTest(condition=condition):
+                body = f'def choose(stale, pinned):\n    if {condition}:\n        return "keep"\n    return helper(pinned, stale)\n'
+                packet = self.observe(body, start=10)
+                guard = next(row for row in packet['rows'] if 'if' in row)
+                self.assertEqual(guard, {'ref': 'e1', 'line': 11, 'if': condition,
+                    'returns': '"keep"', 'following_calls': [13], 'requires': 'guard_false'})
+                call = next(row for row in packet['rows'] if 'call' in row)
+                self.assertEqual(call['args'], [{'expr': 'pinned'}, {'expr': 'stale'}])
+                self.assertNotIn('executed', call)
+        compared = self.observe('def equal(old, new):\n    if old == new:\n        return False\n    return helper(old, new)\n')
+        guard = next(row for row in compared['rows'] if 'if' in row)
+        self.assertEqual(guard['if'], 'old == new')
+        self.assertEqual(guard['relation'], 'not_inferred')
+        self.assertNotIn('requires', guard)
+        unreachable = self.observe('def stopped():\n    return False\n    helper(True)\n')
+        self.assertFalse(any('call' in row for row in unreachable['rows']))
+
+    def test_unsupported_partial_unicode_and_limit_never_become_concrete_paths(self):
+        examples = ['def f(value=True):\n    return helper(value)\n',
+            'def f(value):\n    value = True\n    if value:\n        return 1\n    return helper(value)\n',
+            'def f(values):\n    return helper(*values)\n',
+            'def f(value):\n    while value:\n        helper(value)\n    return 1\n']
+        for body in examples:
+            with self.subTest(body=body):
+                rows = self.observe(body)['rows']
+                self.assertEqual(len(rows), 1)
+                self.assertEqual(rows[0]['unsupported'], 'complex_signature_control_or_rebinding')
+        valid_prefix = 'def f():\n    return True\n'
+        self.assertEqual(self.observe(valid_prefix, complete=False)['rows'][0]['unsupported'], 'incomplete_or_locator')
+        self.assertEqual(self.observe('def bad(\n')['rows'][0]['unsupported'], 'source_syntax_unavailable')
+        self.assertEqual(self.observe('def bad():\n    return "\ud800"\n')['rows'][0]['unsupported'], 'source_syntax_unavailable')
+        many = self.observe('def many():\n' + '    call(True)\n' * 40)
+        self.assertEqual(len(many['rows']), 32)
+        self.assertTrue(many['limited'])

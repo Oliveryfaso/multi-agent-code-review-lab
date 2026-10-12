@@ -209,12 +209,14 @@ class SolverAgent:
 
     def diagnostic_candidate(self, scope, *, question: str, scenario: str,
                              assumptions: list[str], model_budget: ModelBudget,
-                             prompt_variant: str = 'baseline', version=_DEFAULT_DIAGNOSTIC_VERSION):
+                             prompt_variant: str = 'baseline', version=_DEFAULT_DIAGNOSTIC_VERSION,
+                             fact_checks: bool = False):
         from macr.evals.diagnostic_compact import VERSION, build_candidate_request, parse_candidate
         if version is _DEFAULT_DIAGNOSTIC_VERSION:
             version = VERSION
         request = build_candidate_request(scope, question=question, scenario=scenario,
-                                          assumptions=assumptions, prompt_variant=prompt_variant, version=version)
+                                          assumptions=assumptions, prompt_variant=prompt_variant, version=version,
+                                          fact_checks=fact_checks)
         request.metadata.update({"role": "diagnostic_candidate", "run_id": scope.case_id,
                                  "attempt_id": scope.attempt_id})
         return self._diagnostic_call(

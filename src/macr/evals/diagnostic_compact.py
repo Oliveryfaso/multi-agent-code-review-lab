@@ -7,6 +7,7 @@ from macr.evals.diagnostic_compare import VERDICTS, _parse, validate_diagnosis
 from macr.evals.diagnostic_verification import (CHECK_STATES, REQUIRED_REF_STATES,
     validate_assessment, validate_check_rows, validate_verification as validate_v1)
 from macr.investigation.validation import ContractError, validate_identifier, validate_relative
+from macr.investigation.static_facts import VISIBLE_OBSERVATIONS_VERSION, collect_visible_observations
 from macr.memory.run_store import encoded
 from macr.providers.base import ModelRequest, ProviderError, validate_request
 from macr.providers.local_http import _object
@@ -28,6 +29,26 @@ REQUIREMENT_PRESERVING_PROMPT = (
     'and name that guarantee and the known caller path. A possible failure is not a proved defect: supported_defect needs '
     'a concrete reachable violation established by visible behavior and stated guarantees; no_defect_supported needs positive '
     'support for the full stated requirement, including guards and caller arguments.')
+FACT_CANDIDATE_SYSTEM = (
+    'Diagnose only complete citable source and the unchanged question/scenario/assumptions. '
+    'Observations describe syntax, not executed paths, resolved callees or proved return values; '
+    'guard_false is only a necessary condition for listed later call occurrences. And/Or return operands. '
+    'Return the shown JSON, verdict first, scope exact. Definite cause/when must explain mechanism, '
+    'caller arguments, actual/required results and full stated domain, with refs and no gaps. '
+    'Unknown has null cause/when and the specific necessary missing guarantee plus known caller path. '
+    'Missing observations are not automatically essential gaps. '
+    'Do not strengthen requirements or invent fixed/typed dependency guarantees. '
+    'Preferred lengths are targets; preserve complete explanations. No tools, confidence, patches or extra fields. '
+    'Examples show syntax only.')
+FACT_VERIFICATION_SYSTEM = (
+    'Check the original candidate against the unchanged question/scenario/assumptions, source and syntax observations. '
+    'Check actual caller arguments and returning guards; call occurrences are not observed execution or return guarantees. '
+    'Return the shown JSON: five {state, refs} checks and one complete reason. Cite required IDs even when repeated '
+    'under another check; copy scope. Coverage is incomplete for omitted required path/domain/gaps or unsupported '
+    'or contradicted causal claims. Do not repair the candidate in reason. Unknowns are essential gaps only; '
+    'definite states have no gaps. Coherent states/coverage are not semantic proof; refuting a defect does not '
+    'establish whole-domain health. No tools, confidence, assessment, per-check basis or extra fields. '
+    'Examples show syntax only.')
 
 
 def validate_candidate_prompt_variant(prompt_variant):
@@ -79,6 +100,41 @@ class CompactScope:
 def _scope_digest(case_id, attempt_id, rows):
     return hashlib.sha256(encoded({'case_id': case_id, 'attempt_id': attempt_id,
         'source': [asdict(replace(row, id='')) for row in rows]})).hexdigest()
+
+
+def source_observation_packet(scope):
+    return collect_visible_observations(_visible(scope))
+
+
+def _observation_digest(scope, payload):
+    try:
+        return hashlib.sha256(encoded({'scope_sha256': scope.scope_sha256,
+            'task': {name: payload[name] for name in ('question', 'scenario', 'assumptions')},
+            'observations': payload['observations']})).hexdigest()
+    except (UnicodeError, ValueError, TypeError):
+        raise ProviderError('compact_observation_binding_invalid') from None
+
+
+def validate_candidate_context(request, scope):
+    """Validate persisted input before continuing; observations cannot authorize themselves."""
+    validate_request(request)
+    version = _version(request.metadata.get('diagnostic_protocol'))
+    payload = _object(request.messages[-1]['content'])
+    keys = {'question', 'scenario', 'assumptions', 'scope', 'source', 'contract', 'shape_examples'}
+    declared = any(name in request.metadata for name in
+                   ('diagnostic_observation_version', 'diagnostic_observation_sha256'))
+    enabled = declared or 'observations' in payload
+    _require(set(payload) == keys | ({'observations'} if enabled else set()), 'compact_input_invalid')
+    _require(payload.get('scope') == scope.binding and payload.get('source') == _visible(scope)
+             and request.metadata.get('scope_sha256') == scope.scope_sha256, 'compact_scope_mismatch')
+    if enabled:
+        _require(version == VERSION
+            and request.metadata.get('diagnostic_observation_version') == VISIBLE_OBSERVATIONS_VERSION
+            and payload.get('observations') == source_observation_packet(scope),
+            'compact_observation_binding_invalid')
+        _require(request.metadata.get('diagnostic_observation_sha256') == _observation_digest(scope, payload),
+                 'compact_observation_binding_invalid')
+    return payload
 
 
 def prepare_scope(evidence, *, case_id, attempt_id, max_body_chars=1200):
@@ -396,8 +452,10 @@ def _contract(scope, *, verifier=False, version=VERSION):
 
 def build_candidate_request(scope, *, question, scenario, assumptions,
                             max_input_tokens=1536, max_output_tokens=512, timeout_seconds=300,
-                            prompt_variant='baseline', version=VERSION):
+                            prompt_variant='baseline', version=VERSION, fact_checks=False):
     _version(version)
+    _require(type(fact_checks) is bool, 'compact_observation_mode_invalid')
+    _require(not fact_checks or version == VERSION, 'compact_protocol_mismatch')
     validate_candidate_prompt_variant(prompt_variant)
     _require(all(type(value) is str and value.strip() for value in (question, scenario))
              and type(assumptions) is list and all(type(value) is str and value.strip()
@@ -421,6 +479,9 @@ def build_candidate_request(scope, *, question, scenario, assumptions,
             'Preserve complete explanations within those limits,',
             'Preferred lengths are brevity targets. Preserve complete explanations,')
         system = system.replace('The three examples illustrate', 'The examples illustrate')
+    if fact_checks:
+        payload['observations'] = source_observation_packet(scope)
+        system = FACT_CANDIDATE_SYSTEM
     if prompt_variant == 'requirement_preserving':
         system += '\n\n' + REQUIREMENT_PRESERVING_PROMPT
     request = ModelRequest([{'role': 'system', 'content': system},
@@ -430,6 +491,9 @@ def build_candidate_request(scope, *, question, scenario, assumptions,
         metadata={'diagnostic_protocol': version, 'scope_sha256': scope.scope_sha256})
     if prompt_variant != 'baseline':
         request.metadata['diagnostic_prompt_variant'] = prompt_variant
+    if fact_checks:
+        request.metadata.update(diagnostic_observation_version=VISIBLE_OBSERVATIONS_VERSION,
+                                diagnostic_observation_sha256=_observation_digest(scope, payload))
     validate_request(request)
     return request
 
@@ -439,13 +503,7 @@ def build_verification_request(candidate_request, scope, candidate, *, version=N
     actual_version = _version(candidate_request.metadata.get('diagnostic_protocol'))
     _require(version is None or version == actual_version, 'compact_protocol_mismatch')
     version = actual_version
-    payload = _object(candidate_request.messages[-1]['content'])
-    _require(set(payload) == {'question', 'scenario', 'assumptions', 'scope', 'source', 'contract', 'shape_examples'},
-             'compact_input_invalid')
-    _require(payload.get('scope') == scope.binding
-             and payload.get('source') == _visible(scope)
-             and candidate_request.metadata.get('scope_sha256') == scope.scope_sha256,
-             'compact_scope_mismatch')
+    payload = validate_candidate_context(candidate_request, scope)
     schema = protocol_schema(scope, verifier=True, version=version)
     payload.pop('shape_examples')
     payload.update(candidate=_wire_candidate(candidate, scope, version=version),
@@ -477,6 +535,8 @@ def build_verification_request(candidate_request, scope, candidate, *, version=N
         system = system.replace('omit unneeded refs keys.', 'use an empty refs array when the state needs no citation.')
         system = system.replace('checks.protection is', 'checks.protection.state is')
         system = system.replace('refs.protection', 'checks.protection.refs').replace('refs.behavior', 'checks.behavior.refs')
+    if 'observations' in payload:
+        system = FACT_VERIFICATION_SYSTEM
     request = replace(candidate_request, messages=[{'role': 'system', 'content': system},
         {'role': 'user', 'content': encoded(payload).decode()}], response_schema=schema,
         metadata=candidate_request.metadata | {'diagnostic_step': 'verification'})

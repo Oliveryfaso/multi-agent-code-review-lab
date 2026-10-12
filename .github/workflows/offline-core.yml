@@ -82,6 +82,7 @@ jobs:
           test_static_facts.StaticFactsTests.test_cross_file_alias_returns_are_source_facts_not_runtime_flow
           test_static_facts.StaticFactsTests.test_argument_expressions_locations_and_direct_scalars_are_source_faithful
           test_static_facts.StaticFactsTests.test_literal_argument_does_not_promote_declared_bool_or_call_result_to_a_value
+          test_static_facts.VisibleSourceObservationTests
           test_static_locate_abstention
 
       - name: Persistence recovery and synthetic CLI

@@ -23,6 +23,125 @@ ASSUMPTIONS = [
     'Literal/assignment types do not establish callee return values or causal correctness.',
     'Unresolved index relations are missing static information, not runtime errors.',
 ]
+VISIBLE_OBSERVATIONS_VERSION = 'visible_syntax_v1'
+
+
+def _source_expression(node, snippet):
+    if node is None:
+        return None
+    location = snippet['location']
+    if not location['start'] <= node.lineno <= node.end_lineno <= location['end']:
+        return None
+    relative = copy(node)
+    relative.lineno -= location['start'] - 1
+    relative.end_lineno -= location['start'] - 1
+    return ast.get_source_segment(snippet['text'], relative)
+
+
+def _literal_descriptor(node):
+    if not isinstance(node, ast.Constant):
+        return None
+    value = node.value
+    safe = type(value) in (type(None), bool, int, str) or (type(value) is float and isfinite(value))
+    if type(value) is str:
+        try:
+            value.encode('utf-8')
+        except UnicodeError:
+            safe = False
+    return {'type': type(value).__name__, 'value': value} if safe else None
+
+
+def collect_visible_observations(source):
+    """Describe consumed syntax only; no file reads, binding resolution or path execution."""
+    rows, limited = [], False
+
+    def add(ref, line, **values):
+        nonlocal limited
+        if len(rows) == 32:
+            limited = True
+        else:
+            rows.append({'ref': ref, 'line': line, **values})
+
+    for item in source:
+        ref, start = item['id'], item['start']
+        if not item['citable'] or not item['complete']:
+            add(ref, start, unsupported='incomplete_or_locator')
+            continue
+        snippet = {'text': item['body'], 'location': {'start': start, 'end': item['end']}}
+        try:
+            tree = ast.parse(item['body'])
+            ast.increment_lineno(tree, start - 1)
+        except (SyntaxError, UnicodeError, ValueError, RecursionError):
+            add(ref, start, unsupported='source_syntax_unavailable')
+            continue
+        functions = [node for node in tree.body if isinstance(node, ast.FunctionDef)]
+        if not functions:
+            add(ref, start, unsupported='ordinary_function_not_visible')
+        for function in functions:
+            args = function.args
+            children = [node for node in ast.walk(function) if node is not function]
+            unsupported = (ast.Assign, ast.AnnAssign, ast.AugAssign, ast.Delete, ast.NamedExpr,
+                ast.For, ast.AsyncFor, ast.While, ast.Try, ast.With, ast.AsyncWith,
+                ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda, ast.Yield,
+                ast.YieldFrom, ast.Await, ast.ListComp, ast.DictComp, ast.SetComp, ast.GeneratorExp)
+            if (function.decorator_list or args.defaults or args.vararg or args.kwarg
+                    or any(value is not None for value in args.kw_defaults)
+                    or any(isinstance(node, unsupported) for node in children)
+                    or any(isinstance(node, ast.Call) and (any(isinstance(value, ast.Starred)
+                        for value in node.args) or any(value.arg is None for value in node.keywords))
+                        for node in children)
+                    or any(not isinstance(node, (ast.Return, ast.Expr, ast.Pass, ast.If))
+                        or isinstance(node, ast.If) and (node.orelse or len(node.body) != 1
+                            or not isinstance(node.body[0], ast.Return)) for node in function.body)):
+                add(ref, function.lineno, unsupported='complex_signature_control_or_rebinding')
+                continue
+
+            def argument(node):
+                value = {'expr': _source_expression(node, snippet)}
+                literal = _literal_descriptor(node)
+                if literal is not None:
+                    value['literal'] = literal
+                return value
+
+            def describe(value):
+                if isinstance(value, ast.Return):
+                    fields = {'return': _source_expression(value.value, snippet)}
+                    if isinstance(value.value, ast.BoolOp):
+                        fields['operator'] = type(value.value.op).__name__
+                    add(ref, value.lineno, **fields)
+                for call in sorted((node for node in ast.walk(value) if isinstance(node, ast.Call)),
+                                   key=lambda node: (node.lineno, node.col_offset)):
+                    add(ref, call.lineno, call=_source_expression(call.func, snippet),
+                        args=[argument(node) for node in call.args],
+                        keywords={node.arg: argument(node.value) for node in call.keywords})
+
+            for position, statement in enumerate(function.body):
+                if isinstance(statement, ast.If):
+                    condition = statement.test
+                    simple = isinstance(condition, ast.Name) or (isinstance(condition, ast.UnaryOp)
+                        and isinstance(condition.op, ast.Not) and isinstance(condition.operand, ast.Name))
+                    fields = {'if': _source_expression(condition, snippet),
+                              'returns': _source_expression(statement.body[0].value, snippet)}
+                    if simple:
+                        later = []
+                        for following in function.body[position + 1:]:
+                            later.extend(node.lineno for node in ast.walk(following) if isinstance(node, ast.Call))
+                            if isinstance(following, ast.Return):
+                                break
+                        if later:
+                            fields.update(following_calls=sorted(set(later)), requires='guard_false')
+                    else:
+                        fields['relation'] = 'not_inferred'
+                    add(ref, statement.lineno, **fields)
+                    # Calls within a guard/return are syntactic occurrences, never observed execution.
+                    describe(statement.test)
+                    describe(statement.body[0])
+                elif isinstance(statement, (ast.Return, ast.Expr)):
+                    describe(statement)
+                if isinstance(statement, ast.Return):
+                    break
+    return {'version': VISIBLE_OBSERVATIONS_VERSION, 'rows': rows, 'limited': limited,
+            'data_flow_proven': False, 'repository_code_executed': False, 'semantic_proof': False}
 
 
 def _expression_type(node, known):
@@ -88,10 +207,7 @@ def _bind_arguments(call, function, known, snippet):
         if not location['start'] <= value.lineno <= value.end_lineno <= location['end']:
             return None, 'argument_source_unavailable'
         # AST columns are UTF-8 byte offsets; extract from consumed source only.
-        relative = copy(value)
-        relative.lineno -= location['start'] - 1
-        relative.end_lineno -= location['start'] - 1
-        expression = ast.get_source_segment(snippet['text'], relative)
+        expression = _source_expression(value, snippet)
         if expression is None:
             return None, 'argument_source_unavailable'
         value_type = _expression_type(value, known)
@@ -101,17 +217,9 @@ def _bind_arguments(call, function, known, snippet):
             'argument_location': asdict(Location(location['file'], value.lineno, value.end_lineno,
                                                 location['symbol_id'])),
             'argument_columns_utf8': {'start': value.col_offset, 'end': value.end_col_offset}}
-        if isinstance(value, ast.Constant):
-            literal = value.value
-            safe = type(literal) in (type(None), bool, int, str) or (
-                type(literal) is float and isfinite(literal))
-            if type(literal) is str:
-                try:
-                    literal.encode('utf-8')
-                except UnicodeError:
-                    safe = False
-            if safe:
-                argument['literal'] = {'type': type(literal).__name__, 'value': literal}
+        literal = _literal_descriptor(value)
+        if literal is not None:
+            argument['literal'] = literal
         arguments.append(argument)
     return arguments, None
 
