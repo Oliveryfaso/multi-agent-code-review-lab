@@ -236,6 +236,29 @@ class DiagnosticCompactTests(unittest.TestCase):
         for phrase in ('question/scenario', 'Set incomplete', 'not proof', 'do not repair'):
             self.assertIn(phrase, verification.messages[0]['content'])
 
+    def test_verifier_explains_conditional_protection_refs_without_task_specific_answers(self):
+        paragraph = (
+            'When checks.protection is effective or ineffective, include refs.protection with 1–2 allowed IDs '
+            'identifying the visible protective mechanism. Even if an ID already appears in refs.behavior, '
+            'repeat it under refs.protection when it supports both checks. Do not invent a guard or an ID. '
+            'Keep absent/unknown when the evidence supports those states; this instruction does not require '
+            'a protection reference for them.')
+        before = copy.deepcopy(self.request)
+        candidate = self.candidate()
+        original = copy.deepcopy(candidate)
+        verification = build_verification_request(self.request, self.scope, candidate)
+        self.assertTrue(verification.messages[0]['content'].endswith('\n\n' + paragraph))
+        self.assertEqual(verification.messages[0]['content'].count(paragraph), 1)
+        self.assertNotIn(paragraph, self.request.messages[0]['content'])
+        for answer in ('e1', ' OR ', 'supported_defect', 'no_defect_supported', 'demo'):
+            self.assertNotIn(answer, paragraph)
+        payload = json.loads(verification.messages[-1]['content'])
+        self.assertEqual(payload['contract']['refs']['required_when']['protection'], ['effective', 'ineffective'])
+        self.assertEqual(verification.response_schema['properties']['refs']['required'], [])
+        self.assertEqual(verification.response_schema, protocol_schema(self.scope, verifier=True))
+        self.assertEqual(self.request, before)
+        self.assertEqual(candidate, original)
+
     def test_request_builder_refuses_swapped_scope_table(self):
         old_request = copy.deepcopy(self.request)
         old_request.metadata['diagnostic_protocol'] = 'diagnostic-compact-v1'

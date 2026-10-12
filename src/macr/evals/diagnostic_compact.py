@@ -363,6 +363,12 @@ def build_verification_request(candidate_request, scope, candidate):
         'The host decides acceptance from states; refuting a defect does not establish whole-scope health. '
         'No assessment, per-check basis, confidence, tools or extra fields. Copy scope exactly. '
         'The example illustrates syntax only; do not reuse its states. Decide from source and domain.')
+    system += (
+        '\n\nWhen checks.protection is effective or ineffective, include refs.protection with 1–2 allowed IDs '
+        'identifying the visible protective mechanism. Even if an ID already appears in refs.behavior, '
+        'repeat it under refs.protection when it supports both checks. Do not invent a guard or an ID. '
+        'Keep absent/unknown when the evidence supports those states; this instruction does not require '
+        'a protection reference for them.')
     request = replace(candidate_request, messages=[{'role': 'system', 'content': system},
         {'role': 'user', 'content': encoded(payload).decode()}], response_schema=schema,
         metadata=candidate_request.metadata | {'diagnostic_step': 'verification'})

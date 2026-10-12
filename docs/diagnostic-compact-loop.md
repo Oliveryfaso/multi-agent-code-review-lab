@@ -379,3 +379,57 @@ verification only. A fresh candidate-to-verifier-to-final attempt requires two
 generations. This audit starts no service and sends no model request. It does
 not establish that the model will now meet the obligation or restore the native
 closed loop.
+
+## Enabled citation clarification: bounded native test, 2026-10-12
+
+The proposal above was subsequently enabled for compact verifier requests by
+appending that exact paragraph. It explains the existing conditional reference
+contract; the candidate prompt, schema template, host rules, cached 4B CPU
+profile, sampling and budgets remain unchanged. It contains no case answer or
+source ID. The new batch permits one service and two fresh generation keys,
+with no retry, later stage, model validator or independent acceptance case.
+
+The same visible development fixture was recovered from its previous executed
+request, source and trace, without opening sealed inputs. Both native outputs
+finished with `stop`. The candidate described the OR predicate, the
+`mixed_access -> access_status(True, False) -> allowed(True, False)` path, the
+incorrect grant and its conflict with the both-true access policy. The verifier
+returned `protection=ineffective` and explicitly cited existing `e1` under both
+`refs.behavior` and `refs.protection`. The host accepted it and retained the
+fresh candidate as final. The repeated source did not become a second location
+or supply confidence. These are actual outputs, with no inserted reference or
+state repair.
+
+Manual source comparison confirms the boolean-domain mechanism and caller
+explanation, including the implied expected denial. The final still cites
+only `e1`: the correct caller facts are visible in `e2`/`e3` but are not explicitly
+referenced. Citation coverage remains partial under the existing rubric; no
+new three-reference threshold is imposed.
+
+| Observed application measure | Previous schema-only batch | Citation clarification batch |
+| --- | --- | --- |
+| Structured native outputs | 2/2 | 2/2 |
+| Candidate business contract | 1/1 | 1/1 |
+| Verifier business contract | 0/1, missing protection key | 1/1, explicit protection key |
+| Host final | 0/1 | 1/1 |
+| Healthy, necessary-gap and independent acceptance runs | Not attempted | Not attempted |
+
+Fresh task/attempt IDs change scope bindings and schema `const` values, and the
+fresh candidate changes verifier input. The retained wire comparison explicitly
+normalizes those fields: candidate system text is identical; verifier system
+text only adds the paragraph; visible source, task, schema template and other
+wire parameters match. This is a single observed development result, not a
+strict byte-identical A/B or evidence of broader accuracy, healthy false-positive
+rate, defect recall or correct abstention improvement.
+
+The verifier's reason is still 96 characters and ends at “violating”, mid-clause.
+It has no `length` stop or native token-truncation evidence. The citation fix
+does not establish complete explanatory prose or independent semantic proof.
+
+Actual cost was one service (cumulative start 28), two generations, 1,736 input
+and 307 output tokens, 2,043 total, and 62.79 seconds including cleanup. All
+17 HTTP events were recorded: two generations and fifteen health, identity,
+template or token-count requests. The owned process, listener and monitor
+threads closed. No VM, download, external model API or additional round was
+used. Full Offline Core passed 323/323; overlapping related and scripted
+boundary selections are not summed or counted as native semantic evidence.
