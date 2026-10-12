@@ -1,5 +1,6 @@
 """Real diagnostic retrieval, solver, host gating and persistence; zero native calls."""
 from copy import deepcopy
+from dataclasses import replace
 import json
 import unittest
 from unittest.mock import patch
@@ -7,7 +8,7 @@ from uuid import UUID
 
 from debugger_fixtures import fixture_root, write_files
 from macr.agents.orchestrator import Orchestrator
-from macr.evals.diagnostic_compact import VERSION, restore_scope
+from macr.evals.diagnostic_compact import VERSION, protocol_schema, restore_scope
 from macr.memory.trace_store import TraceStore
 from macr.providers.base import ModelBudget, ModelResponse, ProviderCapabilities, ProviderError
 from macr.providers.local_http import LocalHTTPProvider
@@ -321,16 +322,21 @@ class DiagnosticOrchestratorTests(unittest.TestCase):
                 else:
                     self.assertFalse(any(row.source_tool == "code_graph" for row in selected))
 
-    def production(self, actions, *, bound=100):
+    def production(self, actions, *, bound=100, diagnostic_schema_decoding=False):
         transport = ProductionFakeTransport(actions)
         profile = fixture_profile(context_limit=2048, output_limit=512, timeout_seconds=300,
             capabilities=ProviderCapabilities(json_mode=True, usage=True))
-        provider = LocalHTTPProvider(profile, transport=transport, token_counter=lambda request, profile: bound)
+        if diagnostic_schema_decoding:
+            profile = replace(profile, runtime="llama.cpp", runtime_version="b11521")
+        provider = LocalHTTPProvider(profile, transport=transport, token_counter=lambda request, profile: bound,
+                                     diagnostic_schema_decoding=diagnostic_schema_decoding)
         return provider, transport
 
-    def run_semantic_development(self, files, question, terms, candidate_action, verifier_action):
+    def run_semantic_development(self, files, question, terms, candidate_action, verifier_action,
+                                 *, diagnostic_schema_decoding=False):
         repo = write_files(fixture_root(), files)
-        provider, transport = self.production([candidate_action, verifier_action], bound=700)
+        provider, transport = self.production([candidate_action, verifier_action], bound=700,
+                                              diagnostic_schema_decoding=diagnostic_schema_decoding)
         trace = self.orchestrator(provider).run_diagnostic(repo, question, scenario=CALLER_SCENARIO,
             assumptions=[], budget=BUDGET, search_terms=terms)
         self.assertEqual(len(transport.calls), 2)
@@ -341,6 +347,12 @@ class DiagnosticOrchestratorTests(unittest.TestCase):
         self.assertFalse(trace.diagnosis["semantic_proof"])
         payloads = [json.loads(request["messages"][-1]["content"]) for request in transport.calls]
         self.assertEqual(payloads[0]["source"], payloads[1]["source"])
+        if diagnostic_schema_decoding:
+            scope = restore_scope(trace.diagnosis["scope"])
+            schemas = [trace.diagnosis["candidate_request"]["response_schema"], protocol_schema(scope, verifier=True)]
+            self.assertEqual(schemas[0], protocol_schema(scope))
+            for request, schema in zip(transport.calls, schemas):
+                self.assertEqual(request["response_format"], {"type": "json_schema", "json_schema": {"schema": schema}})
         self.assertEqual(len(payloads[0]["source"]), 3)
         self.assertTrue(all(row["complete"] and row["citable"] for row in payloads[0]["source"]))
         self.assertEqual(len(trace.diagnosis["candidate"]["refs"]), 3)
@@ -367,6 +379,101 @@ class DiagnosticOrchestratorTests(unittest.TestCase):
         self.assertEqual([row.symbol for row in trace.answer.evidence], ["allowed", "access_status", "mixed_access"])
         self.assertIn("allowed(True,False)=True", trace.answer.answer)
         self.assertIn("required result is denied", trace.answer.answer)
+
+    def test_effective_and_ineffective_guard_citations_follow_real_retrieval(self):
+        for operator, state, verdict, value in (("or", "ineffective", "supported_defect", True),
+                                               ("and", "effective", "no_defect_supported", False)):
+            with self.subTest(protection=state):
+                raw = []
+                source = CALLER_SOURCE.replace("return staff or paid", f"return staff {operator} paid")
+                def report(request):
+                    result = candidate(request, verdict=verdict, refs=["e1", "e2", "e3"])
+                    result.update(cause=f"The {operator.upper()} mechanism {'violates' if value else 'satisfies'} the both-True policy.",
+                        when=f"mixed_access -> access_status(True,False) -> allowed(True,False)={value}; "
+                             f"returns {'granted' if value else 'denied'}, expected denied.")
+                    raw.append(json.dumps(result))
+                    return result
+                def check(request):
+                    result = verification(request, changes={"behavior": "violates" if value else "satisfies",
+                        "protection": state, "counterevidence": "does_not_refute" if value else "refutes"})
+                    result.update(reason=f"{operator.upper()} returns {value} for the mixed caller; the both-True policy requires denial.")
+                    raw.append(json.dumps(result))
+                    return result
+                trace = self.run_semantic_development({"access.py": source}, CALLER_QUESTION,
+                    ["allowed", "staff", "paid", "access_status"], report, check, diagnostic_schema_decoding=True)
+                checked = trace.diagnosis["verification"]
+                bound = restore_scope(trace.diagnosis["scope"]).source[0]
+                self.assertIn(f"return staff {operator} paid", bound.body)
+                self.assertEqual(checked["refs"]["behavior"], [bound.citation()])
+                self.assertEqual(checked["refs"]["protection"], checked["refs"]["behavior"])
+                self.assertEqual(trace.diagnosis["final"]["verdict"], verdict)
+                self.assertEqual(trace.answer.confidence, 0.0)
+                self.assertEqual(len(trace.answer.evidence), 3)
+                stored = self.persisted(trace)
+                self.assertEqual([row["payload"]["raw_output"] for row in stored["board"]["diagnostic"]
+                                  if row["kind"] == "attempt"], raw)
+                self.assertEqual([row["usage"] for row in stored["llm_calls"]],
+                                 [{"input_tokens": 100, "output_tokens": 40}] * 2)
+
+    def test_protection_citations_missing_empty_or_foreign_fail_after_one_verifier(self):
+        cases = [(state, mutation, "no_defect_supported" if state == "effective" else "supported_defect")
+                 for state in ("effective", "ineffective") for mutation in ("missing", "empty", "foreign")]
+        cases.append(("effective", "refutes_defect", "supported_defect"))
+        for state, mutation, verdict in cases:
+            with self.subTest(protection=state, mutation=mutation):
+                operator = "and" if state == "effective" else "or"
+                source = CALLER_SOURCE.replace("return staff or paid", f"return staff {operator} paid")
+                raw = []
+                def report(request):
+                    result = candidate(request, verdict=verdict, refs=["e1", "e2", "e3"])
+                    result.update(cause=f"The {operator.upper()} mechanism is reported to "
+                        f"{'satisfy' if verdict == 'no_defect_supported' else 'violate'} the both-True policy.",
+                        when=f"mixed_access -> access_status(True,False) -> allowed(True,False)={state == 'ineffective'}; "
+                             f"returns {'denied' if state == 'effective' else 'granted'}, expected denied.")
+                    raw.append(json.dumps(result))
+                    return result
+                def check(request):
+                    result = verification(request, changes={"behavior": "satisfies" if state == "effective" else "violates",
+                        "protection": state, "counterevidence": "refutes" if state == "effective" else "does_not_refute"})
+                    if mutation == "missing":
+                        result["refs"].pop("protection")
+                    elif mutation == "empty":
+                        result["refs"]["protection"] = []
+                    elif mutation == "foreign":
+                        result["refs"]["protection"] = ["unretrieved"]
+                    raw.append(json.dumps(result))
+                    return result
+                repo = write_files(fixture_root(), {"access.py": source})
+                provider, transport = self.production([report, check], bound=700, diagnostic_schema_decoding=True)
+                trace = self.orchestrator(provider).run_diagnostic(repo, CALLER_QUESTION, scenario=CALLER_SCENARIO,
+                    assumptions=[], budget=BUDGET, search_terms=["allowed", "staff", "paid", "access_status"])
+                self.assertEqual(len(transport.calls), 2)
+                scope = restore_scope(trace.diagnosis["scope"])
+                schemas = [trace.diagnosis["candidate_request"]["response_schema"], protocol_schema(scope, verifier=True)]
+                self.assertEqual(schemas[0], protocol_schema(scope))
+                for request, schema in zip(transport.calls, schemas):
+                    self.assertEqual(request["response_format"], {"type": "json_schema", "json_schema": {"schema": schema}})
+                payloads = [json.loads(request["messages"][-1]["content"]) for request in transport.calls]
+                self.assertEqual(payloads[0]["source"], payloads[1]["source"])
+                self.assertEqual(len(payloads[0]["source"]), 3)
+                self.assertTrue(all(row["complete"] and row["citable"] for row in payloads[0]["source"]))
+                self.assertEqual(trace.diagnosis["candidate"]["verdict"], verdict)
+                self.assertIsNone(trace.diagnosis["final"])
+                self.assertIsNone(trace.answer)
+                if mutation == "refutes_defect":
+                    self.assertEqual(trace.diagnosis["status"], "rejected")
+                    self.assertEqual(trace.diagnosis["rejection_code"], "verification_cross_field_conflict")
+                else:
+                    self.assertEqual(trace.diagnosis["status"], "failed")
+                    self.assertEqual(trace.diagnosis["error_type"], "compact_contract_invalid"
+                                     if mutation == "foreign" else "verification_citation_missing")
+                    self.assertEqual(trace.diagnosis["failure_kind"], "invalid_contract")
+                stored = self.persisted(trace)
+                self.assertEqual([row["payload"]["raw_output"] for row in stored["board"]["diagnostic"]
+                                  if row["kind"] == "attempt"], raw)
+                self.assertEqual([row["usage"] for row in stored["llm_calls"]],
+                                 [{"input_tokens": 100, "output_tokens": 40}] * 2)
+                self.assertEqual([row["finish_reason"] for row in stored["llm_calls"]], ["stop", "stop"])
 
     def test_healthy_nonnegative_domain_and_done_above_total_caller_completes(self):
         source = ('def pending(done, total):\n'
@@ -408,11 +515,14 @@ class DiagnosticOrchestratorTests(unittest.TestCase):
             return {"verdict": "unknown", "scope": payload["scope"], "refs": ["e1", "e2", "e3"],
                     "cause": None, "when": None, "unknowns": [gap]}
         def check_gap(request):
-            result = verification(request, changes={"trigger": "unknown", "behavior": "unknown"}, unknowns=[gap])
+            result = verification(request, changes={"trigger": "unknown", "behavior": "unknown",
+                                                    "protection": "unknown"}, unknowns=[gap])
             result.update(reason="The supplied path is covered, but the absent external resolve contract prevents a guarantee.")
             return result
         trace = self.run_semantic_development({"lookup.py": source}, question,
-            ["lookup", "display_lookup", "registry", "resolve"], unknown_caller, check_gap)
+            ["lookup", "display_lookup", "registry", "resolve"], unknown_caller, check_gap,
+            diagnostic_schema_decoding=True)
+        self.assertNotIn("protection", trace.diagnosis["verification"]["refs"])
         self.assertEqual(trace.diagnosis["final"]["verdict"], "unknown")
         self.assertEqual(trace.diagnosis["final"]["unknowns"], [gap])
         self.assertEqual(trace.diagnosis["candidate_quality_warnings"], [

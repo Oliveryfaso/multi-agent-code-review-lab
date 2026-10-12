@@ -323,3 +323,59 @@ then writes `stage_A_failed`, changing that suite file's hash; the four raw/requ
 files and trace still match. Independent review reproduced the earlier hash by
 changing only the status in memory and separately bound the final suite hash.
 No semantic gate was consumed or later stage released.
+
+## Protection citation audit: 2026-10-12
+
+Zero-generation replay identifies the precise failure as a missing
+`refs.protection` key, rather than an empty list, foreign ID or invalid location.
+The returned `refs.behavior=["e1"]` is valid but does not satisfy a different
+check's citation obligation. The supplied `staff or paid` predicate is an existing
+access mechanism; for the stated both-true policy it is ineffective on the mixed
+input. Its existing source can support both behavior and protection checks.
+Repeating that ID under two check keys does not create a second source or raise
+confidence. No correct guard or new source needs to be invented.
+
+| Protection state | Meaning in the supplied task | Citation obligation |
+| --- | --- | --- |
+| `effective` | A visible mechanism prevents the proposed failure | Nonempty `refs.protection` identifying that mechanism |
+| `ineffective` | A visible mechanism exists but does not prevent the failure | Nonempty `refs.protection` identifying that mechanism |
+| `absent` | No mechanism appears in the fully visible relevant path | No invented protection reference; assess only that visible scope |
+| `unknown` | Necessary protection source or contract is unavailable | No invented reference; a definite defect cannot pass on this state, and an unknown assessment needs an essential gap |
+
+The decoder schema accepts optional keyed reference arrays; the visible
+`contract.refs.required_when` and verifier instructions add state-dependent
+obligations that the host enforces. They can all be satisfied together. This is
+a structural/business-rule boundary, not a requirement to cite nonexistent
+protection. The generic verifier enforces the same states. No production rule,
+schema, verdict, source binding or native capture was changed for this audit.
+
+In a clearly labelled synthetic witness, adding the existing source ID only to
+`refs.protection` makes the unchanged candidate pass the existing host validator.
+Missing and empty arrays still fail; foreign IDs remain invalid. Changing the
+state to `absent` demonstrates its existing interface path without that key; it
+does not relabel this native answer. Changing it to `unknown` cannot turn a
+supported-defect candidate into an accepted unknown or healthy result. These
+replays establish deterministic behavior, not a successful model correction.
+
+An in-scope ID can pass membership/range validation while failing to support the
+specific check. For example, the caller row by itself does not show the access
+predicate. Host acceptance of such a scripted reference is not semantic proof;
+an unrelated visible ID must not be added merely to satisfy a required key.
+
+The proposed single variable is to append the following paragraph only to the
+verifier system prompt. It is **not enabled or natively tested**:
+
+> When checks.protection is effective or ineffective, include refs.protection
+> with 1–2 allowed IDs identifying the visible protective mechanism. Even if an
+> ID already appears in refs.behavior, repeat it under refs.protection when it
+> supports both checks. Do not invent a guard or an ID. Keep absent/unknown when
+> the evidence supports those states; this instruction does not require a
+> protection reference for them.
+
+Keep the candidate prompt, schema, model, source, field limits and budgets fixed
+for that future comparison. One actual verifier generation on the retained,
+source-bound candidate is the minimum to test the prompt change; it measures
+verification only. A fresh candidate-to-verifier-to-final attempt requires two
+generations. This audit starts no service and sends no model request. It does
+not establish that the model will now meet the obligation or restore the native
+closed loop.
