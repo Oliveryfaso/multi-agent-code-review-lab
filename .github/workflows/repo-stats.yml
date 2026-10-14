@@ -13,8 +13,7 @@ on:
     - cron: "23 2 * * *"
   workflow_dispatch: # allows a manual run from the Actions tab
 
-# The action reads the traffic API (needs push access) and commits the snapshot
-# branch, which needs write access to repository contents.
+# The action commits the snapshot branch, which needs write access to contents.
 permissions:
   contents: write
 
@@ -26,4 +25,8 @@ jobs:
       - name: Snapshot repository traffic
         uses: jgehrcke/github-repo-stats@v1.4.2
         with:
-          ghtoken: ${{ secrets.GITHUB_TOKEN }}
+          # The automatic GITHUB_TOKEN cannot be used here: the traffic API
+          # rejects it with "Resource not accessible by integration" (403),
+          # verified on 2026-10-14. A personal access token with access to this
+          # repository's traffic data is required.
+          ghtoken: ${{ secrets.GHRS_GITHUB_API_TOKEN }}
