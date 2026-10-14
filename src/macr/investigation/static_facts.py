@@ -8,13 +8,13 @@ from __future__ import annotations
 
 import ast
 from collections import Counter
-from copy import copy
 from dataclasses import asdict
 from math import isfinite
 
 from .context import ContextReader
 from .records import ContextRequest, IndexQuery, Location
 from .validation import ContractError
+from .source_text import SourceText, physical_lines
 
 
 ASSUMPTIONS = [
@@ -32,10 +32,16 @@ def _source_expression(node, snippet):
     location = snippet['location']
     if not location['start'] <= node.lineno <= node.end_lineno <= location['end']:
         return None
-    relative = copy(node)
-    relative.lineno -= location['start'] - 1
-    relative.end_lineno -= location['start'] - 1
-    return ast.get_source_segment(snippet['text'], relative)
+    lines = physical_lines(snippet['text'])
+    start, end = node.lineno - location['start'], node.end_lineno - location['start']
+    if end >= len(lines):
+        return None
+    if start == end:
+        return lines[start].encode('utf-8')[node.col_offset:node.end_col_offset].decode('utf-8')
+    parts = [lines[start].encode('utf-8')[node.col_offset:].decode('utf-8')]
+    parts.extend(lines[start + 1:end])
+    parts.append(lines[end].encode('utf-8')[:node.end_col_offset].decode('utf-8'))
+    return ''.join(parts)
 
 
 def _literal_descriptor(node):
@@ -224,34 +230,54 @@ def _bind_arguments(call, function, known, snippet):
     return arguments, None
 
 
-def collect_static_facts(bundle, index, seed_symbol_ids: list[str], *, max_context_bytes: int = 1200) -> dict:
+def collect_static_facts(bundle, index, seed_symbol_ids: list[str], *, max_context_bytes: int = 1200,
+                         max_functions: int = 6, max_facts: int = 32,
+                         max_bindings: int | None = None, max_candidates: int = 50,
+                         profile=None) -> dict:
     """Collect a checkable packet from an already-built, snapshot-bound index.
 
-    The fixed six-function/one-hop limit also applies to explicit seeds. Whole
+    Configurable numeric limits retain the legacy defaults and one-hop semantics. Whole
     captured files are parsed for scope/decorator guards, through read_verified;
     only ContextReader excerpts within the unchanged byte budget yield facts.
     """
-    if (not isinstance(seed_symbol_ids, list) or not 1 <= len(seed_symbol_ids) <= 6
+    if (any(type(value) is not int or value <= 0
+            for value in (max_context_bytes, max_functions, max_facts, max_candidates))
+            or not isinstance(seed_symbol_ids, list) or not 1 <= len(seed_symbol_ids) <= max_functions
             or any(type(s) is not str for s in seed_symbol_ids)
             or len(set(seed_symbol_ids)) != len(seed_symbol_ids)
-            or type(max_context_bytes) is not int or not 0 < max_context_bytes <= 32768):
+            or (profile is None and max_context_bytes > 32768)
+            or (max_bindings is not None and (type(max_bindings) is not int or max_bindings <= 0))):
         raise ContractError('input_invalid')
-    canonical = index.query(bundle.ref, IndexQuery(symbol_ids=seed_symbol_ids, limit=50)).symbols
+    canonical = index.query(bundle.ref, IndexQuery(symbol_ids=seed_symbol_ids, limit=max_candidates)).symbols
     by_id = {s.symbol_id: s for s in canonical if s.kind in ('function', 'async_function')}
     if set(by_id) != set(seed_symbol_ids):
         raise ContractError('input_invalid')
-    seed_edges = index.query(bundle.ref, IndexQuery(kind='relations', symbol_ids=seed_symbol_ids, limit=50))
+    seed_edges = index.query(bundle.ref, IndexQuery(kind='relations', symbol_ids=seed_symbol_ids, limit=max_candidates))
     neighbors = set()
     for edge in seed_edges.relations:
         if edge.relation_type in ('calls', 'tests') and edge.resolution in ('resolved_local', 'resolved_import'):
             neighbors.update([edge.source_id, edge.target_ref])
     neighbors.difference_update(seed_symbol_ids)
     if neighbors:
-        page = index.query(bundle.ref, IndexQuery(symbol_ids=sorted(neighbors), limit=50))
+        page = index.query(bundle.ref, IndexQuery(symbol_ids=sorted(neighbors), limit=max_candidates))
         by_id.update({s.symbol_id: s for s in page.symbols if s.kind in ('function', 'async_function')})
     selected = [by_id[s] for s in seed_symbol_ids]
     extra = sorted((s for key, s in by_id.items() if key not in seed_symbol_ids), key=lambda s: (s.file, s.start, s.qualified_name))
-    selected.extend(extra[:6-len(selected)])
+    selected.extend(extra[:max_functions-len(selected)])
+    observed = {'max_functions': len(seed_symbol_ids) + len(extra), 'max_facts': 0,
+                'max_bindings': 0, 'max_candidates': 0, 'max_collector_bytes': 0}
+    sizing_bytes = 0
+    if profile is not None:
+        sources = {}
+        for symbol in selected:
+            if symbol.file not in sources:
+                sources[symbol.file] = SourceText.from_bytes(index.store.read_verified(bundle.ref, symbol.file), symbol.file)
+                sizing_bytes += index.store.last_usage.bytes_read
+            observed['max_collector_bytes'] += len(sources[symbol.file].excerpt(symbol.start, symbol.end).text.encode('utf-8'))
+        observed['max_candidates'] = max(
+            sum(symbol.symbol_id in seed_symbol_ids for symbol in index.symbols),
+            sum(symbol.symbol_id in neighbors for symbol in index.symbols),
+            sum(edge.source_id in seed_symbol_ids or edge.target_ref in seed_symbol_ids for edge in index.relations))
     context = ContextReader(index.store, index).read(bundle.ref, ContextRequest(
         [Location(s.file, s.start, s.end, s.symbol_id) for s in selected],
         max_bytes=max_context_bytes, max_tokens=max_context_bytes))
@@ -261,10 +287,13 @@ def collect_static_facts(bundle, index, seed_symbol_ids: list[str], *, max_conte
         'evidence': [asdict(e) for e in context.evidence], 'facts': [], 'bindings': [], 'unknowns': [],
         'relations': [], 'truncations': context.truncations,
         'source_bytes': sum(len(s['text'].encode('utf-8')) for s in context.snippets),
-        'limits': {'max_functions': 6, 'max_hops': 1, 'max_context_bytes': max_context_bytes, 'max_facts': 32},
+        'limits': {'max_functions': max_functions, 'max_hops': 1, 'max_context_bytes': max_context_bytes, 'max_facts': max_facts},
         'assumptions': list(ASSUMPTIONS), 'data_flow_proven': False, 'repository_code_executed': False,
-        'context_bytes_read': context.bytes_read, 'additional_guard_bytes_read': 0,
+        'context_bytes_read': context.bytes_read, 'additional_guard_bytes_read': sizing_bytes,
     }
+
+    if profile is not None:
+        packet['limits']['observed'] = observed
 
     def unknown(reason, symbol_id=None, location=None):
         item = {'reason': reason, 'symbol_id': symbol_id, 'location': asdict(location) if location else None}
@@ -273,13 +302,17 @@ def collect_static_facts(bundle, index, seed_symbol_ids: list[str], *, max_conte
 
     if seed_edges.next_cursor is not None:
         unknown('relation_query_limit')
-    if len(extra) > 6-len(seed_symbol_ids):
+    if len(extra) > max_functions-len(seed_symbol_ids):
         unknown('function_limit')
     if context.truncations or len(context.snippets) != len(selected):
         unknown('context_truncated')
         index.store.verify(bundle.ref)
         return packet
-    edges_page = index.query(bundle.ref, IndexQuery(kind='relations', symbol_ids=[s.symbol_id for s in selected], limit=50))
+    edges_page = index.query(bundle.ref, IndexQuery(kind='relations', symbol_ids=[s.symbol_id for s in selected], limit=max_candidates))
+    if profile is not None:
+        selected_query_ids = {symbol.symbol_id for symbol in selected}
+        observed['max_candidates'] = max(observed['max_candidates'], sum(
+            edge.source_id in selected_query_ids or edge.target_ref in selected_query_ids for edge in index.relations))
     packet['relations'] = [asdict(e) for e in edges_page.relations]
     if edges_page.next_cursor is not None:
         unknown('relation_query_limit')
@@ -292,7 +325,9 @@ def collect_static_facts(bundle, index, seed_symbol_ids: list[str], *, max_conte
         if symbol.file not in modules:
             data = index.store.read_verified(bundle.ref, symbol.file)
             packet['additional_guard_bytes_read'] += index.store.last_usage.bytes_read
+            SourceText.from_bytes(data, symbol.file)
             tree = ast.parse(data, filename=symbol.file)
+            index._check_ast(tree)
             modules[symbol.file] = (tree, *_module_bindings(tree))
         tree = modules[symbol.file][0]
         node = next((n for n in tree.body if isinstance(n, ast.FunctionDef)
@@ -310,7 +345,8 @@ def collect_static_facts(bundle, index, seed_symbol_ids: list[str], *, max_conte
             unknown('control_flow_unsupported', symbol.symbol_id)
 
     def fact(symbol, kind, node, **values):
-        if len(packet['facts']) >= 32:
+        observed['max_facts'] += 1
+        if len(packet['facts']) >= max_facts:
             unknown('fact_limit')
             return
         packet['facts'].append({'fact_id': 'f' + str(len(packet['facts']) + 1), 'kind': kind,
@@ -362,6 +398,10 @@ def collect_static_facts(bundle, index, seed_symbol_ids: list[str], *, max_conte
                 arguments, reason = _bind_arguments(call, callee, known, snippets[symbol.symbol_id])
                 if reason:
                     unknown(reason, symbol.symbol_id, location)
+                    continue
+                observed['max_bindings'] += 1
+                if max_bindings is not None and len(packet['bindings']) >= max_bindings:
+                    unknown('binding_limit', symbol.symbol_id, location)
                     continue
                 packet['bindings'].append({'caller_id': symbol.symbol_id, 'callee_id': edge.target_ref,
                     'callee_name': callee.name, 'location': asdict(location), 'status': 'syntactic_binding',

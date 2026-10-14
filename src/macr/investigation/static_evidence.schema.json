@@ -1,0 +1,567 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "MACR static source evidence v1",
+  "description": "Local structural schema. Source byte associations, budget/depth, span/completeness and lifecycle cross-field checks remain enforced by the trusted typed API. No external $ref is used.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "request",
+    "status",
+    "run",
+    "source_version",
+    "selection",
+    "evidence",
+    "observations",
+    "coverage",
+    "gaps",
+    "errors",
+    "usage",
+    "limits",
+    "capabilities",
+    "kind",
+    "schema_version"
+  ],
+  "properties": {
+    "run": {
+      "type": "object"
+    },
+    "selection": {
+      "type": "object"
+    },
+    "observations": {
+      "type": "object"
+    },
+    "coverage": {
+      "type": "object"
+    },
+    "usage": {
+      "type": "object",
+      "required": [
+        "model_calls",
+        "tokens"
+      ],
+      "properties": {
+        "model_calls": {
+          "type": "integer",
+          "const": 0
+        },
+        "tokens": {
+          "type": "null"
+        }
+      }
+    },
+    "limits": {
+      "type": "object"
+    },
+    "request": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/request"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "status": {
+      "enum": [
+        "completed",
+        "partial",
+        "rejected",
+        "failed",
+        "cancelled"
+      ]
+    },
+    "source_version": {
+      "type": [
+        "object",
+        "null"
+      ]
+    },
+    "evidence": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/evidence"
+      }
+    },
+    "gaps": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "errors": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "code"
+        ],
+        "properties": {
+          "code": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_]*$"
+          }
+        }
+      }
+    },
+    "capabilities": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "repository_code_executed",
+        "dynamic_validation",
+        "full_repository_verified",
+        "diagnosis_status",
+        "cause",
+        "data_flow_proven"
+      ],
+      "properties": {
+        "repository_code_executed": {
+          "const": false
+        },
+        "dynamic_validation": {
+          "const": false
+        },
+        "full_repository_verified": {
+          "const": false
+        },
+        "diagnosis_status": {
+          "const": "not_performed"
+        },
+        "cause": {
+          "const": null
+        },
+        "data_flow_proven": {
+          "const": false
+        }
+      }
+    },
+    "kind": {
+      "const": "static_evidence_locate"
+    },
+    "schema_version": {
+      "type": "integer",
+      "const": 1
+    }
+  },
+  "$defs": {
+    "profile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "version",
+        "exclude_patterns",
+        "max_python_files",
+        "max_text_files",
+        "max_python_lines",
+        "max_text_bytes",
+        "max_file_bytes",
+        "max_metadata_entries",
+        "max_metadata_bytes",
+        "max_entries",
+        "max_functions",
+        "max_body_bytes",
+        "max_collector_bytes",
+        "max_facts",
+        "max_bindings",
+        "max_refs",
+        "max_candidates",
+        "max_ast_nodes_per_file",
+        "max_ast_depth",
+        "max_ast_nodes",
+        "max_symbols",
+        "max_relations",
+        "max_io_bytes",
+        "active_seconds",
+        "cleanup_seconds",
+        "max_report_bytes",
+        "max_markdown_bytes",
+        "max_log_bytes",
+        "max_scope_manifest_bytes",
+        "max_index_cache_bytes",
+        "max_allocated_bytes",
+        "min_free_bytes",
+        "max_worker_rss_bytes",
+        "max_control_bytes",
+        "max_stderr_bytes",
+        "max_question_bytes",
+        "max_traceback_bytes",
+        "max_traceback_frames",
+        "max_input_bytes",
+        "max_input_depth"
+      ],
+      "properties": {
+        "name": {
+          "enum": [
+            "standard",
+            "larger"
+          ]
+        },
+        "version": {
+          "const": "1"
+        },
+        "exclude_patterns": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "max_python_files": {
+          "type": "integer",
+          "exclusiveMinimum": 0
+        },
+        "max_text_files": {
+          "type": "integer",
+          "exclusiveMinimum": 0
+        },
+        "max_python_lines": {
+          "type": "integer",
+          "exclusiveMinimum": 0
+        },
+        "max_text_bytes": {
+          "type": "integer",
+          "exclusiveMinimum": 0
+        },
+        "max_file_bytes": {
+          "type": "integer",
+          "exclusiveMinimum": 0
+        },
+        "max_metadata_entries": {
+          "type": "integer",
+          "exclusiveMinimum": 0
+        },
+        "max_metadata_bytes": {
+          "type": "integer",
+          "exclusiveMinimum": 0
+        },
+        "max_entries": {
+          "type": "integer",
+          "exclusiveMinimum": 0
+        },
+        "max_functions": {
+          "type": "integer",
+          "exclusiveMinimum": 0
+        },
+        "max_body_bytes": {
+          "type": "integer",
+          "exclusiveMinimum": 0
+        },
+        "max_collector_bytes": {
+          "type": "integer",
+          "exclusiveMinimum": 0
+        },
+        "max_facts": {
+          "type": "integer",
+          "exclusiveMinimum": 0
+        },
+        "max_bindings": {
+          "type": "integer",
+          "exclusiveMinimum": 0
+        },
+        "max_refs": {
+          "type": "integer",
+          "exclusiveMinimum": 0
+        },
+        "max_candidates": {
+          "type": "integer",
+          "exclusiveMinimum": 0
+        },
+        "max_ast_nodes_per_file": {
+          "type": "integer",
+          "exclusiveMinimum": 0
+        },
+        "max_ast_depth": {
+          "type": "integer",
+          "exclusiveMinimum": 0
+        },
+        "max_ast_nodes": {
+          "type": "integer",
+          "exclusiveMinimum": 0
+        },
+        "max_symbols": {
+          "type": "integer",
+          "exclusiveMinimum": 0
+        },
+        "max_relations": {
+          "type": "integer",
+          "exclusiveMinimum": 0
+        },
+        "max_io_bytes": {
+          "type": "integer",
+          "exclusiveMinimum": 0
+        },
+        "active_seconds": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "cleanup_seconds": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "max_report_bytes": {
+          "type": "integer",
+          "exclusiveMinimum": 0
+        },
+        "max_markdown_bytes": {
+          "type": "integer",
+          "exclusiveMinimum": 0
+        },
+        "max_log_bytes": {
+          "type": "integer",
+          "exclusiveMinimum": 0
+        },
+        "max_scope_manifest_bytes": {
+          "type": "integer",
+          "exclusiveMinimum": 0
+        },
+        "max_index_cache_bytes": {
+          "type": "integer",
+          "exclusiveMinimum": 0
+        },
+        "max_allocated_bytes": {
+          "type": "integer",
+          "exclusiveMinimum": 0
+        },
+        "min_free_bytes": {
+          "type": "integer",
+          "exclusiveMinimum": 0
+        },
+        "max_worker_rss_bytes": {
+          "type": "integer",
+          "exclusiveMinimum": 0
+        },
+        "max_control_bytes": {
+          "type": "integer",
+          "exclusiveMinimum": 0
+        },
+        "max_stderr_bytes": {
+          "type": "integer",
+          "exclusiveMinimum": 0
+        },
+        "max_question_bytes": {
+          "type": "integer",
+          "exclusiveMinimum": 0
+        },
+        "max_traceback_bytes": {
+          "type": "integer",
+          "exclusiveMinimum": 0
+        },
+        "max_traceback_frames": {
+          "type": "integer",
+          "exclusiveMinimum": 0
+        },
+        "max_input_bytes": {
+          "type": "integer",
+          "exclusiveMinimum": 0
+        },
+        "max_input_depth": {
+          "type": "integer",
+          "exclusiveMinimum": 0
+        }
+      }
+    },
+    "request": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "repo",
+        "out",
+        "question",
+        "entries",
+        "symbols",
+        "traceback",
+        "profile"
+      ],
+      "properties": {
+        "repo": {
+          "type": "string",
+          "minLength": 1
+        },
+        "out": {
+          "type": "string",
+          "minLength": 1
+        },
+        "question": {
+          "type": "string",
+          "minLength": 1
+        },
+        "entries": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "symbols": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "traceback": {
+          "type": "string"
+        },
+        "profile": {
+          "$ref": "#/$defs/profile"
+        }
+      }
+    },
+    "span": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "start",
+        "end"
+      ],
+      "properties": {
+        "start": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "end": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "evidence_id",
+        "content_id",
+        "file",
+        "text",
+        "requested_span",
+        "actual_span",
+        "complete_range",
+        "complete_symbol"
+      ],
+      "properties": {
+        "evidence_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "content_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "file": {
+          "type": "string",
+          "minLength": 1
+        },
+        "text": {
+          "type": "string",
+          "minLength": 1
+        },
+        "requested_span": {
+          "$ref": "#/$defs/span"
+        },
+        "actual_span": {
+          "$ref": "#/$defs/span"
+        },
+        "complete_range": {
+          "type": "boolean"
+        },
+        "complete_symbol": {
+          "type": "boolean"
+        },
+        "snapshot_id": {
+          "type": "string"
+        },
+        "origin": {
+          "type": "string"
+        },
+        "encoding": {
+          "type": "string"
+        },
+        "parse_status": {
+          "type": "string"
+        },
+        "truncation_reason": {
+          "type": "string"
+        },
+        "symbol_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "utf8_start_column": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "utf8_end_column": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "request": {
+            "type": "null"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "status": {
+            "enum": [
+              "rejected",
+              "failed",
+              "cancelled"
+            ]
+          },
+          "source_version": {
+            "type": "null"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "enum": [
+              "rejected",
+              "failed",
+              "cancelled"
+            ]
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "evidence": {
+            "maxItems": 0
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "const": "completed"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "source_version": {
+            "type": "object"
+          },
+          "request": {
+            "$ref": "#/$defs/request"
+          }
+        }
+      }
+    }
+  ]
+}

@@ -4,6 +4,8 @@ version = "0.1.0"
 description = "GitHub-first multi-agent codebase collaboration and evaluation tool."
 requires-python = ">=3.10"
 dependencies = []
+license = {file = "LICENSE"}
+readme = "README.md"
 
 [project.optional-dependencies]
 mock-recovery = [
@@ -19,3 +21,18 @@ agent-review = "macr.cli:main"
 pythonpath = ["src"]
 testpaths = ["tests"]
 
+[build-system]
+requires = ["setuptools==72.1.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+include-package-data = false
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["macr", "macr.*"]
+namespaces = false
+
+[tool.setuptools.package-data]
+"macr.investigation" = ["static_evidence.schema.json"]

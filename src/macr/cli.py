@@ -5,21 +5,14 @@ import json
 import subprocess
 from pathlib import Path
 
-from macr.agents.code_smell import CodeSmellAgent
-from macr.agents.orchestrator import Orchestrator
-from macr.costs import estimate_llm_cost
-from macr.evals.real_data import prepare_real_eval
-from macr.evals.runner import EvalRunner
-from macr.pr_outputs import to_github_comments, to_sarif
-from macr.providers.base import ModelRequest, ProviderError, invoke
-from macr.providers.mock import MockLLMProvider
-from macr.viewer import TraceViewer
 
 
 def _provider(name: str, model_profile: Path | None = None):
     if name == 'rules':
         return None
+    from macr.providers.base import ProviderError
     if name == 'mock':
+        from macr.providers.mock import MockLLMProvider
         return MockLLMProvider()
     if name == 'local':
         from macr.providers.local_http import LocalHTTPProvider
@@ -30,8 +23,17 @@ def _provider(name: str, model_profile: Path | None = None):
     raise ProviderError('remote_disabled' if name == 'deepseek' else 'local_profile_unavailable')
 
 
+class _Parser(argparse.ArgumentParser):
+    def error(self, message):
+        if "evidence-locate" not in __import__("sys").argv:
+            return super().error(message)
+        self.print_usage(__import__("sys").stderr)
+        self.exit(2, "stage=argparse code=input_invalid action=check_arguments\n")
+
+
 def main() -> None:
-    parser = argparse.ArgumentParser(prog="agent-review")
+    parser = _Parser(prog="agent-review")
+    parser.add_argument("--version", action="version", version="%(prog)s 0.1.0")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     mock_parser = subparsers.add_parser('mock-recovery', help='Synthetic recovery demo only; no production resume, real model, or tool execution.')
@@ -109,7 +111,12 @@ def main() -> None:
     view_parser.add_argument("--real-report", default=Path("reports/real_data_showcase.md"), type=Path)
     view_parser.add_argument("--patch-dir", default=Path("patches"), type=Path)
 
+    from macr.evidence_cli import add_parser
+    add_parser(subparsers)
     args = parser.parse_args()
+    if args.command == "evidence-locate":
+        from macr.evidence_cli import run
+        raise SystemExit(run(args))
     if args.command == 'mock-recovery':
         from macr.investigation import mock_recovery
         command = [args.mock_operation, '--root=' + str(args.root)]
@@ -117,6 +124,7 @@ def main() -> None:
             command += ['--scenario=' + args.scenario, '--text=' + args.text]
         raise SystemExit(mock_recovery.main(command))
     elif args.command == 'static-baseline':
+        from macr.providers.base import ProviderError
         from macr.evals.static_baseline import run_baseline
         try:
             report = run_baseline(args.input, args.out)
@@ -126,6 +134,7 @@ def main() -> None:
             raise SystemExit(2)
         print(json.dumps(report, ensure_ascii=False, indent=2))
     elif args.command == "ask":
+        from macr.agents.orchestrator import Orchestrator
         query = _with_clarification(args.query, args.clarification)
         trace = Orchestrator(provider=_provider(args.provider), use_llm_planner=args.llm_planner).run(
             args.repo,
@@ -134,6 +143,7 @@ def main() -> None:
         )
         _print_trace(trace, args.json)
     elif args.command == "patch":
+        from macr.agents.orchestrator import Orchestrator
         query = _with_clarification(args.query, args.clarification)
         trace = Orchestrator(provider=_provider(args.provider), use_llm_planner=args.llm_planner).run_patch(
             args.repo,
@@ -158,6 +168,8 @@ def main() -> None:
                 if trace.patch.diff:
                     print(f"- Patch file: {patch_path}")
     elif args.command == "review-diff":
+        from macr.agents.orchestrator import Orchestrator
+        from macr.pr_outputs import to_github_comments, to_sarif
         diff_text = _read_diff(args.repo, args.diff_file)
         trace = Orchestrator().run_diff_review(args.repo, diff_text)
         output_format = "json" if args.json else args.format
@@ -170,6 +182,8 @@ def main() -> None:
         else:
             _print_diff_review(trace)
     elif args.command == "eval":
+        from macr.agents.orchestrator import Orchestrator
+        from macr.evals.runner import EvalRunner
         metrics = EvalRunner(
             orchestrator=Orchestrator(provider=_provider(args.provider), use_llm_planner=args.llm_planner)
         ).run(
@@ -180,6 +194,7 @@ def main() -> None:
         print(json.dumps(metrics, ensure_ascii=False, indent=2))
         print(f"Report: {args.report}")
     elif args.command == "prepare-real-eval":
+        from macr.evals.real_data import prepare_real_eval
         summary = prepare_real_eval(
             source=args.source,
             input_path=args.input,
@@ -190,12 +205,14 @@ def main() -> None:
         )
         print(json.dumps(summary, ensure_ascii=False, indent=2))
     elif args.command == "code-smell":
+        from macr.agents.code_smell import CodeSmellAgent
         report = CodeSmellAgent().analyze(args.repo.resolve())
         if args.json:
             print(json.dumps(report, ensure_ascii=False, indent=2))
         else:
             _print_code_smell(report)
     elif args.command == "llm-check":
+        from macr.providers.base import ModelRequest, ProviderError, invoke
         try:
             provider = _provider(args.provider, args.model_profile)
             if args.provider == 'local':
@@ -211,6 +228,7 @@ def main() -> None:
             raise SystemExit(exc.code) from None
         print(json.dumps({"provider": response.provider, "model": response.model, "usage": response.usage, "usage_kind": response.usage_kind, "metrics": response.metrics, "content": response.content}, ensure_ascii=False, indent=2))
     elif args.command == "view":
+        from macr.viewer import TraceViewer
         TraceViewer(
             root=Path("."),
             trace_path=args.trace,

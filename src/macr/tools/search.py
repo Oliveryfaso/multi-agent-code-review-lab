@@ -4,6 +4,7 @@ from macr.investigation.scope import RepositoryScope
 from macr.investigation.records import ScopeManifest, ScopeProfile, SnapshotBundle
 from macr.investigation.snapshots import SnapshotStore
 from macr.investigation.validation import ContractError
+from macr.investigation.source_text import SourceText
 from macr.schemas import ToolResult
 from macr.tools.timing import Timer
 
@@ -22,11 +23,11 @@ class TextSearchTool:
                     data = store.read_verified(snapshot.ref, entry.path)
                     read += len(data)
                     try:
-                        text = data.decode('utf-8')
-                    except UnicodeError:
+                        source = SourceText.from_bytes(data, entry.path)
+                    except ContractError:
                         errors.append({"file": entry.path, "code": "encoding_error"})
                         continue
-                    for line, body in enumerate(text.splitlines(), 1):
+                    for line, body in enumerate(source.physical_lines, 1):
                         if query in body:
                             matches.append({"file": entry.path, "line": line, "text": body.strip()[:400]})
                             if len(matches) >= max_results:

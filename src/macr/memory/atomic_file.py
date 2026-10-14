@@ -17,16 +17,26 @@ def namespace_snapshot():
         yield
 
 
-def atomic_write(path: Path, data: bytes) -> None:
+def atomic_write(path: Path, data: bytes, *, dir_fd: int | None = None, before_replace=None) -> None:
+    """Optional anchored parent; legacy callers keep their existing behavior."""
+    path = Path(path)
+    if dir_fd is not None and (path.name != str(path) or path.name in ('', '.', '..')):
+        raise ValueError('atomic leaf required')
     temp = path.with_name(f'{path.name}-{uuid4()}.tmp')
     with namespace_snapshot():
-        fd = os.open(temp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+        fd = os.open(temp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=dir_fd)
     with os.fdopen(fd, 'wb') as stream:
         stream.write(data)
         stream.flush()
         os.fsync(stream.fileno())
     with namespace_snapshot():
-        os.replace(temp, path)
+        if before_replace is not None:
+            before_replace()
+        if dir_fd is None:
+            os.replace(temp, path)
+        else:
+            os.replace(temp, path, src_dir_fd=dir_fd, dst_dir_fd=dir_fd)
+            os.fsync(dir_fd)
 
 
 def tree_usage(root: Path) -> dict[str, int]:

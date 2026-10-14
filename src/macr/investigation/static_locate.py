@@ -16,6 +16,7 @@ from .context import ContextReader
 from .static_facts import collect_static_facts
 from .records import ContextRequest, HypothesisRecord, IndexQuery, Location
 from .validation import ContractError, decode_record
+from .source_text import physical_lines
 
 PROMPT_VERSION = 'static-locate-preview-facts-v2'
 SYSTEM_PROMPT = (
@@ -192,7 +193,7 @@ def locate_static(bundle, index, provider, *, symptom: str, symbol_names: list[s
             'source': [{'file': s['location']['file'], 'start': s['location']['start'],
                         'end': s['location']['end'],
                         'body': '\n'.join(f'{n}: {line}' for n, line in enumerate(
-                            s['text'].splitlines(), s['location']['start']))} for s in snippets],
+                            (line.rstrip('\r\n') for line in physical_lines(s['text'])), s['location']['start']))} for s in snippets],
             'static_relations': [{'source': names[e['source_id']], 'target': names.get(e['target_ref'], e['target_ref']),
                                   'resolution': e['resolution']} for e in facts['relations'] if e['source_id'] in names],
             'static_facts': _model_fact_view(facts),

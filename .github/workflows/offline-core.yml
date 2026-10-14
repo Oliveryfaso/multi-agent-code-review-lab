@@ -90,6 +90,8 @@ jobs:
           python -I -S -B scripts/run_offline_tests.py
           test_trace_store test_atomic_file test_run_store test_run_recovery
           test_static_baseline.StaticBaselineTests.test_real_cli_wrapper_runs_baseline_without_importing_source
+          test_static_baseline.StaticBaselineTests.test_strict_input_and_existing_output_fail_before_mutation
+          test_static_baseline.StaticBaselineTests.test_cli_rejection_preserves_json_and_exit2
 
       - name: Diagnostic comparison with scripted responses
         run: >-
@@ -100,6 +102,9 @@ jobs:
           test_diagnostic_verification test_diagnostic_prompt_variants test_diagnostic_pipeline_cli
           test_diagnostic_compact test_diagnostic_orchestrator
           test_diagnostic_dataset test_diagnostic_holdout_cases test_diagnostic_holdout_replay
+
+      - name: Static evidence contracts and CLI without native dispatch
+        run: python -I -S -B scripts/run_static_evidence_tests.py
 
       - name: Bounded kernel loopback lifecycle fixtures
         run: python -I -S -B tests/test_loopback_lifecycle.py

@@ -52,6 +52,7 @@ OFFLINE_CASES = frozenset({
     'test_static_baseline.StaticBaselineTests.test_real_cli_wrapper_runs_baseline_without_importing_source',
     'test_static_baseline.StaticBaselineTests.test_unseen_frames_do_not_create_unverified_citations',
     'test_static_baseline.StaticBaselineTests.test_strict_input_and_existing_output_fail_before_mutation',
+    'test_static_baseline.StaticBaselineTests.test_cli_rejection_preserves_json_and_exit2',
 })
 
 

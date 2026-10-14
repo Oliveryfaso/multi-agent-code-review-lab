@@ -31,3 +31,12 @@ Each run has a 120-second deadline, a 64 MiB allocated-output monitoring thresho
 Dynamic checks require an approved execution backend and sanitized inputs. The public package contains backend contracts and result normalization, with host execution closed. Machine-specific VM/service orchestration and its private authorization/evidence are kept outside this public core. A citation hit or passing scripted fixture is not a repaired repository.
 
 The existing CLI review/workbench paths remain for compatibility; this release verifies selected offline regressions and CLI parsing, not live services or arbitrary repair. See [SECURITY.md](SECURITY.md) for project boundaries.
+
+
+`evidence-locate` reads selected source into a bounded static evidence report. It keeps reported frame status separate from unique source excerpts, preserves verified symbol identity when an excerpt is partial, and records missing evidence without inferring a cause. The supervisor starts one fixed product worker and observes its memory pressure and process closure; target code is never imported or executed and no model is called.
+
+```bash
+python3 -B cli/agent_review.py evidence-locate --repo ./my-project --entry app.py:process --question "Show the captured source" --out ./artifacts/my-evidence --json
+```
+
+The output directory must be new and outside the analyzed repository. Exit 0 means complete requested evidence; exit 1 retains a partial report. Other exits describe invalid input, trust boundaries, or internal failure. Full option, profile, API, storage and platform details are in [static evidence](docs/static-evidence.md). Linux resource observation is implemented, but the current real CLI/API acceptance was performed on macOS.

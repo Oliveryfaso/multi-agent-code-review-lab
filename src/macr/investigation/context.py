@@ -1,12 +1,10 @@
 """Faithful bounded excerpts; no imports or execution of repository source."""
-import io
-import tokenize
 from dataclasses import asdict
-from pathlib import Path
 from uuid import uuid4
 
 from .records import ContextPack, ContextRequest, EvidenceRecord, IndexQuery, Location
 from .validation import ContractError, decode_record
+from .source_text import SourceText, physical_lines
 
 
 class ContextReader:
@@ -22,9 +20,11 @@ class ContextReader:
             data = self.store.read_verified(ref, location.file)
             pack.bytes_read += self.store.last_usage.bytes_read
             try:
-                encoding = tokenize.detect_encoding(io.BytesIO(data).readline)[0] if Path(location.file).suffix == ".py" else "utf-8"
-                lines = data.decode(encoding).splitlines(keepends=True)
-            except (UnicodeError, SyntaxError):
+                source = SourceText.from_bytes(data, location.file)
+                lines = source.physical_lines
+            except ContractError as error:
+                if error.code == 'unsupported_coordinate_encoding':
+                    raise
                 raise ContractError("citation_invalid", "encoding") from None
             if location.end > len(lines):
                 raise ContractError("citation_invalid", "line_range")
@@ -50,7 +50,7 @@ class ContextReader:
                 pack.truncations.append(f"{location.file}:excerpt_limit")
             if not text:
                 continue
-            end = min(location.end, location.start + len(text.splitlines()) - 1)
+            end = min(location.end, location.start + len(physical_lines(text)) - 1)
             actual = Location(location.file, location.start, end, location.symbol_id)
             pack.snippets.append({"location": asdict(actual), "requested_location": asdict(location), "text": text,
                                   "token_count_kind": "measured" if self.token_counter else "byte_estimate_excerpt_only"})

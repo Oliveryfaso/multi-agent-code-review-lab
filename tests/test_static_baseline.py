@@ -51,6 +51,25 @@ class StaticBaselineTests(unittest.TestCase):
         self.assertEqual(len(report['rejected_frames']), 2)
         self.assertEqual(report['answer']['refs'], [{'file': 'entry.py', 'start': 1, 'end': 2}])
 
+    def test_cli_rejection_preserves_json_and_exit2(self):
+        from macr.providers.base import ProviderError
+        from macr.evals import static_baseline
+        for error in (ValueError('input_invalid'), OSError('input_unavailable'),
+                      ProviderError('input_invalid')):
+            with self.subTest(error=type(error).__name__):
+                output = io.StringIO()
+                args = ['agent-review', 'static-baseline', '--input', 'synthetic-input',
+                        '--out', 'synthetic-output']
+                with patch.object(static_baseline, 'run_baseline', side_effect=error), \
+                     patch.object(sys, 'argv', args), patch.object(sys, 'stdout', output), \
+                     self.assertRaises(SystemExit) as stopped:
+                    runpy.run_path(str(PROJECT / 'cli/agent_review.py'), run_name='__main__')
+                self.assertEqual(stopped.exception.code, 2)
+                report = json.loads(output.getvalue())
+                self.assertEqual(report['status'], 'rejected')
+                self.assertEqual(report['model_calls'], 0)
+                self.assertIs(report['dynamic_validation'], False)
+
     def test_strict_input_and_existing_output_fail_before_mutation(self):
         root = fixture_root()
         write_files(root / 'source', {'entry.py': 'def entry():\n    return 1\n'})

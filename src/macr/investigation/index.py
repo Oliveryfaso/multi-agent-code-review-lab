@@ -4,6 +4,7 @@ from __future__ import annotations
 import ast
 import json
 import hashlib
+import sys
 from dataclasses import asdict
 from pathlib import Path
 
@@ -11,8 +12,12 @@ from .records import ActionUsage, CoverageRecord, IndexPage, IndexQuery, IndexSu
 from .snapshots import SnapshotError, SnapshotStore
 from .validation import ContractError, decode_record
 from .scope import read_safe
+from .source_text import SourceText, raw_physical_line_count, PHYSICAL_LINE_VERSION, COORDINATE_ENCODING_VERSION
+from .evidence_profiles import EvidenceProfile, load_json
+from .evidence_budget import BudgetExceeded, EvidenceBudget
+from .evidence_workspace import check_storage, encode_bounded, safe_write, storage_root
 
-PARSER_VERSION = "qualified-ast-v2"
+PARSER_VERSION = f"qualified-ast-v4-{PHYSICAL_LINE_VERSION}-{COORDINATE_ENCODING_VERSION}-py{sys.version_info.major}.{sys.version_info.minor}"
 
 
 def module_name(relative: str) -> str:
@@ -21,14 +26,17 @@ def module_name(relative: str) -> str:
 
 
 class _Collector(ast.NodeVisitor):
-    def __init__(self, relative: str, content_id: str, tree: ast.AST, lines: int):
+    def __init__(self, relative: str, content_id: str, tree: ast.AST, lines: int, budget=None):
         self.file, self.module, self.content_id = relative, module_name(relative), content_id
         self.stack, self.symbols, self.calls, self.imports = [], [], [], []
         self.aliases, self.bound, self.decorated = {}, {}, set()
+        self.budget = budget
         self.module_symbol = self._symbol("<module>", "file", 1, max(1, lines), "")
         self.visit(tree)
 
     def _symbol(self, qualified, kind, start, end, signature):
+        if self.budget:
+            self.budget.charge('max_symbols', 1, 'index_symbols')
         symbol = SymbolRecord(f"{self.content_id}:{self.file}:{qualified}:{start}", self.file, self.module, qualified, kind, start, end, signature)
         self.symbols.append(symbol)
         return symbol
@@ -133,12 +141,13 @@ def _call_parts(node):
 
 
 class RepositoryIndex:
-    def __init__(self, store: SnapshotStore, cache_root: Path | None = None):
+    def __init__(self, store: SnapshotStore, cache_root: Path | None = None, *, allowed_root=None, profile=None, budget=None):
         self.store = store
-        allowed = (Path(__file__).resolve().parents[3] / "artifacts").resolve()
-        self.cache_root = (cache_root or allowed / "index").resolve()
-        if not self.cache_root.is_relative_to(allowed):
-            raise ContractError("forbidden_path", "index_cache")
+        allowed = Path(allowed_root).absolute() if allowed_root is not None else (Path(__file__).resolve().parents[3] / 'artifacts').resolve()
+        self.allowed = allowed
+        self.profile = profile or (budget.profile if budget else store.profile)
+        self.budget = budget or store.budget or (EvidenceBudget(self.profile) if profile is not None else None)
+        self.cache_root = storage_root(cache_root or allowed / 'index', allowed, budget=self.budget)
         self.symbols, self.relations, self.cache = [], [], {}
         self.content_id = None
         self.last_usage = ActionUsage()
@@ -151,9 +160,9 @@ class RepositoryIndex:
         self.cache = {"hit": False, "path": str(path), "fingerprint": bundle.ref.content_id, "indexed_file_count": len(python_files)}
         errors = []
         try:
-            raw_cache = read_safe(path.parent, path.name, 64*1024*1024)
+            raw_cache = read_safe(path.parent, path.name, self.profile.max_index_cache_bytes, budget=self.budget, stage='index_cache_read', limit_field='max_index_cache_bytes') if self.budget else read_safe(path.parent, path.name, self.profile.max_index_cache_bytes)
             self.last_usage.bytes_read += len(raw_cache)
-            cached = json.loads(raw_cache)
+            cached = load_json(raw_cache.decode('utf-8'), max_bytes=self.profile.max_index_cache_bytes, max_depth=self.profile.max_input_depth)
             checksum = cached.pop('payload_sha256')
             if hashlib.sha256(json.dumps(cached, sort_keys=True, separators=(',', ':'), allow_nan=False).encode()).hexdigest() != checksum:
                 raise ValueError('cache integrity')
@@ -162,21 +171,39 @@ class RepositoryIndex:
             self.symbols = [decode_record(SymbolRecord, raw) for raw in cached["symbols"]]
             self.relations = [decode_record(RelationRecord, raw) for raw in cached["relations"]]
             errors = [decode_record(RunError, raw) for raw in cached["errors"]]
+            if self.budget:
+                self.budget.charge('max_symbols', len(self.symbols), 'index_cache_symbols')
+                self.budget.charge('max_relations', len(self.relations), 'index_cache_relations')
             file_bounds = {f.path: f.lines or 0 for f in python_files}
             ids = {s.symbol_id for s in self.symbols}
             if len(ids) != len(self.symbols) or any(s.file not in file_bounds or s.end > max(1, file_bounds[s.file]) or s.symbol_id != f'{bundle.ref.content_id}:{s.file}:{s.qualified_name}:{s.start}' for s in self.symbols):
                 raise ValueError('cache source binding')
-            if any(e.source_id not in ids or e.location.file not in file_bounds or e.resolution in ('resolved_local', 'resolved_import') and e.target_ref not in ids for e in self.relations) or any(e.code != 'parse_error' or e.detail not in file_bounds for e in errors):
+            if any(e.source_id not in ids or e.location.file not in file_bounds or e.resolution in ('resolved_local', 'resolved_import') and e.target_ref not in ids for e in self.relations) or any(e.code not in ('parse_error', 'unsupported_coordinate_encoding') or e.detail not in file_bounds for e in errors):
                 raise ValueError('cache relation binding')
             self.cache["hit"] = True
-        except (OSError, ValueError, KeyError, TypeError, ContractError):
+        except BudgetExceeded:
+            raise
+        except (OSError, ValueError, KeyError, TypeError, ContractError) as error:
+            if isinstance(error, ContractError) and error.code == 'cancelled':
+                raise
+            errors = []
             collectors = []
             for item in python_files:
                 data = self.store.read_verified(bundle.ref, item.path)
                 self.last_usage.bytes_read += self.store.last_usage.bytes_read
                 try:
-                    collectors.append(_Collector(item.path, bundle.ref.content_id, ast.parse(data), len(data.splitlines())))
-                except (SyntaxError, UnicodeError):
+                    SourceText.from_bytes(data, item.path)
+                    tree = ast.parse(data)
+                    self._check_ast(tree)
+                    collectors.append(_Collector(item.path, bundle.ref.content_id, tree, raw_physical_line_count(data), self.budget))
+                    del tree
+                except BudgetExceeded:
+                    raise
+                except ContractError as error:
+                    if error.code == 'cancelled':
+                        raise
+                    errors.append(RunError('unsupported_coordinate_encoding' if error.code == 'unsupported_coordinate_encoding' else 'parse_error', item.path))
+                except (SyntaxError, UnicodeError, RecursionError):
                     errors.append(RunError("parse_error", item.path))
             self.symbols = [symbol for collector in collectors for symbol in collector.symbols]
             self.relations = self._relations(collectors)
@@ -185,14 +212,31 @@ class RepositoryIndex:
             # Integrity for derived cache bytes only, not a claim of cryptographic authenticity.
             payload['payload_sha256'] = hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(',', ':'), allow_nan=False).encode()).hexdigest()
             try:
-                path.parent.mkdir(parents=True, exist_ok=True)
-                path.write_text(json.dumps(payload, sort_keys=True, allow_nan=False), encoding="utf-8")
+                cache_data = encode_bounded(payload, self.profile.max_index_cache_bytes, budget=self.budget, stage='index_cache_encode', limit_field='max_index_cache_bytes')
+                if self.budget:
+                    check_storage(self.allowed, self.budget, 'index_storage_guard')
+                safe_write(self.cache_root, path.name, cache_data, limit=self.profile.max_index_cache_bytes, budget=self.budget, stage='index_cache_write', limit_field='max_index_cache_bytes')
             except OSError:
                 raise ContractError("storage_unavailable", "index_cache") from None
         self.content_id = bundle.ref.content_id
         coverage = CoverageRecord(inventory=sum(len(getattr(bundle.scope, name)) for name in ("eligible", "excluded", "unsupported", "unreadable")),
                                   eligible=len(bundle.scope.eligible), indexed=len(bundle.scope.eligible), parsed=len(python_files) - len(errors), errors=errors)
         return IndexSummary(bundle.ref.content_id, coverage, errors, self.last_usage)
+
+    def _check_ast(self, tree):
+        count = 0
+        pending = [(tree, 1)]
+        while pending:
+            node, depth = pending.pop()
+            count += 1
+            for field, observed in (('max_ast_nodes_per_file', count), ('max_ast_depth', depth)):
+                if observed > getattr(self.profile, field):
+                    raise BudgetExceeded(field, 'index_ast', getattr(self.profile, field), observed)
+            if self.budget:
+                self.budget.observe('max_ast_nodes_per_file', max(count, self.budget.usage.get('max_ast_nodes_per_file', 0)), 'index_ast')
+                self.budget.observe('max_ast_depth', max(depth, self.budget.usage.get('max_ast_depth', 0)), 'index_ast')
+                self.budget.charge('max_ast_nodes', 1, 'index_ast')
+            pending.extend((child, depth + 1) for child in ast.iter_child_nodes(node))
 
     def _relations(self, collectors):
         by_name, modules = {}, {}
@@ -215,10 +259,16 @@ class RepositoryIndex:
             return None
 
         edges = []
+        def append(edge):
+            if self.budget:
+                self.budget.charge('max_relations', 1, 'index_relations')
+            elif len(edges) + 1 > self.profile.max_relations:
+                raise BudgetExceeded('max_relations', 'index_relations', self.profile.max_relations, len(edges) + 1)
+            edges.append(edge)
         for collector in collectors:
             for source, target, line in collector.imports:
                 destination = imported(target)
-                edges.append(RelationRecord(source, destination or target, "imports", Location(collector.file, line, line), "resolved_import" if destination else "unresolved"))
+                append(RelationRecord(source, destination or target, "imports", Location(collector.file, line, line), "resolved_import" if destination else "unresolved"))
             for source, stack, call in collector.calls:
                 parts = _call_parts(call.func)
                 destination, level = None, "unresolved"
@@ -247,7 +297,7 @@ class RepositoryIndex:
                         level = "syntactic_candidate"
                 target = destination or ".".join(parts or ["<dynamic>"])
                 kind = "tests" if "tests" in Path(collector.file).parts or Path(collector.file).name.startswith("test_") else "calls"
-                edges.append(RelationRecord(source, target, kind, Location(collector.file, call.lineno, call.end_lineno), level))
+                append(RelationRecord(source, target, kind, Location(collector.file, call.lineno, call.end_lineno), level))
         return edges
 
     def query(self, ref: SnapshotRef, query: IndexQuery) -> IndexPage:
