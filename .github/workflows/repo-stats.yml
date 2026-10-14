@@ -1,0 +1,29 @@
+name: repo-stats
+
+# GitHub only exposes repository traffic for the last 14 days, and the window
+# rolls: yesterday's statistics are gone unless something captured them.
+# This workflow takes one snapshot per day, commits it to the `github-repo-stats`
+# branch, and regenerates a report from all snapshots collected so far — so the
+# history grows without bound instead of expiring.
+
+on:
+  schedule:
+    # 02:23 UTC = 10:23 Beijing. Deliberately off the hour: runs scheduled at :00
+    # queue behind everyone else's cron jobs and tend to start late.
+    - cron: "23 2 * * *"
+  workflow_dispatch: # allows a manual run from the Actions tab
+
+# The action reads the traffic API (needs push access) and commits the snapshot
+# branch, which needs write access to repository contents.
+permissions:
+  contents: write
+
+jobs:
+  traffic:
+    name: archive traffic statistics
+    runs-on: ubuntu-latest
+    steps:
+      - name: Snapshot repository traffic
+        uses: jgehrcke/github-repo-stats@v1.4.2
+        with:
+          ghtoken: ${{ secrets.GITHUB_TOKEN }}
