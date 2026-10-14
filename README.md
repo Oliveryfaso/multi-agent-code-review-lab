@@ -1,5 +1,11 @@
 # Multi-Agent Code Review Lab
 
+[![license](https://img.shields.io/github/license/Oliveryfaso/multi-agent-code-review-lab?style=flat)](LICENSE)
+[![offline core](https://github.com/Oliveryfaso/multi-agent-code-review-lab/actions/workflows/offline-core.yml/badge.svg)](https://github.com/Oliveryfaso/multi-agent-code-review-lab/actions/workflows/offline-core.yml)
+[![mock recovery](https://github.com/Oliveryfaso/multi-agent-code-review-lab/actions/workflows/mock-recovery.yml/badge.svg)](https://github.com/Oliveryfaso/multi-agent-code-review-lab/actions/workflows/mock-recovery.yml)
+[![stars](https://img.shields.io/github/stars/Oliveryfaso/multi-agent-code-review-lab?style=flat&label=%E2%98%85)](https://github.com/Oliveryfaso/multi-agent-code-review-lab)
+[![last commit](https://img.shields.io/github/last-commit/Oliveryfaso/multi-agent-code-review-lab?style=flat)](https://github.com/Oliveryfaso/multi-agent-code-review-lab/commits)
+
 A local Python code review and Debugger research lab. The public core includes source inventory, sanitized snapshots, AST/symbol/call indexing, bound context and citations, provider contracts, budget accounting, and a single-writer run journal.
 
 Python 3.10+ on macOS or Linux; the core uses the standard library and has no package dependencies.
