@@ -2,9 +2,10 @@ name: repo-stats
 
 # GitHub only exposes repository traffic for the last 14 days, and the window
 # rolls: yesterday's statistics are gone unless something captured them.
-# This workflow takes one snapshot per day, commits it to the `github-repo-stats`
-# branch, and regenerates a report from all snapshots collected so far — so the
-# history grows without bound instead of expiring.
+# The `traffic` job takes one snapshot per day, commits it to the
+# `github-repo-stats` branch, and regenerates a report from every snapshot
+# collected so far — so the history grows instead of expiring.
+# The `totals` job then exposes an always-current summary of that archive.
 
 on:
   schedule:
@@ -13,7 +14,6 @@ on:
     - cron: "23 2 * * *"
   workflow_dispatch: # allows a manual run from the Actions tab
 
-# The action commits the snapshot branch, which needs write access to contents.
 permissions:
   contents: write
 
@@ -30,3 +30,56 @@ jobs:
           # verified on 2026-10-14. A personal access token with access to this
           # repository's traffic data is required.
           ghtoken: ${{ secrets.GHRS_GITHUB_API_TOKEN }}
+
+  totals:
+    name: publish cumulative totals
+    needs: traffic
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Sum the archive into traffic.json
+        run: |
+          set -euo pipefail
+          base="https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/github-repo-stats/${GITHUB_REPOSITORY}"
+          curl -sSfL "$base/ghrs-data/views_clones_aggregate.csv" -o agg.csv
+          python3 - <<'PY'
+          import csv, json
+
+          days, clones, views = [], 0, 0
+          with open('agg.csv', newline='', encoding='utf-8') as fh:
+              for row in csv.DictReader(fh):
+                  days.append(row['time_iso8601'][:10])
+                  clones += int(row['clones_total'])
+                  views += int(row['views_total'])
+
+          # `clones` is a true cumulative count: every archived day contributes
+          # exactly once, and days that already fell out of GitHub's 14-day
+          # window stay in the archive. Only totals are summed — per-day unique
+          # counts cannot be added up without double-counting a repeat visitor.
+          with open('traffic.json', 'w', encoding='utf-8') as fh:
+              json.dump(
+                  {
+                      'clones': clones,
+                      'views': views,
+                      'since': days[0],
+                      'through': days[-1],
+                      'days': len(days),
+                  },
+                  fh, indent=2, sort_keys=True,
+              )
+              fh.write('\n')
+          PY
+
+      - name: Push traffic.json to the badge-data branch
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          # A throwaway orphan branch keeps the daily refresh out of main's
+          # history; only traffic.json lives on it.
+          git checkout -q --orphan badge-data
+          git rm -rq --cached . || true
+          git add -f traffic.json
+          git commit -q -m 'chore: refresh cumulative traffic totals'
+          git push -q -f origin badge-data
