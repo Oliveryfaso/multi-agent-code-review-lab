@@ -127,6 +127,8 @@ def prepare_evidence(request: EvidenceRequest, workspace: EvidenceWorkspace) -> 
 
 
 def _bounded(items, cap):
+    # Canonical coverage sampling stays stable across inventory and saved-manifest order.
+    items = sorted(items, key=lambda item: (item['file'], item['reason']))
     return {'items': items[:cap], 'omitted_count': max(0, len(items) - cap)}
 
 

@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Debugger · 静态证据</title>
+  <link rel="stylesheet" href="/workbench.css">
+  <script src="/workbench.js" defer></script>
+</head>
+<body>
+  <header class="topbar">
+    <div><h1>Debugger <span>静态证据</span></h1><p>捕获并读取源码；不执行项目或判断根因。</p></div>
+    <div class="actions"><button id="history-toggle" aria-expanded="true" aria-controls="history-panel">本地报告</button><button id="new-reading">新建读取</button><button id="shutdown" class="quiet">退出工作台</button></div>
+  </header>
+  <div id="connection" class="notice" role="status" hidden></div>
+  <div class="workspace">
+    <aside id="history-panel"><h2>本地报告</h2><p id="history-empty" class="muted">尚无报告。开始一次读取后，记录会保留在本机。</p><nav id="history" aria-label="本地报告"></nav><button id="more-history" hidden>更多报告</button></aside>
+    <main>
+      <details id="input-panel" open>
+        <summary id="task-summary">本次读取</summary>
+        <form id="reading-form" novalidate>
+          <label for="repo">项目目录</label><input id="repo" name="repo" autocomplete="off" spellcheck="false" placeholder="项目的绝对目录" aria-describedby="repo-help repo-error">
+          <p id="repo-help" class="help">填写具体项目目录。目录和选中源码只在本机处理。</p><p id="repo-error" class="field-error" hidden></p>
+          <label for="question">想查看什么</label><textarea id="question" name="question" rows="2" placeholder="描述想核对的源码或参数映射" aria-describedby="question-error"></textarea><p id="question-error" class="field-error" hidden></p>
+          <label for="entries">源码入口 <span class="muted">每行一项</span></label><textarea id="entries" name="entries" rows="2" spellcheck="false" placeholder="src/api.py:handle&#10;src/api.py:42-60" aria-describedby="entries-help entries-error"></textarea>
+          <p id="entries-help" class="help">可填写文件、限定符号或行范围；也可仅粘贴已有报错。</p><p id="entries-error" class="field-error" hidden></p>
+          <details class="optional"><summary>已有报错 / Traceback</summary><label for="traceback">粘贴已报告的内容</label><textarea id="traceback" name="traceback" rows="5" spellcheck="false" aria-describedby="traceback-error"></textarea><p class="help">报错是输入线索，不证明当前源码执行过。</p><p id="traceback-error" class="field-error" hidden></p></details>
+          <details class="optional"><summary>读取范围与独立符号</summary><label for="symbols">限定符号 <span class="muted">每行一项</span></label><textarea id="symbols" name="symbols" rows="2" spellcheck="false"></textarea><label for="profile">读取范围</label><select id="profile" name="profile"><option value="standard">标准 · 分析目标 120 秒</option><option value="larger">较大 · 分析目标 240 秒</option><option value="standard-capacity">标准＋元数据容量 · 10 万次 / 16 MiB · 120 秒</option></select><p class="help">入口与符号合计最多 6 项。标准与较大的累计元数据访问预算均为 2 万次 / 4 MiB；标准＋元数据容量仅将这两项提高到 10 万次 / 16 MiB，其他标准预算与监控频率不变，需手动选择。累计访问包含监控重复遍历，不是目录项总数。较大档增加其他读取及资源预算；清理目标仍为 5 秒，时间不是硬保证。</p></details>
+          <div class="form-actions"><p id="form-error" class="field-error" role="alert" hidden></p><button id="start" type="submit" class="primary">开始读取</button></div>
+        </form>
+      </details>
+      <section id="result" hidden aria-label="读取结果">
+        <div class="status-row"><div><h2 id="status" aria-live="polite"></h2><p id="elapsed" class="muted" aria-hidden="true"></p></div><button id="cancel" hidden>取消分析</button></div>
+        <p id="outcome-detail" class="help"></p><div id="required-gaps" class="notice warning" hidden></div>
+        <p id="report-context" class="notice" hidden></p>
+        <div class="tabs" role="tablist" aria-label="报告内容"><button role="tab" id="tab-evidence" aria-selected="true" aria-controls="panel-evidence">证据与源码</button><button role="tab" id="tab-coverage" aria-selected="false" aria-controls="panel-coverage" tabindex="-1">覆盖与缺口</button><button role="tab" id="tab-details" aria-selected="false" aria-controls="panel-details" tabindex="-1">运行详情</button></div>
+        <section id="panel-evidence" role="tabpanel" aria-labelledby="tab-evidence">
+          <p id="evidence-empty" class="empty" hidden></p>
+          <div class="evidence-layout"><nav id="evidence-list" aria-label="证据位置"></nav><article id="source-panel" hidden><div class="source-heading"><div><h3 id="source-location"></h3><p id="source-symbol" class="muted"></p></div><button id="copy-location">复制位置</button></div><p id="range" class="range"></p><div id="source-code" class="code" tabindex="0" aria-label="捕获源码"></div><p id="reference" class="help"></p></article></div>
+        </section>
+        <section id="panel-coverage" role="tabpanel" aria-labelledby="tab-coverage" hidden><dl id="coverage-counts" class="counts"></dl><h3>已有报错帧</h3><p class="help">按输入顺序显示；有效帧仍可能对应部分源码。重复帧不增加唯一源码数量。</p><div id="frames"></div><details><summary>覆盖列表与未展示内容</summary><pre id="coverage-data"></pre></details><h3>缺口与错误</h3><pre id="gaps-data"></pre></section>
+        <section id="panel-details" role="tabpanel" aria-labelledby="tab-details" hidden><p class="help">保存报告统计来自 worker 渲染阶段；最终累计用量另列。历史核验只证明保存文件和证据字节关联，不重新推导 AST。</p><pre id="run-data"></pre></section>
+        <div id="exports" class="export-bar" hidden><button id="export-json">导出 JSON</button><button id="export-markdown">导出 Markdown</button><p class="help">原始保存文件，包含问题、本地路径和选中源码。</p></div><p id="export-error" class="field-error" role="alert" hidden></p>
+      </section>
+    </main>
+  </div>
+</body>
+</html>

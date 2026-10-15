@@ -414,6 +414,88 @@ class StaticEvidenceTests(unittest.TestCase):
         self.assertEqual(report.evidence, [])
         self.assertTrue(any(item['code'] == 'declaration_unavailable' and item['required'] for item in report.gaps))
 
+    def test_nested_inventory_coverage_is_canonical_before_candidate_truncation(self):
+        files = {'entry.py': 'def entry():\n    return 1\n',
+                 'a/alpha.txt': 'alpha\n', 'z/zeta.txt': 'zeta\n'}
+        for cap in (50, 1):
+            with self.subTest(cap=cap):
+                report, workspace = self.prepare(files, ['entry.py:entry'], overrides={'max_candidates': cap})
+                self.assertEqual(report.status, 'completed', report.errors)
+                self.assertEqual([item['file'] for item in report.coverage['unread']['items']],
+                                 ['a/alpha.txt', 'z/zeta.txt'][:cap])
+                self.assertEqual(report.coverage['unread']['omitted_count'], max(0, 2 - cap))
+                self.assertEqual(report.evidence[0]['text'], files['entry.py'])
+                self.assertFalse((workspace.root / 'COMMITTED').exists())
+
+
+    def test_worker_uses_verified_preparation_within_existing_ast_budget(self):
+        # In-process worker control only; synthetic RSS is not a native measurement.
+        import io
+        import json
+        import sys
+        from types import SimpleNamespace
+        from macr.investigation.evidence_budget import EvidenceBudget
+        from macr.investigation.evidence_worker import run
+        from macr.investigation.static_evidence import validate_report_sources
+        from macr.investigation.evidence_records import StaticEvidenceReport
+        (self.repo / 'entry.py').write_text('def entry():\n    return 1\n')
+        # Real prepare charges 30 nodes; repeating its full validation charges 15 more.
+        profile = EvidenceProfile.select(overrides={'min_free_bytes': 1, 'max_ast_nodes': 30})
+        out = self.base / 'worker-out'
+        request = EvidenceRequest(str(self.repo), str(out), 'Read entry', ['entry.py:entry'], profile=profile)
+        workspace = EvidenceWorkspace(self.repo, out, profile)
+        control = {'request': request.to_dict(), 'token': workspace.token,
+                   'started': workspace.budget.started, 'deadline': workspace.budget.deadline,
+                   'initial_usage': dict(workspace.budget.usage)}
+        stdout = io.BytesIO()
+        with patch.object(sys, 'stdin', SimpleNamespace(buffer=io.BytesIO(json.dumps(control).encode()))), \
+                patch.object(sys, 'stdout', SimpleNamespace(buffer=stdout)), \
+                patch('resource.getrusage', return_value=SimpleNamespace(ru_maxrss=16 * 1024 * 1024)):
+            run(profile.max_input_bytes)
+        envelope = json.loads(stdout.getvalue())
+        self.assertEqual(envelope['status'], 'completed')
+        self.assertEqual(envelope['usage']['max_ast_nodes'], profile.max_ast_nodes)
+        report = StaticEvidenceReport.from_json((out / 'pending/report.json').read_text())
+        self.assertEqual(report.evidence[0]['text'], 'def entry():\n    return 1\n')
+        self.assertFalse((out / 'COMMITTED').exists())
+        snapshot = next((out / 'snapshots').glob('*/files/entry.py'))
+        snapshot.write_text('def entry():\n    return 2\n')
+        workspace.budget = EvidenceBudget(profile)
+        with self.assertRaises(ContractError) as caught: validate_report_sources(report, workspace)
+        self.assertEqual(caught.exception.code, 'stale_snapshot')
+
+    def test_worker_rejects_saved_source_drift_during_preparation(self):
+        # Real validation runs inside prepare; only the tiny fixture bytes are changed.
+        import io
+        import json
+        import sys
+        from types import SimpleNamespace
+        from macr.investigation import evidence_worker, static_evidence
+        (self.repo / 'entry.py').write_text('def entry():\n    return 1\n')
+        profile = EvidenceProfile.select(overrides={'min_free_bytes': 1})
+        out = self.base / 'worker-drift-out'
+        request = EvidenceRequest(str(self.repo), str(out), 'Read entry', ['entry.py:entry'], profile=profile)
+        workspace = EvidenceWorkspace(self.repo, out, profile)
+        control = {'request': request.to_dict(), 'token': workspace.token,
+                   'started': workspace.budget.started, 'deadline': workspace.budget.deadline,
+                   'initial_usage': dict(workspace.budget.usage)}
+        original = static_evidence.validate_report_sources
+        def corrupt_then_validate(report, ws):
+            (Path(report.source_version['snapshot_ref']['root_ref']) / 'entry.py').write_text(
+                'def entry():\n    return 2\n')
+            return original(report, ws)
+        stdout = io.BytesIO()
+        with patch.object(sys, 'stdin', SimpleNamespace(buffer=io.BytesIO(json.dumps(control).encode()))), \
+                patch.object(sys, 'stdout', SimpleNamespace(buffer=stdout)), \
+                patch.object(static_evidence, 'validate_report_sources', corrupt_then_validate):
+            self.assertEqual(evidence_worker.main(profile.max_input_bytes), 4)
+        failure = json.loads(stdout.getvalue())
+        self.assertEqual(failure['kind'], 'worker_failure')
+        self.assertEqual(failure['error']['code'], 'stale_snapshot')
+        self.assertEqual(failure['preparation']['status'], 'rejected')
+        self.assertFalse((out / 'pending/report.json').exists())
+        self.assertFalse((out / 'COMMITTED').exists())
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -51,7 +51,7 @@ def source_association(report, workspace):
 
 
 def run(input_limit, *, context=None):
-    from macr.investigation.static_evidence import prepare_evidence, validate_report_sources
+    from macr.investigation.static_evidence import prepare_evidence
     import resource
     raw = sys.stdin.buffer.read(input_limit + 1)
     payload = load_json(raw.decode('utf-8'), max_bytes=input_limit, max_depth=64)
@@ -79,7 +79,6 @@ def run(input_limit, *, context=None):
         error = ContractError(first['code'], first.get('field', 'preparation_status'))
         error.stage = first.get('stage', budget.stage)
         raise error
-    validate_report_sources(report, workspace)
     source = source_association(report, workspace)
     budget.check('worker_render')
     report.run['phase'] = 'written_pending'

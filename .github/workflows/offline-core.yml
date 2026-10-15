@@ -109,6 +109,14 @@ jobs:
       - name: Bounded kernel loopback lifecycle fixtures
         run: python -I -S -B tests/test_loopback_lifecycle.py
 
+      - name: Bounded local evidence workbench fixtures
+        run: python -I -S -B scripts/run_evidence_ui_tests.py
+
+      - name: Offline workbench callback contracts
+        run: |
+          node --check src/macr/api/evidence_ui/workbench.js
+          node scripts/run_evidence_ui_js_tests.cjs
+
       - name: Bounded failure diagnostic
         if: failure()
         run: |

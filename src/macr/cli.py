@@ -25,7 +25,7 @@ def _provider(name: str, model_profile: Path | None = None):
 
 class _Parser(argparse.ArgumentParser):
     def error(self, message):
-        if "evidence-locate" not in __import__("sys").argv:
+        if not any(command in __import__("sys").argv for command in ('evidence-locate', 'evidence-ui')):
             return super().error(message)
         self.print_usage(__import__("sys").stderr)
         self.exit(2, "stage=argparse code=input_invalid action=check_arguments\n")
@@ -113,7 +113,12 @@ def main() -> None:
 
     from macr.evidence_cli import add_parser
     add_parser(subparsers)
+    ui_parser = subparsers.add_parser('evidence-ui', help='Start the local static evidence workbench; no model or target execution.')
+    ui_parser.add_argument('--data-root', type=Path, help='Owned local data root; default: ~/Library/Application Support/MACR Evidence.')
     args = parser.parse_args()
+    if args.command == 'evidence-ui':
+        from macr.api.evidence_http import run_cli
+        raise SystemExit(run_cli(args))
     if args.command == "evidence-locate":
         from macr.evidence_cli import run
         raise SystemExit(run(args))

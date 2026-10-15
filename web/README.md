@@ -1,12 +1,13 @@
-# Web Trace Viewer
+# Local evidence workbench
 
-Placeholder for the auxiliary local trace viewer.
+The static evidence UI ships from the trusted Python package's
+`macr/api/evidence_ui/` assets. This directory does not duplicate those files.
 
-The project is GitHub/CLI-first. This folder will later render:
+Start explicitly with `agent-review evidence-ui`. It binds only loopback,
+prints a short-lived local session URL and never opens a browser automatically.
+See [the workbench guide](../docs/evidence-workbench.md) for inputs, local
+history/export, cancellation, resource and verification boundaries.
 
-- Agent plan
-- Tool calls
-- Evidence snippets
-- Eval report
-- Monitor Agent failure analysis
+The broader auxiliary agent trace viewer remains separate from this static
+source-reading workbench.
 

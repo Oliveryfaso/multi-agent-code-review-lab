@@ -36,3 +36,4 @@ namespaces = false
 
 [tool.setuptools.package-data]
 "macr.investigation" = ["static_evidence.schema.json"]
+"macr.api" = ["evidence_ui/index.html", "evidence_ui/workbench.js", "evidence_ui/workbench.css"]
