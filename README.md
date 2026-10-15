@@ -60,7 +60,7 @@ The static path calls no model and never imports, runs, tests, builds or install
 
 Native acceptance used macOS ARM64 / APFS / CPython 3.12.13. Package metadata declares Python 3.10+; Ubuntu Python 3.11 CI verifies offline/loopback behavior. Native pressure/RSS monitoring is currently Darwin-specific. Windows and network/shared/ExFAT workbench roots are unsupported.
 
-The second external project's preflight stopped on real host memory pressure; all eight slots remain unrun. Sustained-load testing remains pending. See the [dated validation scope](docs/architecture.md#validation-scope) for passes, failures and gaps. Local reports contain source/input and must stay private; never expose the workbench publicly.
+All eight external-project cases were attempted once across frozen runs. Slots 1–6 and active cancellation passed their fixed checks; slot 7 triggered its expected RSS failure but lacks live OS identity, leaving overall evidence incomplete. Earlier environment and collector failures remain failed. Sustained-load testing remains pending. See the [dated validation scope](docs/architecture.md#validation-scope) for passes, failures and gaps. Local reports contain source/input and must stay private; never expose the workbench publicly.
 
 ## Documentation
 
