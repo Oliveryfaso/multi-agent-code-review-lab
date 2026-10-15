@@ -6,43 +6,69 @@
 [![stars](https://img.shields.io/github/stars/Oliveryfaso/multi-agent-code-review-lab?style=flat&label=%E2%98%85)](https://github.com/Oliveryfaso/multi-agent-code-review-lab)
 [![last commit](https://img.shields.io/github/last-commit/Oliveryfaso/multi-agent-code-review-lab?style=flat)](https://github.com/Oliveryfaso/multi-agent-code-review-lab/commits)
 
-A local Python code review and Debugger research lab. The public core includes source inventory, sanitized snapshots, AST/symbol/call indexing, bound context and citations, provider contracts, budget accounting, and a single-writer run journal.
+A local code review and Debugger research lab. Its current usable path turns a repository, reading question and source locations into **bounded static source evidence** through a CLI, Python API or local browser workbench. Agent/provider experiments remain separate from this source-reading path.
 
-Python 3.10+ on macOS or Linux; the core uses the standard library and has no package dependencies.
+## Quick start
 
-```bash
-python3 -B cli/agent_review.py --help
+From a trusted checkout with an existing CPython 3.12 interpreter; no installation, runtime dependencies or Node build are needed:
+
+```sh
+git clone https://github.com/Oliveryfaso/multi-agent-code-review-lab.git
+cd multi-agent-code-review-lab
+python3.12 -I -S -B cli/agent_review.py evidence-ui
 ```
 
-`static-baseline` retrieves source context from an explicit input JSON and writes an offline report to a new project artifact directory. It does not infer a proven cause, call a model or execute repository code. Input fields are `symptom`, `symbol_names` and `reported_traceback`; analyzed files are in a sibling `source/` directory. Output directories must not already exist.
+Manually open the complete loopback address printed by the command. Keep its session credential private. Nothing is analyzed until submission. The default owned data root is `~/Library/Application Support/MACR Evidence`; use APFS. **Exit workbench** requests cleanup; closing a tab alone does not cancel analysis.
 
-```bash
-python3 -B cli/agent_review.py static-baseline --input examples/my-case/input.json --out artifacts/my-baseline --json
+For the CLI, substitute an actual project/entry and a new output directory outside that project:
+
+```sh
+mkdir -p ../macr-evidence
+python3.12 -I -S -B cli/agent_review.py evidence-locate \
+  --repo ../my-python-project --entry src/api.py:Service.handle \
+  --question 'Show the captured handler declaration.' \
+  --out ../macr-evidence/reading-001 --json
 ```
 
-Supply your own small case at the example path. The source reader excludes secret/configuration paths and metadata; source is parsed as data and is never imported.
+The target must be separate from the trusted product package. Exit `0` means requested reading completed; `1` retains partial evidence with gaps. Other outcomes preserve input, resource, cancellation or failure distinctions.
 
-Offline regression uses explicit test names and a separate UUID directory per run:
+## What it provides
 
-```bash
-python3 -B scripts/run_offline_tests.py test_offline_tests
-python3 -B scripts/run_offline_tests.py test_code_graph test_repository_scope
-python3 -B scripts/run_offline_tests.py test_context_reader test_static_readers
+- Captured source with exact physical lines, symbol identity and excerpt completeness.
+- Python AST/symbol indexing and limited syntactic facts, with explicit unresolved evidence.
+- Separate reported-frame and unique-source counts; no inferred runtime proof.
+- Local phase/elapsed time, cancellation, retained history and original JSON/Markdown exports.
+
+## Architecture
+
+```mermaid
+flowchart TD
+    CLI["CLI / Python API"] --> S["Supervisor: budgets and one fixed worker"]
+    UI["Local browser"] --> H["Authenticated 127.0.0.1 HTTP"]
+    H --> O["Owned root and one active analysis"]
+    O --> S
+    S --> C["Capture source as data and index Python AST"]
+    C --> V["Bound report, verify bytes and worker exit"]
+    V --> R["COMMITTED receipt"]
+    R --> E["Read-only registered history / original export"]
+    E --> H
 ```
 
-Each run has a 120-second deadline, a 64 MiB allocated-output monitoring threshold and at most 2 MiB of summary/diagnostic records. Successful runs remove only their newly created temporary fixtures; failures retain their directory and diagnostic. File allocation monitoring is not a hard quota. The allowlisted test guard blocks native process/network dispatch and redirects default snapshot, index and patch-check output. It is not an untrusted-code sandbox. Direct tests that require fixture storage reject an unmanaged fixture root; use the bounded entry instead of full discovery.
+## Scope and validation
 
-`rules` and scripted `mock` providers are available. Explicit loopback HTTP profiles support externally managed local services; no model, runtime or service launcher is bundled. Token/usage fixtures do not prove deployed model readiness. Remote fallback is disabled by default.
+The static path calls no model and never imports, runs, tests, builds or installs target code. It does not diagnose root causes, repair files or certify repository correctness. Other source types may be inventoried as text; Python AST is the current semantic boundary. Process isolation and monitored budgets are not an OS sandbox or hard kernel quotas.
 
-Dynamic checks require an approved execution backend and sanitized inputs. The public package contains backend contracts and result normalization, with host execution closed. Machine-specific VM/service orchestration and its private authorization/evidence are kept outside this public core. A citation hit or passing scripted fixture is not a repaired repository.
+Native acceptance used macOS ARM64 / APFS / CPython 3.12.13. Package metadata declares Python 3.10+; Ubuntu Python 3.11 CI verifies offline/loopback behavior. Native pressure/RSS monitoring is currently Darwin-specific. Windows and network/shared/ExFAT workbench roots are unsupported.
 
-The existing CLI review/workbench paths remain for compatibility; this release verifies selected offline regressions and CLI parsing, not live services or arbitrary repair. See [SECURITY.md](SECURITY.md) for project boundaries.
+The second external project's preflight stopped on real host memory pressure; all eight slots remain unrun. Sustained-load testing remains pending. See the [dated validation scope](docs/architecture.md#validation-scope) for passes, failures and gaps. Local reports contain source/input and must stay private; never expose the workbench publicly.
 
+## Documentation
 
-`evidence-locate` reads selected source into a bounded static evidence report. It keeps reported frame status separate from unique source excerpts, preserves verified symbol identity when an excerpt is partial, and records missing evidence without inferring a cause. The supervisor starts one fixed product worker and observes its memory pressure and process closure; target code is never imported or executed and no model is called.
+- [CLI, Python API, profiles and report semantics](docs/static-evidence.md)
+- [Local workbench, history and cancellation](docs/evidence-workbench.md)
+- [Architecture, trust boundaries and optional local installation](docs/architecture.md)
+- [Architecture assessment](docs/architecture-assessment.md), [documentation maintenance](docs/documentation-maintenance.md)
+- [Bounded regression commands and CI](docs/offline-ci.md), [workflow](.github/workflows/offline-core.yml)
+- [Security notes for the separate legacy viewer](SECURITY.md)
 
-```bash
-python3 -B cli/agent_review.py evidence-locate --repo ./my-project --entry app.py:process --question "Show the captured source" --out ./artifacts/my-evidence --json
-```
-
-The output directory must be new and outside the analyzed repository. Exit 0 means complete requested evidence; exit 1 retains a partial report. Other exits describe invalid input, trust boundaries, or internal failure. Full option, profile, API, storage and platform details are in [static evidence](docs/static-evidence.md). Linux resource observation is implemented, but the current real CLI/API acceptance was performed on macOS.
+MIT licensed; see [LICENSE](LICENSE).

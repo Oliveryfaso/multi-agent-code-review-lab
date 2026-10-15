@@ -31,7 +31,7 @@ agent-review evidence-locate \
   --out ./artifacts/my-new-reading --json
 ```
 
-This example is a usage instruction, not a claimed successful real-worker run. A second real-project acceptance is pending authorization. There is no automatic batch or fallback service.
+This example is a usage instruction, not a claimed successful real-worker run. The separately authorized second real-project acceptance has a [fixed plan and dated result](external-project-validation.md). There is no automatic batch or fallback service.
 
 A generic example with local UTF8 question and already-reported traceback files:
 
