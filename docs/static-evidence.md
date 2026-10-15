@@ -86,6 +86,22 @@ The public API is supervisor-only; there is no public synchronous prepare bypass
 
 JSON has `kind=static_evidence_locate`, `schema_version=1`, status, request, run, source_version, selection, evidence, observations, coverage, gaps, errors, usage, limits and capabilities. The local schema checks structural fields; typed validation additionally checks byte associations, spans, completeness, budgets, depth and lifecycle. It uses only local `$ref` definitions, never a target schema or network resolver. Read the schema with `importlib.resources.files('macr.investigation').joinpath('static_evidence.schema.json').read_text()`.
 
+### Worker timing metadata v2
+
+`run.closure.timing.version=2` makes the parent records explicit:
+
+| Closure field | Meaning |
+| --- | --- |
+| `worker_spawn_call_before_monotonic` | Parent record immediately before the worker Popen call. |
+| `worker_started_monotonic` | Existing parent record after Popen returns; it is not the worker's exact OS creation or business-entry time. |
+| `worker_closed_monotonic` | Existing parent record after confirmed worker wait; unknown wait leaves it unavailable. |
+
+`timing` also records the unchanged analysis-budget origin, clock API/implementation/unit/runtime/platform metadata, and the supervisor PID/canonical output invocation. Worker business start remains `not_observed`; OS creation is described only as bounded by the Popen call. Clock metadata can be null when unavailable without bypassing the existing resource guard. A pre-spawn failure has no spawn-call lower bound; a failed Popen can retain that attempt bound without claiming a worker started.
+
+A separately captured live identity may precede the parent's after-return record. A consumer combining those observations must independently establish the same supported clock/runtime and invocation, then use the exact pre-Popen through confirmed-wait envelope. The metadata alone proves no live identity, continuous OS lifetime, signal authority or performance. Legacy reports retain their original interpretation; absent v2 fields cannot be backfilled from the after-return record.
+
+Budgets, launch flags, resource guards and cleanup remain unchanged. The extra clock metadata and pre-call read consume the existing budgets and report cap. Ten synthetic supervisor regressions run in the bounded static-evidence test entry with fake processes, storage, clocks and native metrics; they do not launch a worker or execute a target. A separate short candidate guard run captured current OS identity and confirmed TERM/wait, but its overall acceptance remains **evidence incomplete** because the independent actual entry-exit time bound and CPU measurement were not captured. That result does not upgrade historical outcomes or qualify the complete public tree, native overhead or the platform matrix.
+
 Explicit entries precede deepest reported trace frames. A line selects the innermost containing symbol; missing/ambiguous matches remain explicit with bounded candidates and omitted counts. Tracebacks do not prove execution or current-version agreement; external paths are not read. Parsed Python, text-only, unparsed, excluded and unreadable coverage are distinct; indexed text is not AST coverage. Functions, async functions, classes, methods and nested symbols can supply source. Existing facts/bindings support limited ordinary-function one-hop syntax only: no guard truth, default evaluation, star expansion, decorator behavior, rebinding proof, recursion or return-value propagation. Unsupported syntax is a tool limitation and does not itself imply a defect.
 
 With `run.selection_version=exact-qualified-physical-span-v2`, reported frames retain input order while selection processes them deepest first. A frame is `valid` after its file, physical line and available reported-name checks pass and its source selection is admitted or reused. Explicit entries and different physical lines in the same declaration share one source row/excerpt without making the first matching frame a duplicate. Only a separately validated repeat of the normalized `(file, physical line, reported name)` tuple is `duplicate`; the deepest admitted occurrence is its valid representative. A blank reported name is distinct from a supplied name. Neither status proves execution, recursion or source completeness.
