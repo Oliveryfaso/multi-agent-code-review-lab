@@ -193,6 +193,12 @@ waiter: do not also call `Popen.poll`, `Popen.wait` or `communicate` on that PID
 The helper never launches or signals a process. On an unreaped incomplete return,
 the caller still owns cleanup under its original deadline and resource guards.
 
+An optional `on_poll(pid)` callback runs only after a zero nonblocking wait result,
+so an external recorder can enforce its existing live resource guards. It never
+queries through that callback after a successful reaping wait. Callback errors,
+latency, cancellation and deadline tightening count against the same budget;
+the callback grants no launch or cleanup authority.
+
 The first clock read after wait returns is a monotonic **upper bound** on exit,
 not an actual exit instant. Kernel user/system CPU and raw platform-unit maximum
 RSS are recorded with explicit wait4 accounting scope; these are not per-worker

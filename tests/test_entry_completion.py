@@ -76,16 +76,18 @@ class CompletionTests(unittest.TestCase):
 
     def test_specific_pid_nonblocking_poll_and_reap(self):
         count = 0
+        samples = []
         def action():
             nonlocal count
             count += 1
             return (0, 0, None) if count == 1 else (71, 0, self.usage())
         self.action = action
-        record = self.observe()
+        record = self.observe(on_poll=lambda pid: samples.append(pid))
         self.assertEqual(self.calls, [(71, os.WNOHANG)] * 2)
         self.assertEqual(self.sleeps, [.05])
         self.assertEqual(record['polls'], 2)
         self.assertTrue(record['reaped'])
+        self.assertEqual(samples, [71])  # never sample after the positive/reaping wait
 
     def test_exact_deadline_and_one_float_step_late(self):
         for upper, expected in ((2.0, 'qualified'), (math.nextafter(2.0, math.inf), 'evidence_incomplete')):
@@ -302,6 +304,9 @@ class CompletionTests(unittest.TestCase):
             with self.subTest(kwargs=kwargs):
                 self.assertEqual(self.observe(**kwargs)['status'], 'evidence_incomplete')
         self.action = lambda: (0, 0, None)
+        record = self.observe(on_poll=fail)
+        self.assertFalse(record['reaped'])
+        self.assertEqual(record['status'], 'evidence_incomplete')
         completion.time.sleep = fail
         self.assertEqual(self.observe()['status'], 'evidence_incomplete')
 
@@ -310,7 +315,7 @@ class CompletionTests(unittest.TestCase):
             with self.subTest(pid=pid), self.assertRaises(ValueError):
                 completion.observe_owned_child(pid, invocation_id='id', deadline=2)
         for kwargs in ({'poll_interval': 0}, {'poll_interval': math.nan},
-                       {'max_polls': True}, {'max_polls': 0}):
+                       {'max_polls': True}, {'max_polls': 0}, {'on_poll': True}):
             with self.subTest(kwargs=kwargs), self.assertRaises(ValueError):
                 self.observe(**kwargs)
         self.assertEqual(self.calls, [])

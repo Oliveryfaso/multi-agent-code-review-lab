@@ -55,19 +55,22 @@ def _decode_status(status):
 
 
 def observe_owned_child(pid, *, invocation_id, deadline, cancelled=None,
-                        poll_interval=.05, max_polls=4096):
+                        poll_interval=.05, max_polls=4096, on_poll=None):
     """Poll exactly ``pid`` with wait4/WNOHANG; never retry a failed OS call.
 
     ``deadline`` is the existing absolute monotonic deadline or a callback that
     may tighten it. A later larger value cannot extend the initial bound.
     A post-wait timestamp is an upper bound on exit, not the actual exit instant.
     CPU values are kernel wait accounting; max RSS retains platform-native units.
+    ``on_poll(pid)`` may enforce live resource guards after a zero wait result;
+    it is never called after a reaping wait. Errors stop without granting signals.
     """
     if (type(pid) is not int or pid <= 0 or type(invocation_id) is not str
             or not invocation_id or len(invocation_id) > 256
             or not _finite(poll_interval) or poll_interval <= 0
             or type(max_polls) is not int or max_polls <= 0
-            or (cancelled is not None and not callable(cancelled))):
+            or (cancelled is not None and not callable(cancelled))
+            or (on_poll is not None and not callable(on_poll))):
         raise ValueError('invalid_completion_arguments')
     record = {'status': 'evidence_incomplete', 'scope': 'owned_direct_child_wait4',
               'pid': pid, 'invocation_id': invocation_id, 'clock': None,
@@ -182,6 +185,17 @@ def observe_owned_child(pid, *, invocation_id, deadline, cancelled=None,
             return record
         if record['errors']:
             return record
+        if on_poll is not None:
+            try:
+                on_poll(pid)
+                tighten_deadline()
+                if stopped():
+                    fail('cancelled')
+                after = clock_read()  # guard/callback latency consumes the budget
+            except Exception as error:
+                fail('live_guard_failed', error)
+            if record['errors']:
+                return record
         if after >= record['observation_deadline']:
             fail('deadline_without_exit')
             return record
