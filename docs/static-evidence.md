@@ -185,6 +185,30 @@ All fields below are configurable positive finite budgets. Raising counts/AST/so
 
 The future Debugger roadmap includes authorized dynamic reproduction, candidate verification and stronger evaluation. A frontend is a future item; no UI, model-backed diagnosis or repair is delivered by this static command.
 
+## Independent entry completion evidence
+
+`macr.investigation.entry_completion.observe_owned_child` can observe an already
+owned direct child with PID-specific `wait4(WNOHANG)`. The caller must be its sole
+waiter: do not also call `Popen.poll`, `Popen.wait` or `communicate` on that PID.
+The helper never launches or signals a process. On an unreaped incomplete return,
+the caller still owns cleanup under its original deadline and resource guards.
+
+The first clock read after wait returns is a monotonic **upper bound** on exit,
+not an actual exit instant. Kernel user/system CPU and raw platform-unit maximum
+RSS are recorded with explicit wait4 accounting scope; these are not per-worker
+CPU measurements or a measured simultaneous process-tree RSS peak. Missing,
+denied, invalid or late observations remain `evidence_incomplete`; missing CPU
+is never replaced with zero. A tightening deadline callback cannot extend the
+original bound. Wait errors stop collection without an alternate query or retry.
+
+`qualify_completion` checks expected PID, invocation, clock metadata, successful
+exit and the supplied original finalization deadline without a timing tolerance.
+This structural check does not authenticate a record. Future native use still
+needs a frozen source/interpreter/launch binding, approved outer recorder and the
+original pressure, resource, closure and persistence checks. The observer has
+only fake wait/clock test coverage so far; historical incomplete batches remain
+incomplete. It is not connected to product execution by this change.
+
 ## Failure publication and live storage scans
 
 Rejected, failed and cancelled preparation outcomes remain uncommitted: the worker sends bounded sanitized failure control with original machine errors and exceeded limits, and the parent independently allows only completed/partial statuses to enter publication. Matching envelope status alone does not authorize COMMITTED. A valid source-less partial remains eligible only after all other verification/resource/lifecycle checks pass. `stale_snapshot` and `case_collision` are source-trust exit 3; unknown started-worker closure retains exit 4 precedence, and genuine storage faults remain exit 4.

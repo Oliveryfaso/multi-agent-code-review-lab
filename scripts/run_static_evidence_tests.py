@@ -18,8 +18,8 @@ SOURCE = PROJECT / 'src'
 NAMES = ('test_static_evidence', 'test_evidence_cli', 'test_evidence_cli_trust',
          'test_evidence_cli_transport', 'test_evidence_packaging',
          'test_static_evidence_frames', 'test_static_evidence_frame_completeness',
-         'test_evidence_worker_timing')
-EXPECTED = 109
+         'test_evidence_worker_timing', 'test_entry_completion')
+EXPECTED = 138
 LIMIT = 64 * 1024 * 1024
 
 
