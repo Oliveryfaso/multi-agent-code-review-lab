@@ -6,6 +6,7 @@ import sys
 from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
+from uuid import uuid4
 
 from macr.investigation import evidence_budget, evidence_supervisor as supervisor
 from macr.investigation.evidence_profiles import EvidenceProfile
@@ -65,7 +66,7 @@ def run_supervisor(*, spawn_error=False, workspace_error=False, unknown_wait=Fal
     def workspace(*args, **kwargs):
         if workspace_error:
             raise OSError('synthetic workspace failure')
-        return SimpleNamespace(token='synthetic-token')
+        return SimpleNamespace(token=str(uuid4()))
 
     def popen(argv, **kwargs):
         launches.append(kwargs)

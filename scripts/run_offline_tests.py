@@ -31,7 +31,7 @@ OFFLINE_MODULES = frozenset({
     'test_repository_snapshots', 'test_repository_index', 'test_context_reader',
     'test_static_readers', 'test_static_facts', 'test_static_locate_abstention', 'test_contracts',
     'test_investigation_contracts', 'test_evidence_store', 'test_provider_contract',
-    'test_check_results', 'test_final_reviewer',
+    'test_check_results', 'test_final_reviewer', 'test_pr_reviewer', 'test_pr_outputs',
     'test_local_http_provider', 'test_investigation_budget', 'test_investigation_queue',
     'test_investigation_memory', 'test_run_store', 'test_run_recovery', 'test_sqlite_run_store',
     'test_repo_map', 'test_patch_agent', 'test_patch_ranker',

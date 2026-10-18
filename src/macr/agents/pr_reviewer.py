@@ -19,7 +19,12 @@ class DiffReviewAgent:
 
     RISK_PATTERNS = [
         ("high", re.compile(r"\b(eval|exec|subprocess\.Popen|shell=True)\b"), "dangerous execution path"),
-        ("high", re.compile(r"\b(password|secret|token|api_key)\s*="), "possible hardcoded secret"),
+        ("high", re.compile(
+            r"\b(password|secret|token|api_key)\s*=\s*"
+            # Exclude complete empty placeholders; retain multiline/concatenated literal prefixes.
+            r"""(?!(?:[bru]|br|rb)?(?:"{6}|'{6}|"{2}|'{2})\s*(?:[,);#]|$))"""
+            r"""(?:(?:[bru]|br|rb)?["']|[-+]?(?:\d|\.\d))""",
+            re.IGNORECASE), "possible hardcoded secret"),
         ("medium", re.compile(r"\bexcept\s*:"), "bare except hides failure modes"),
         ("medium", re.compile(r"\bTODO\b|\bFIXME\b"), "unfinished implementation marker"),
         ("medium", re.compile(r"\bprint\s*\("), "debug print in changed code"),
