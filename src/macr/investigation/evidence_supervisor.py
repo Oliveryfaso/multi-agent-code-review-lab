@@ -26,6 +26,18 @@ from .validation import ContractError
 _SAMPLE_SECONDS = .05
 
 
+def _timing_clock():
+    """Observation metadata only; unavailable metadata changes no resource guard."""
+    try:
+        info = time.get_clock_info('monotonic')
+        return {'api': 'time.monotonic', 'implementation': info.implementation,
+                'unit': 'seconds', 'monotonic': info.monotonic, 'adjustable': info.adjustable,
+                'python_implementation': sys.implementation.name,
+                'python_version': list(sys.version_info[:3]), 'platform': sys.platform}
+    except Exception:
+        return None
+
+
 def _host_pressure():
     if sys.platform != 'darwin':
         return {'available': False, 'state': 'unknown', 'raw': None, 'errno': None,
@@ -377,6 +389,13 @@ def collect_evidence(request: EvidenceRequest, *, cancelled: Callable[[], bool] 
     closure = {'starts': 0, 'restarts': 0, 'pid': None, 'returncode': None,
                'exit_confirmed': None, 'steps': [], 'cleanup_attempted': False,
                'worker_started_monotonic': None, 'worker_closed_monotonic': None,
+               'worker_spawn_call_before_monotonic': None,
+               'timing': {'version': 2, 'clock': None, 'invocation': None,
+                          'analysis_budget_started_monotonic': budget.started,
+                          'worker_business_start': 'not_observed', 'OS_creation': 'bounded_by_Popen_call',
+                          'events': {'worker_spawn_call_before_monotonic': 'before_Popen',
+                                     'worker_started_monotonic': 'parent_after_Popen_return',
+                                     'worker_closed_monotonic': 'parent_after_confirmed_wait'}},
                'resource_monitor': monitor}
     process = None
     initial = {}
@@ -396,6 +415,8 @@ def collect_evidence(request: EvidenceRequest, *, cancelled: Callable[[], bool] 
         target = Path(request.repo).absolute()
         if package_parent.is_relative_to(target) or target.is_relative_to(package_parent):
             raise ContractError('forbidden_path', 'trusted_product_target_overlap')
+        closure['timing']['clock'] = _timing_clock()
+        closure['timing']['invocation'] = {'supervisor_pid': os.getpid(), 'out': request.out}
         _observe_pressure(monitor)
         budget.check('workspace_create')
         workspace = EvidenceWorkspace(request.repo, request.out, profile, budget=budget)
@@ -404,6 +425,7 @@ def collect_evidence(request: EvidenceRequest, *, cancelled: Callable[[], bool] 
                                'started': budget.started, 'initial_usage': initial}, profile.max_input_bytes,
                                budget=budget, stage='parent_control', limit_field='max_input_bytes')
         budget.check('worker_start')
+        closure['worker_spawn_call_before_monotonic'] = time.monotonic()
         process = subprocess.Popen(_worker_command(profile), cwd=str(package_parent), env={},
                                    stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                    close_fds=True, shell=False)

@@ -86,6 +86,22 @@ The public API is supervisor-only; there is no public synchronous prepare bypass
 
 JSON has `kind=static_evidence_locate`, `schema_version=1`, status, request, run, source_version, selection, evidence, observations, coverage, gaps, errors, usage, limits and capabilities. The local schema checks structural fields; typed validation additionally checks byte associations, spans, completeness, budgets, depth and lifecycle. It uses only local `$ref` definitions, never a target schema or network resolver. Read the schema with `importlib.resources.files('macr.investigation').joinpath('static_evidence.schema.json').read_text()`.
 
+### Worker timing metadata v2
+
+`run.closure.timing.version=2` makes the parent records explicit:
+
+| Closure field | Meaning |
+| --- | --- |
+| `worker_spawn_call_before_monotonic` | Parent record immediately before the worker Popen call. |
+| `worker_started_monotonic` | Existing parent record after Popen returns; it is not the worker's exact OS creation or business-entry time. |
+| `worker_closed_monotonic` | Existing parent record after confirmed worker wait; unknown wait leaves it unavailable. |
+
+`timing` also records the unchanged analysis-budget origin, clock API/implementation/unit/runtime/platform metadata, and the supervisor PID/canonical output invocation. Worker business start remains `not_observed`; OS creation is described only as bounded by the Popen call. Clock metadata can be null when unavailable without bypassing the existing resource guard. A pre-spawn failure has no spawn-call lower bound; a failed Popen can retain that attempt bound without claiming a worker started.
+
+A separately captured live identity may precede the parent's after-return record. A consumer combining those observations must independently establish the same supported clock/runtime and invocation, then use the exact pre-Popen through confirmed-wait envelope. The metadata alone proves no live identity, continuous OS lifetime, signal authority or performance. Legacy reports retain their original interpretation; absent v2 fields cannot be backfilled from the after-return record.
+
+Budgets, launch flags, resource guards and cleanup remain unchanged. The extra clock metadata and pre-call read consume the existing budgets and report cap. Ten synthetic supervisor regressions run in the bounded static-evidence test entry with fake processes, storage, clocks and native metrics; they do not launch a worker or execute a target. A separate short candidate guard run captured current OS identity and confirmed TERM/wait, but its overall acceptance remains **evidence incomplete** because the independent actual entry-exit time bound and CPU measurement were not captured. That result does not upgrade historical outcomes or qualify the complete public tree, native overhead or the platform matrix.
+
 Explicit entries precede deepest reported trace frames. A line selects the innermost containing symbol; missing/ambiguous matches remain explicit with bounded candidates and omitted counts. Tracebacks do not prove execution or current-version agreement; external paths are not read. Parsed Python, text-only, unparsed, excluded and unreadable coverage are distinct; indexed text is not AST coverage. Functions, async functions, classes, methods and nested symbols can supply source. Existing facts/bindings support limited ordinary-function one-hop syntax only: no guard truth, default evaluation, star expansion, decorator behavior, rebinding proof, recursion or return-value propagation. Unsupported syntax is a tool limitation and does not itself imply a defect.
 
 With `run.selection_version=exact-qualified-physical-span-v2`, reported frames retain input order while selection processes them deepest first. A frame is `valid` after its file, physical line and available reported-name checks pass and its source selection is admitted or reused. Explicit entries and different physical lines in the same declaration share one source row/excerpt without making the first matching frame a duplicate. Only a separately validated repeat of the normalized `(file, physical line, reported name)` tuple is `duplicate`; the deepest admitted occurrence is its valid representative. A blank reported name is distinct from a supplied name. Neither status proves execution, recursion or source completeness.
@@ -168,6 +184,36 @@ All fields below are configurable positive finite budgets. Raising counts/AST/so
 `*_bytes` are bytes; `*_seconds` are monotonic seconds; remaining numeric fields are counts/depth/lines. Metadata bytes are an estimate (UTF8 name/path bytes + 128 per entry), not measured kernel heap.
 
 The future Debugger roadmap includes authorized dynamic reproduction, candidate verification and stronger evaluation. A frontend is a future item; no UI, model-backed diagnosis or repair is delivered by this static command.
+
+## Independent entry completion evidence
+
+`macr.investigation.entry_completion.observe_owned_child` can observe an already
+owned direct child with PID-specific `wait4(WNOHANG)`. The caller must be its sole
+waiter: do not also call `Popen.poll`, `Popen.wait` or `communicate` on that PID.
+The helper never launches or signals a process. On an unreaped incomplete return,
+the caller still owns cleanup under its original deadline and resource guards.
+
+An optional `on_poll(pid)` callback runs only after a zero nonblocking wait result,
+so an external recorder can enforce its existing live resource guards. It never
+queries through that callback after a successful reaping wait. Callback errors,
+latency, cancellation and deadline tightening count against the same budget;
+the callback grants no launch or cleanup authority.
+
+The first clock read after wait returns is a monotonic **upper bound** on exit,
+not an actual exit instant. Kernel user/system CPU and raw platform-unit maximum
+RSS are recorded with explicit wait4 accounting scope; these are not per-worker
+CPU measurements or a measured simultaneous process-tree RSS peak. Missing,
+denied, invalid or late observations remain `evidence_incomplete`; missing CPU
+is never replaced with zero. A tightening deadline callback cannot extend the
+original bound. Wait errors stop collection without an alternate query or retry.
+
+`qualify_completion` checks expected PID, invocation, clock metadata, successful
+exit and the supplied original finalization deadline without a timing tolerance.
+This structural check does not authenticate a record. Future native use still
+needs a frozen source/interpreter/launch binding, approved outer recorder and the
+original pressure, resource, closure and persistence checks. The observer has
+only fake wait/clock test coverage so far; historical incomplete batches remain
+incomplete. It is not connected to product execution by this change.
 
 ## Failure publication and live storage scans
 

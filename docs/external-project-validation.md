@@ -66,3 +66,24 @@ Normal service shutdown returned HTTP `202` / `stopping`, and the service's actu
 All 19 frozen target files and its clean Git revision were unchanged after each executed attempt. Model calls and target execution remained zero. Raw checkpoints, source associations, failed receipts, exact tool exits and independent sidecars stay in local private evidence; no failed attempt is reclassified as passing.
 
 No original slot remains unrun. There were seven genuine analyses plus slot 6's predispatch rejection, sequentially, with zero automatic analysis or launch retries. Slot 7's RSS guard outcome is preserved, but its missing live individual OS identity keeps full eight-case evidence qualification incomplete. Sustained/larger-load performance, additional source languages and native Linux monitoring remain unrun; this small repository is not a performance benchmark or proof of target correctness.
+
+## Acceptance conclusion v1.0 — 2026-10-16
+
+The accepted boundary covers MACR's CLI, HTTP service and worker. The existing inner collector must retain source/invocation bindings, live worker identity, resource observations, actual waits and thread/queue/owned-group cleanup evidence. The proof chain ends at the execution platform. Its outermost CPU and independent deadline-bound exit upper bound remain **UNMEASURED**; tool exit status and later PID absence do not supply those measurements. Original product resource, timing, failure and cleanup rules remain in force.
+
+This version maps retained evidence; it is not a new eight-case run or a rescore of any frozen attempt.
+
+| Original slot | Retained evidence | Scoped conclusion |
+| --- | --- | --- |
+| 1 | E2 source, committed documents, live identity, resources and actual waits. | Fixed complete-source checks passed. E2 collector failure remains. |
+| 2 | E3 saved report/envelope, checkpoints and independent 32-check verification. | Fixed API checks passed. Separate raw wire body was not saved; E3 collector failure remains. |
+| 3 | E4 exact 1,024-byte source prefix, partial status and committed documents. | Truncation checks passed; incomplete source is explicit. |
+| 4 | E4 retained genuine source and required missing-entry gap. | Fixed partial-result checks passed. |
+| 5 | E4 two genuine declarations and required ambiguity gap. | Fixed ambiguity checks passed. |
+| 6 | E4 HTTP409/path rejection, unchanged registry and bounded probes. | Predispatch checks passed; no continuous negative process proof is claimed. |
+| 7 | E4 genuine RSS failure and TERM/wait; original live identity missing. | Historical evidence remains **INCOMPLETE**. A later separately frozen targeted run observed the expected guard, live identity and cleanup; it does not replace E4. |
+| 8 | E5 live identity before one cancel, cancelled/uncommitted, actual waits and service closure. | Active cancellation checks passed. E5's inherited incomplete batch status remains. |
+
+The later targeted run used the new timing metadata and the implementation represented by `762b1fa`; smoke and CLI each ran once, with no retries. CLI exit4, worker TERM/wait(-15), no publication and the independent worker identity matched the fixed RSS1 case. Under the accepted boundary, this invocation's targeted product guard and required inner-collector checks passed; its frozen overall incomplete verdict remains unchanged. The inner entry's wait4 CPU and a deadline-qualified monotonic exit upper bound were recorded. That upper bound is not the exact exit instant; its CPU scope does not establish product-only CPU, outer-platform CPU or observer overhead.
+
+No unresolved product behavior defect is established by these reviewed cases. Recorded unexpected failures belong to environment or collector execution and remain preserved. Still untested are the complete native CLI/API matrix on the newer implementation, sustained/larger-load behavior and Linux monitoring. These limits prevent a claim of complete new-revision or performance acceptance; they do not justify recursive observers, replaying consumed cases or changing historical verdicts. This update runs no analysis and grants no new native execution permission.

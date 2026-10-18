@@ -55,7 +55,7 @@ jobs:
         run: >-
           python -I -S -B scripts/run_offline_tests.py
           test_offline_tests test_contracts test_provider_contract test_check_results
-          test_local_http_provider
+          test_local_http_provider test_pr_reviewer test_pr_outputs
 
       - name: Repository graph and index
         run: >-
