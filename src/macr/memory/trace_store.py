@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 from macr.schemas import Trace
 from macr.investigation.validation import validate_identifier
 from macr.memory.atomic_file import atomic_write
+from macr.memory.trace_encoding import encode_trace
 
 
 class TraceStore:
@@ -15,7 +15,7 @@ class TraceStore:
 
     def save(self, trace: Trace) -> Path:
         validate_identifier(trace.task_id)
-        data = json.dumps(trace.to_dict(), ensure_ascii=False, indent=2, allow_nan=False).encode('utf-8')
+        data = encode_trace(trace)
         path = self.root / f"{trace.task_id}.json"
         atomic_write(path, data)
         latest = self.root / "latest.json"
@@ -24,8 +24,10 @@ class TraceStore:
         return path
 
     def read_legacy(self, path: Path) -> dict:
+        from macr.investigation.records import ActionUsage
         from macr.memory.run_store import RunStore
         # Reading legacy data has no effect on new investigation/check grades.
         reader = RunStore.__new__(RunStore)
         reader.allowed = (Path(__file__).resolve().parents[3] / 'artifacts').resolve()
+        reader.last_usage = ActionUsage()
         return reader.read_legacy(path)
