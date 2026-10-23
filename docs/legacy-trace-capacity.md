@@ -84,7 +84,7 @@ model output from disk; it is not a resume/recovery authority or semantic proof.
 Tests now check business/source binding in memory and captured requests, while
 independently checking actual persisted summary bytes.
 
-Viewer detects summaries before reading eval reports or patch files. It shows
+Viewer detects summaries before reading evaluation reports or patch files. It shows
 “Content omitted” and review metadata, preserving the review upload form and
 current-job status. It never interprets missing prose as no issues/no patch and
 does not seek a raw substitute. Unknown summary versions show an unsupported
