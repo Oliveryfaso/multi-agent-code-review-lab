@@ -133,7 +133,27 @@ class DiagnosticOrchestratorTests(unittest.TestCase):
             assumptions=[], budget=BUDGET)
 
     def persisted(self, trace):
-        return json.loads((self.store.root / f"{trace.task_id}.json").read_text())
+        # This helper always reads actual disk bytes. Business/source binding
+        # assertions below use the in-memory Trace and captured wire requests.
+        path = self.store.root / f"{trace.task_id}.json"
+        raw = path.read_text()
+        stored = json.loads(raw)
+        self.assertEqual((stored['schema'], stored['version']), ('macr.trace.summary', 1))
+        self.assertEqual(stored['task_id'], trace.task_id)
+        self.assertEqual(stored['diagnosis']['status'], trace.diagnosis['status'])
+        self.assertEqual(stored['diagnosis']['candidate_present'], trace.diagnosis['candidate'] is not None)
+        self.assertEqual(stored['diagnosis']['final_present'], trace.diagnosis['final'] is not None)
+        self.assertEqual(stored['counts']['llm_calls'], len(trace.llm_calls))
+        for key in ('ok', 'human_review_required'):
+            self.assertEqual(stored['metrics']['final_review'][key], trace.metrics['final_review'][key])
+        for key in ('query', 'repo_path', 'board'):
+            self.assertNotIn(key, stored)
+        for key in ('candidate', 'final', 'scope', 'candidate_request', 'verification_request', 'observations'):
+            self.assertNotIn(key, stored['diagnosis'])
+        self.assertNotIn(str(self.repo), raw)
+        self.assertNotIn(QUESTION, raw)
+        self.assertEqual(path.read_bytes(), (self.store.root / 'latest.json').read_bytes())
+        return stored
 
     def test_one_full_source_completes_without_count_confidence_planner_or_patch_gates(self):
         provider = FakeProvider([candidate, verification])
@@ -164,17 +184,17 @@ class DiagnosticOrchestratorTests(unittest.TestCase):
             self.assertEqual((request.max_input_tokens, request.max_output_tokens, request.timeout_seconds), (1536, 512, 300))
             self.assertEqual(request.tools, [])
         stored = self.persisted(trace)
-        self.assertEqual(stored["diagnosis"]["final"], trace.diagnosis["candidate"])
-        self.assertEqual(stored["metrics"]["final_review"], trace.metrics["final_review"])
+        self.assertEqual(trace.diagnosis["final"], trace.diagnosis["candidate"])
+        self.assertEqual(stored["metrics"]["final_review"]['issue_count'], len(trace.metrics["final_review"]['issues']))
         self.assertEqual(len(stored["llm_calls"]), 2)
-        self.assertTrue(any(row["kind"] == "final" for row in stored["board"]["diagnostic"]))
-        graph = stored["board"]["workflow"][0]["payload"]
+        self.assertTrue(any(row["kind"] == "final" for row in trace.board["diagnostic"]))
+        graph = trace.board["workflow"][0]["payload"]
         names = {node["name"] for node in graph["nodes"]}
         self.assertEqual(graph["mode"], "diagnostic")
         self.assertTrue({"diagnostic_candidate", "diagnostic_verifier", "diagnostic_final"} <= names)
         self.assertFalse({"solver", "final_review", "patch", "verification"} & names)
         self.assertFalse(next(node for node in graph["nodes"] if node["name"] == "planner")["uses_llm"])
-        policy = stored["board"]["policy"][0]["payload"]
+        policy = trace.board["policy"][0]["payload"]
         self.assertFalse({"solver", "llm_solver", "final_review"} & {row["step"] for row in policy["executed_steps"]})
 
     def test_prepare_and_continue_persist_each_stage_without_regeneration(self):
@@ -256,14 +276,14 @@ class DiagnosticOrchestratorTests(unittest.TestCase):
         trace = self.run_agent(provider)
         stored = self.persisted(trace)
         self.assertEqual(trace.diagnosis["status"], "failed")
-        self.assertIsNotNone(stored["diagnosis"]["candidate"])
-        self.assertIsNone(stored["diagnosis"]["final"])
+        self.assertTrue(stored["diagnosis"]["candidate_present"])
+        self.assertFalse(stored["diagnosis"]["final_present"])
         self.assertTrue(stored["diagnosis"]["candidate_parsed"])
         self.assertFalse(stored["diagnosis"]["verification_parsed"])
         self.assertEqual(stored["llm_calls"][-1]["usage"], failed.usage)
         self.assertEqual(stored["llm_calls"][-1]["finish_reason"], "length")
         self.assertEqual(stored["llm_calls"][-1]["failure_kind"], "incomplete")
-        attempts = [row["payload"] for row in stored["board"]["diagnostic"] if row["kind"] == "attempt"]
+        attempts = [row["payload"] for row in trace.board["diagnostic"] if row["kind"] == "attempt"]
         self.assertEqual(attempts[-1]["raw_output"], raw)
         self.assertEqual(len(provider.requests), 2)
 
@@ -344,7 +364,7 @@ class DiagnosticOrchestratorTests(unittest.TestCase):
                                      diagnostic_schema_decoding=diagnostic_schema_decoding)
         return provider, transport
 
-    def test_prompt_variant_only_changes_candidate_wire_and_persists_actual_request(self):
+    def test_prompt_variant_only_changes_candidate_wire_and_keeps_actual_request_in_memory(self):
         prepared = self.orchestrator().prepare_diagnostic(self.repo, QUESTION, scenario=SCENARIO,
             assumptions=[], budget=BUDGET)
         wires = []
@@ -357,10 +377,12 @@ class DiagnosticOrchestratorTests(unittest.TestCase):
             provider.token_counter = count
             agent, trace = self.orchestrator(provider), deepcopy(prepared)
             agent.diagnostic_candidate(trace, prompt_variant=variant)
-            self.assertEqual(self.persisted(trace)['diagnosis']['candidate_request'], asdict(requests[0]))
+            self.persisted(trace)
+            self.assertEqual(trace.diagnosis['candidate_request'], asdict(requests[0]))
             self.assertEqual(requests[0].messages, transport.calls[0]['messages'])
             agent.verify_diagnostic(trace)
-            self.assertEqual(self.persisted(trace)['diagnosis']['verification_request'], asdict(requests[1]))
+            self.persisted(trace)
+            self.assertEqual(trace.diagnosis['verification_request'], asdict(requests[1]))
             for body, actual_request in zip(transport.bodies, requests):
                 self.assertIn(b'"schema": ' + json.dumps(actual_request.response_schema).encode(), body)
             self.assertEqual(len(transport.calls), 2)
@@ -375,12 +397,13 @@ class DiagnosticOrchestratorTests(unittest.TestCase):
         provider, transport = self.production([candidate, verification], diagnostic_schema_decoding=True)
         trace = self.orchestrator(provider).run_diagnostic(self.repo, QUESTION, scenario=SCENARIO,
             assumptions=[], budget=BUDGET, prompt_variant='requirement_preserving')
-        stored = self.persisted(trace)['diagnosis']['candidate_request']
+        self.persisted(trace)
+        recorded_request = trace.diagnosis['candidate_request']
         self.assertEqual(len(transport.calls), 2)
-        self.assertEqual(stored['messages'], transport.calls[0]['messages'])
-        self.assertEqual(stored['response_schema'], transport.calls[0]['response_format']['json_schema']['schema'])
-        self.assertEqual(stored['metadata']['diagnostic_prompt_variant'], 'requirement_preserving')
-        self.assertTrue(stored['messages'][0]['content'].endswith('\n\n' + REQUIREMENT_PRESERVING_PROMPT))
+        self.assertEqual(recorded_request['messages'], transport.calls[0]['messages'])
+        self.assertEqual(recorded_request['response_schema'], transport.calls[0]['response_format']['json_schema']['schema'])
+        self.assertEqual(recorded_request['metadata']['diagnostic_prompt_variant'], 'requirement_preserving')
+        self.assertTrue(recorded_request['messages'][0]['content'].endswith('\n\n' + REQUIREMENT_PRESERVING_PROMPT))
         self.assertEqual(transport.calls[1]['messages'][0]['content'], wires[0][1]['messages'][0]['content'])
 
     def test_invalid_prompt_variant_has_zero_dispatch_and_keeps_prepared_state(self):
@@ -390,6 +413,7 @@ class DiagnosticOrchestratorTests(unittest.TestCase):
         agent = self.orchestrator(provider)
         trace = agent.prepare_diagnostic(self.repo, QUESTION, scenario=SCENARIO, assumptions=[], budget=BUDGET)
         original = deepcopy(trace.diagnosis)
+        original_summary = self.persisted(trace)
         scope = restore_scope(trace.diagnosis['scope'])
         for variant in ('unknown', '', None, True, [], {}, StringSubclass('baseline')):
             with self.subTest(variant=variant):
@@ -405,7 +429,7 @@ class DiagnosticOrchestratorTests(unittest.TestCase):
                     agent.solver.diagnostic_candidate(scope, question=QUESTION, scenario=SCENARIO,
                         assumptions=[], model_budget=BUDGET, prompt_variant=variant)
                 self.assertEqual(trace.diagnosis, original)
-                self.assertEqual(self.persisted(trace)['diagnosis'], original)
+                self.assertEqual(self.persisted(trace), original_summary)
                 self.assertEqual(transport.calls, [])
 
     def run_semantic_development(self, files, question, terms, candidate_action, verifier_action,
@@ -490,7 +514,7 @@ class DiagnosticOrchestratorTests(unittest.TestCase):
                 self.assertEqual(trace.answer.confidence, 0.0)
                 self.assertEqual(len(trace.answer.evidence), 3)
                 stored = self.persisted(trace)
-                self.assertEqual([row["payload"]["raw_output"] for row in stored["board"]["diagnostic"]
+                self.assertEqual([row["payload"]["raw_output"] for row in trace.board["diagnostic"]
                                   if row["kind"] == "attempt"], raw)
                 self.assertEqual([row["usage"] for row in stored["llm_calls"]],
                                  [{"input_tokens": 100, "output_tokens": 40}] * 2)
@@ -548,7 +572,7 @@ class DiagnosticOrchestratorTests(unittest.TestCase):
                     self.assertEqual(trace.diagnosis["error_type"], "compact_contract_invalid")
                     self.assertEqual(trace.diagnosis["failure_kind"], "invalid_contract")
                 stored = self.persisted(trace)
-                self.assertEqual([row["payload"]["raw_output"] for row in stored["board"]["diagnostic"]
+                self.assertEqual([row["payload"]["raw_output"] for row in trace.board["diagnostic"]
                                   if row["kind"] == "attempt"], raw)
                 self.assertEqual([row["usage"] for row in stored["llm_calls"]],
                                  [{"input_tokens": 100, "output_tokens": 40}] * 2)
@@ -649,18 +673,19 @@ class DiagnosticOrchestratorTests(unittest.TestCase):
         self.assertEqual(len(transport.calls), 2)
         stored = self.persisted(trace)
         self.assertEqual(stored["diagnosis"]["protocol"], LEGACY_VERSION)
-        self.assertEqual(stored["diagnosis"]["candidate_request"]["metadata"]["diagnostic_protocol"], LEGACY_VERSION)
-        self.assertEqual(stored["diagnosis"]["verification_request"]["metadata"]["diagnostic_protocol"], LEGACY_VERSION)
+        self.assertEqual(trace.diagnosis["candidate_request"]["metadata"]["diagnostic_protocol"], LEGACY_VERSION)
+        self.assertEqual(trace.diagnosis["verification_request"]["metadata"]["diagnostic_protocol"], LEGACY_VERSION)
         scope = restore_scope(trace.diagnosis["scope"])
         for body, verifier in zip(transport.bodies, (False, True)):
             schema = protocol_schema(scope, verifier=verifier, version=LEGACY_VERSION)
             self.assertIn(b'"schema": ' + json.dumps(schema).encode(), body)
-        attempts = [row["payload"] for row in stored["board"]["diagnostic"] if row["kind"] == "attempt"]
+        attempts = [row["payload"] for row in trace.board["diagnostic"] if row["kind"] == "attempt"]
         self.assertEqual(attempts[0]["raw_output"], RETAINED_DEV01_RAW)
         self.assertEqual(stored["llm_calls"][0]["usage"], {"input_tokens": 658, "output_tokens": 128})
         self.assertEqual(stored["llm_calls"][0]["finish_reason"], "stop")
         self.assertEqual(stored["llm_calls"][1]["usage"], {"input_tokens": 100, "output_tokens": 40})
-        self.assertEqual(stored["metrics"]["final_review"]["issues"], ["verification_task_incomplete"])
+        self.assertEqual(trace.metrics["final_review"]["issues"], ["verification_task_incomplete"])
+        self.assertEqual(stored["metrics"]["final_review"]["issue_count"], 1)
 
     def test_missing_coverage_is_invalid_contract_and_preserves_candidate_and_verifier_usage(self):
         def missing_coverage(request):
@@ -727,9 +752,10 @@ class DiagnosticOrchestratorTests(unittest.TestCase):
         self.assertTrue(trace.metrics["final_review"]["human_review_required"])
         self.assertFalse(trace.diagnosis["semantic_proof"])
         stored = self.persisted(trace)
-        self.assertEqual(stored["metrics"]["final_review"], trace.metrics["final_review"])
+        self.assertEqual(stored["metrics"]["final_review"]["human_review_required"], True)
         review_issue = "contract/source checks passed; semantic/task coverage needs review"
-        self.assertEqual(stored["metrics"]["final_review"]["issues"], [review_issue])
+        self.assertEqual(trace.metrics["final_review"]["issues"], [review_issue])
+        self.assertEqual(stored["metrics"]["final_review"]["issue_count"], 1)
         output = io.StringIO()
         with patch("sys.stdout", output):
             _print_trace(trace, as_json=False)
@@ -737,8 +763,9 @@ class DiagnosticOrchestratorTests(unittest.TestCase):
         self.assertIn(review_issue, output.getvalue())
         self.assertNotIn("Rerun with --clarification", output.getvalue())
         rendered = TraceViewer(root=fixture_root(), trace_path=self.store.root / f"{trace.task_id}.json").render()
-        self.assertIn("Final Audit Needs Review", rendered)
-        self.assertIn(review_issue, rendered)
+        self.assertIn("Human review required", rendered)
+        self.assertIn("Content omitted", rendered)
+        self.assertNotIn(review_issue, rendered)
         generic = deepcopy(trace)
         generic.metrics["final_review"] = {"ok": False, "human_review_required": True,
                                           "questions": ["Which retrieved source needs clarification?"]}
@@ -767,7 +794,7 @@ class DiagnosticOrchestratorTests(unittest.TestCase):
                 self.assertEqual(len(transport.calls), 1)
                 self.assertEqual(stored["llm_calls"][0]["usage"], {"input_tokens": 100, "output_tokens": 40})
                 self.assertEqual(stored["llm_calls"][0]["finish_reason"], finish)
-                raw = [row["payload"]["raw_output"] for row in stored["board"]["diagnostic"] if row["kind"] == "attempt"]
+                raw = [row["payload"]["raw_output"] for row in trace.board["diagnostic"] if row["kind"] == "attempt"]
                 self.assertEqual(raw, [content])
         provider, transport = self.production([TimeoutError()])
         trace = self.run_agent(provider)
@@ -794,7 +821,7 @@ class DiagnosticOrchestratorTests(unittest.TestCase):
             agent.prepare_diagnostic(self.repo, "\ud800", scenario=SCENARIO, assumptions=[], budget=BUDGET)
         self.assertEqual(error.exception.code, "diagnostic_input_invalid")
 
-    def test_fact_checks_reach_both_production_requests_and_persist_exact_packet(self):
+    def test_fact_checks_reach_both_production_requests_and_keep_exact_packet_in_memory(self):
         provider, transport = self.production([candidate, verification], diagnostic_schema_decoding=True)
         agent = self.orchestrator(provider)
         trace = agent.run_diagnostic(self.repo, QUESTION, scenario=SCENARIO, assumptions=[],
@@ -809,12 +836,13 @@ class DiagnosticOrchestratorTests(unittest.TestCase):
         self.assertEqual(trace.diagnosis['final'], trace.diagnosis['candidate'])
         self.assertFalse(trace.diagnosis['semantic_proof'])
         self.assertTrue(trace.metrics['final_review']['human_review_required'])
-        stored = self.persisted(trace)['diagnosis']
+        self.persisted(trace)
+        recorded_diagnosis = trace.diagnosis
         for name in ('candidate_request', 'verification_request'):
-            self.assertEqual(stored[name]['metadata']['diagnostic_observation_version'], 'visible_syntax_v1')
-            self.assertEqual((stored[name]['max_input_tokens'], stored[name]['max_output_tokens']), (1536, 512))
-        self.assertEqual(stored['candidate_request']['metadata']['diagnostic_observation_sha256'],
-                         stored['verification_request']['metadata']['diagnostic_observation_sha256'])
+            self.assertEqual(recorded_diagnosis[name]['metadata']['diagnostic_observation_version'], 'visible_syntax_v1')
+            self.assertEqual((recorded_diagnosis[name]['max_input_tokens'], recorded_diagnosis[name]['max_output_tokens']), (1536, 512))
+        self.assertEqual(recorded_diagnosis['candidate_request']['metadata']['diagnostic_observation_sha256'],
+                         recorded_diagnosis['verification_request']['metadata']['diagnostic_observation_sha256'])
         scope = restore_scope(trace.diagnosis['scope'])
         for call, verifier in zip(transport.calls, (False, True)):
             self.assertEqual(call['response_format']['json_schema']['schema'], protocol_schema(scope, verifier=verifier))
@@ -848,7 +876,7 @@ class DiagnosticOrchestratorTests(unittest.TestCase):
                 self.assertEqual([row['max_tokens'] for row in transport.calls], [1024] * expected_calls)
                 stored = self.persisted(trace)
                 for name in ('candidate_request', 'verification_request')[:expected_calls]:
-                    self.assertEqual({key: stored['diagnosis'][name][key] for key in asdict(budget)},
+                    self.assertEqual({key: trace.diagnosis[name][key] for key in asdict(budget)},
                                      asdict(budget))
                 if truncated_role is None:
                     self.assertEqual(trace.diagnosis['status'], 'accepted')
@@ -858,7 +886,7 @@ class DiagnosticOrchestratorTests(unittest.TestCase):
                     self.assertEqual(trace.diagnosis['error_type'], 'model_output_incomplete')
                     self.assertEqual(stored['llm_calls'][-1]['finish_reason'], 'length')
                     self.assertEqual(stored['llm_calls'][-1]['usage']['output_tokens'], 1024)
-                    attempts = [row['payload'] for row in stored['board']['diagnostic']
+                    attempts = [row['payload'] for row in trace.board['diagnostic']
                                 if row['kind'] == 'attempt']
                     self.assertIsInstance(json.loads(attempts[-1]['raw_output']), dict)
 

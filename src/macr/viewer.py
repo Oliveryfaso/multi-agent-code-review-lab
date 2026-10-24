@@ -80,6 +80,38 @@ class TraceViewer:
         self.jobs: dict[str, WebReviewJob] = {}
         self.job_lock = threading.Lock()
 
+    def _render_trace_summary(self, trace: dict, status: str, job: WebReviewJob | None) -> str:
+        """Render only known summary metadata; never find ancillary raw files."""
+        from macr.memory.trace_summary import MAX_COUNTER, STATUSES, SUMMARY_VERSION
+        if type(trace.get('version')) is not int or trace['version'] != SUMMARY_VERSION:
+            return ('<!doctype html><html lang="en"><meta charset="utf-8">'
+                    '<title>Trace summary</title><h1>Unsupported trace summary version</h1>'
+                    '<p>This viewer cannot display this summary. No legacy content was loaded.</p></html>')
+        counts = trace.get('counts') if type(trace.get('counts')) is dict else {}
+        metrics = trace.get('metrics') if type(trace.get('metrics')) is dict else {}
+        review = metrics.get('final_review') if type(metrics.get('final_review')) is dict else {}
+        diagnosis = trace.get('diagnosis') if type(trace.get('diagnosis')) is dict else {}
+        state = diagnosis.get('status')
+        state = state if type(state) is str and len(state) <= 64 and state in STATUSES else 'unknown'
+        review_text = ('Human review required' if review.get('human_review_required') is True else
+                       'Human review status unavailable in this view')
+        rows = []
+        for key, label in (('tool_calls', 'Tool calls'), ('llm_calls', 'Model calls'),
+                           ('states', 'States'), ('evidence', 'Evidence count')):
+            value = counts.get(key)
+            display = str(value) if type(value) is int and 0 <= value <= MAX_COUNTER else 'unknown'
+            rows.append(f'<dt>{label}</dt><dd>{display}</dd>')
+        return ('<!doctype html><html lang="en"><head><meta charset="utf-8">'
+                '<meta name="viewport" content="width=device-width, initial-scale=1">'
+                '<title>Trace summary</title></head><body><main><h1>Trace summary</h1>'
+                '<p><strong>Content omitted.</strong> This operational summary cannot reconstruct '
+                'the diagnosis, patch or source evidence. Missing content does not mean no issues were found.</p>'
+                f'<p>{review_text}</p><p>Diagnostic status: {html.escape(state)}</p>'
+                '<p>Recorded metadata does not establish semantic correctness or authorize recovery.</p>'
+                '<dl>' + ''.join(rows) + '</dl><section><h2>Run another review</h2>'
+                + self._status_note(status) + self._job_status(job) + self._workbench()
+                + '</section></main>' + self._workbench_script() + '</body></html>')
+
     def serve(self, host: str = "127.0.0.1", port: int = 8765) -> None:
         viewer = self
 
@@ -130,6 +162,8 @@ class TraceViewer:
 
     def render(self, status: str = "", job: WebReviewJob | None = None) -> str:
         trace = self._load_trace()
+        if trace.get('schema') == 'macr.trace.summary':
+            return self._render_trace_summary(trace, status, job)
         report = self._read_text(self.report_path, "No eval report found.")
         real_report = self._read_text(self.real_report_path, "No real data showcase report found.")
         patch_files = sorted(self.patch_dir.glob("*.patch"))[-5:] if self.patch_dir.exists() else []
@@ -300,49 +334,52 @@ class TraceViewer:
     {self._detail("Patch Verification & Eval Report", self._patch(patch) + "<h3>Latest Patch Preview</h3><pre>" + self._esc(patch_preview) + "</pre><h3>Eval Report</h3><pre>" + self._esc(report) + "</pre>")}
     {self._detail("Agent Board & Monitor Metrics", "<p class='muted'>Shared blackboard sections written by each agent.</p>" + self._board(board) + "<h3>Monitor Metrics</h3><pre>" + self._esc(json.dumps(metrics, ensure_ascii=False, indent=2)) + "</pre>")}
   </main>
-  <script>
-    (() => {{
-      const mode = document.querySelector('[data-review-mode]');
-      const panels = Array.from(document.querySelectorAll('[data-mode-panel]'));
-      const syncMode = () => {{
-        const active = mode ? mode.value : 'ask';
-        panels.forEach((panel) => {{
-          const visible = panel.dataset.modePanel === active;
-          panel.hidden = !visible;
-          panel.querySelectorAll('input, textarea, select').forEach((field) => {{
-            field.disabled = !visible;
-          }});
-        }});
-      }};
-      if (mode) {{
-        mode.addEventListener('change', syncMode);
-        syncMode();
-      }}
-      const jobStatus = document.querySelector('[data-job-id]');
-      if (jobStatus) {{
-        const jobId = jobStatus.dataset.jobId;
-        const text = jobStatus.querySelector('[data-job-message]');
-        const poll = async () => {{
-          try {{
-            const response = await fetch(`/jobs/${{jobId}}.json`, {{ cache: 'no-store' }});
-            if (!response.ok) return;
-            const data = await response.json();
-            if (text) text.textContent = `${{data.status}}: ${{data.message || data.error || ''}}`;
-            if (data.status === 'completed') {{
-              window.setTimeout(() => window.location.reload(), 700);
-            }} else if (data.status !== 'failed') {{
-              window.setTimeout(poll, 1200);
-            }}
-          }} catch (error) {{
-            window.setTimeout(poll, 2000);
-          }}
-        }};
-        poll();
-      }}
-    }})();
-  </script>
+  {self._workbench_script()}
 </body>
 </html>"""
+
+    def _workbench_script(self) -> str:
+        return """<script>
+    (() => {
+      const mode = document.querySelector('[data-review-mode]');
+      const panels = Array.from(document.querySelectorAll('[data-mode-panel]'));
+      const syncMode = () => {
+        const active = mode ? mode.value : 'ask';
+        panels.forEach((panel) => {
+          const visible = panel.dataset.modePanel === active;
+          panel.hidden = !visible;
+          panel.querySelectorAll('input, textarea, select').forEach((field) => {
+            field.disabled = !visible;
+          });
+        });
+      };
+      if (mode) {
+        mode.addEventListener('change', syncMode);
+        syncMode();
+      }
+      const jobStatus = document.querySelector('[data-job-id]');
+      if (jobStatus) {
+        const jobId = jobStatus.dataset.jobId;
+        const text = jobStatus.querySelector('[data-job-message]');
+        const poll = async () => {
+          try {
+            const response = await fetch(`/jobs/${jobId}.json`, { cache: 'no-store' });
+            if (!response.ok) return;
+            const data = await response.json();
+            if (text) text.textContent = `${data.status}: ${data.message || data.error || ''}`;
+            if (data.status === 'completed') {
+              window.setTimeout(() => window.location.reload(), 700);
+            } else if (data.status !== 'failed') {
+              window.setTimeout(poll, 1200);
+            }
+          } catch (error) {
+            window.setTimeout(poll, 2000);
+          }
+        };
+        poll();
+      }
+    })();
+  </script>"""
 
     def handle_web_review(self, fp, headers) -> str:
         content_length = int(headers.get("Content-Length", "0") or 0)
