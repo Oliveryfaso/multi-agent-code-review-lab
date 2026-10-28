@@ -1,0 +1,281 @@
+{
+  "version": "deepseek-policy-dev-v1",
+  "split": "development",
+  "cases": [
+    {
+      "id": "p01",
+      "snapshot_root": "snapshots/p01",
+      "stratum": "full_context",
+      "evidence_parity": "equal",
+      "authorized_files": [
+        "logic.py"
+      ],
+      "initial_evidence_files": [
+        "logic.py"
+      ],
+      "entrypoint": {
+        "file": "logic.py",
+        "symbol": "emit"
+      },
+      "question": "Does the supplied implementation satisfy the requirement for the complete stated scenario and domain?",
+      "scenario": "For this particular deployment, emit(path) must leave exactly the bytes b\"oak\\n\" in a fresh writable regular file. Determine whether this deployed call does so; portable output on every platform is not the stated requirement.",
+      "assumptions": [
+        "Standard Python 3 open and text I/O; path names a fresh writable regular file and all operations succeed.",
+        "ASCII encoding is fixed, no concurrent writes, and the stream closes normally.",
+        "The source snapshot describes application code; the target deployment and the review environment are separate."
+      ]
+    },
+    {
+      "id": "p02",
+      "snapshot_root": "snapshots/p02",
+      "stratum": "retrieval_required",
+      "evidence_parity": "unequal_by_design",
+      "authorized_files": [
+        "entry.py",
+        "metrics.py"
+      ],
+      "initial_evidence_files": [
+        "entry.py"
+      ],
+      "entrypoint": {
+        "file": "entry.py",
+        "symbol": "describe"
+      },
+      "question": "Does the supplied implementation satisfy the requirement for the complete stated scenario and domain?",
+      "scenario": "describe must return (number of values, sum of values) for each input tuple, including the empty tuple. Include describe((2, 5)) in the diagnosis.",
+      "assumptions": [
+        "Python 3 semantics, stable import binding to the supplied metrics.py.",
+        "values is an exact built-in tuple of at most 8 exact built-in integers from 0 through 20."
+      ]
+    },
+    {
+      "id": "p03",
+      "snapshot_root": "snapshots/p03",
+      "stratum": "retrieval_required",
+      "evidence_parity": "unequal_by_design",
+      "authorized_files": [
+        "entry.py",
+        "ring.py"
+      ],
+      "initial_evidence_files": [
+        "entry.py"
+      ],
+      "entrypoint": {
+        "file": "entry.py",
+        "symbol": "locate"
+      },
+      "question": "Does the supplied implementation satisfy the requirement for the complete stated scenario and domain?",
+      "scenario": "locate must return the unique ring slot in [0, size) congruent to position, including negative positions. The complete allowed domain matters; include locate(-1, 4).",
+      "assumptions": [
+        "Exact built-in ints: position is from -100 through 100, size is from 1 through 8.",
+        "The supplied ring.py is the stable import target; ordinary Python 3 integer modulo applies."
+      ]
+    },
+    {
+      "id": "p04",
+      "snapshot_root": "snapshots/p04",
+      "stratum": "full_context",
+      "evidence_parity": "equal",
+      "authorized_files": [
+        "logic.py"
+      ],
+      "initial_evidence_files": [
+        "logic.py"
+      ],
+      "entrypoint": {
+        "file": "logic.py",
+        "symbol": "area"
+      },
+      "question": "Does the supplied implementation satisfy the requirement for the complete stated scenario and domain?",
+      "scenario": "In this particular deployed interpreter, area(50000, 50000) must return the integer 2500000000. Determine whether the deployed call meets that requirement; this is not a requirement to support every ABI.",
+      "assumptions": [
+        "rows and columns are the exact built-in ints 50000 and 50000.",
+        "The deployed runtime uses standard Python 3 ctypes.c_long without monkeypatching.",
+        "The target deployment and the review environment are separate; no deployment runtime descriptor or captured return value is included."
+      ]
+    },
+    {
+      "id": "p05",
+      "snapshot_root": "snapshots/p05",
+      "stratum": "full_context",
+      "evidence_parity": "equal",
+      "authorized_files": [
+        "logic.py"
+      ],
+      "initial_evidence_files": [
+        "logic.py"
+      ],
+      "entrypoint": {
+        "file": "logic.py",
+        "symbol": "odd_value"
+      },
+      "question": "Does the supplied implementation satisfy the requirement for the complete stated scenario and domain?",
+      "scenario": "odd_value must return the unique integer with odd multiplicity in values. Every other distinct integer occurs an even number of times; the input order may be arbitrary.",
+      "assumptions": [
+        "Python 3 semantics; values is a nonempty exact built-in tuple of at most 15 exact built-in ints from 0 through 15.",
+        "Exactly one distinct value has odd multiplicity. Zero is allowed and can be that value."
+      ]
+    },
+    {
+      "id": "p06",
+      "snapshot_root": "snapshots/p06",
+      "stratum": "retrieval_required",
+      "evidence_parity": "unequal_by_design",
+      "authorized_files": [
+        "entry.py",
+        "fields.py"
+      ],
+      "initial_evidence_files": [
+        "entry.py"
+      ],
+      "entrypoint": {
+        "file": "entry.py",
+        "symbol": "parse"
+      },
+      "question": "Does the supplied implementation satisfy the requirement for the complete stated scenario and domain?",
+      "scenario": "parse must return the text before the first \"=\" as name and all remaining text after it as value, preserving whitespace and later \"=\" characters. Include \"mode=a=b\" and \"mode=\".",
+      "assumptions": [
+        "Python 3 semantics with stable import binding to the supplied fields.py.",
+        "text is an exact built-in ASCII string of at most 80 characters, contains at least one \"=\", and has a nonempty prefix before its first \"=\"."
+      ]
+    },
+    {
+      "id": "p07",
+      "snapshot_root": "snapshots/p07",
+      "stratum": "full_context",
+      "evidence_parity": "equal",
+      "authorized_files": [
+        "logic.py"
+      ],
+      "initial_evidence_files": [
+        "logic.py"
+      ],
+      "entrypoint": {
+        "file": "logic.py",
+        "symbol": "total_units"
+      },
+      "question": "Does the supplied implementation satisfy the requirement for the complete stated scenario and domain?",
+      "scenario": "total_units must return the sum of every batch count, with 0 for the empty tuple. Include total_units((2, 5, 3)) in the diagnosis.",
+      "assumptions": [
+        "Python 3 semantics with exact built-in integers and tuples.",
+        "batches is a finite tuple of integers from 0 through 20, with length at most 8."
+      ]
+    },
+    {
+      "id": "p08",
+      "snapshot_root": "snapshots/p08",
+      "stratum": "retrieval_required",
+      "evidence_parity": "unequal_by_design",
+      "authorized_files": [
+        "entry.py",
+        "layout.py"
+      ],
+      "initial_evidence_files": [
+        "entry.py"
+      ],
+      "entrypoint": {
+        "file": "entry.py",
+        "symbol": "read_note"
+      },
+      "question": "Does the supplied implementation satisfy the requirement for the complete stated scenario and domain?",
+      "scenario": "For this particular deployment, read_note(\"/demo/assets\") must read a note whose resolved filesystem target is inside /demo/assets. Determine whether the deployed call meets that target-location requirement, not whether the function is safe for every possible filesystem.",
+      "assumptions": [
+        "root is exactly the built-in string /demo/assets; all reads succeed and resolve to a regular UTF-8 file.",
+        "Standard Python 3 file opening follows deployment symlinks; there are no concurrent path changes.",
+        "The /demo path is fictional deployment input; it does not identify or authorize a path on the review machine.",
+        "The asset root /demo/assets is an existing canonical directory."
+      ]
+    },
+    {
+      "id": "p09",
+      "snapshot_root": "snapshots/p09",
+      "stratum": "full_context",
+      "evidence_parity": "equal",
+      "authorized_files": [
+        "logic.py"
+      ],
+      "initial_evidence_files": [
+        "logic.py"
+      ],
+      "entrypoint": {
+        "file": "logic.py",
+        "symbol": "read_value"
+      },
+      "question": "Does the supplied implementation satisfy the requirement for the complete stated scenario and domain?",
+      "scenario": "read_value must append exactly one \"closed\" entry to log on each call. It must return data[\"value\"] when present and propagate KeyError when absent, without changing data or earlier log entries.",
+      "assumptions": [
+        "Python 3 semantics; data is an exact built-in dict with string keys and integer values.",
+        "log is a separate exact built-in list of strings, no concurrent mutations or custom hooks; ordinary operations have sufficient memory."
+      ]
+    },
+    {
+      "id": "p10",
+      "snapshot_root": "snapshots/p10",
+      "stratum": "retrieval_required",
+      "evidence_parity": "unequal_by_design",
+      "authorized_files": [
+        "encoding.py",
+        "entry.py"
+      ],
+      "initial_evidence_files": [
+        "entry.py"
+      ],
+      "entrypoint": {
+        "file": "entry.py",
+        "symbol": "frame"
+      },
+      "question": "Does the supplied implementation satisfy the requirement for the complete stated scenario and domain?",
+      "scenario": "frame must prefix the UTF-8 payload with its byte length in ASCII decimal followed by a colon. Include frame(\"é\"), whose payload consists of two UTF-8 bytes.",
+      "assumptions": [
+        "Python 3 semantics with stable import binding to the supplied encoding.py.",
+        "text is an exact built-in string of at most 20 Unicode scalar values, without surrogate code points; empty and non-ASCII strings are allowed."
+      ]
+    },
+    {
+      "id": "p11",
+      "snapshot_root": "snapshots/p11",
+      "stratum": "retrieval_required",
+      "evidence_parity": "unequal_by_design",
+      "authorized_files": [
+        "db_ops.py",
+        "entry.py"
+      ],
+      "initial_evidence_files": [
+        "entry.py"
+      ],
+      "entrypoint": {
+        "file": "entry.py",
+        "symbol": "add_pair"
+      },
+      "question": "Does the supplied implementation satisfy the requirement for the complete stated scenario and domain?",
+      "scenario": "For this particular deployed SQLite database, adding \"Alder\" then \"alder\" to the initially empty labels table must reject the second insertion as a duplicate. Determine whether add_pair satisfies that deployed requirement.",
+      "assumptions": [
+        "conn is a normal SQLite connection; labels(name) exists, is initially empty, and has no triggers.",
+        "Both calls are sequential on that connection with ordinary SQLite constraint behavior and no concurrent writes.",
+        "This snapshot contains application code only; the connection's deployed database is not part of the source snapshot."
+      ]
+    },
+    {
+      "id": "p12",
+      "snapshot_root": "snapshots/p12",
+      "stratum": "full_context",
+      "evidence_parity": "equal",
+      "authorized_files": [
+        "logic.py"
+      ],
+      "initial_evidence_files": [
+        "logic.py"
+      ],
+      "entrypoint": {
+        "file": "logic.py",
+        "symbol": "remove_zeros"
+      },
+      "question": "Does the supplied implementation satisfy the requirement for the complete stated scenario and domain?",
+      "scenario": "remove_zeros must return a list containing all and only the nonzero values in their original order, without changing values. Include remove_zeros((0, 0, 4)) in the diagnosis.",
+      "assumptions": [
+        "Python 3 semantics; values is an exact built-in tuple of at most 8 exact built-in ints from 0 through 9.",
+        "No concurrent mutation or custom iteration behavior."
+      ]
+    }
+  ]
+}

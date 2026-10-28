@@ -1,0 +1,10 @@
+{
+  "version": "deepseek-policy-dev-blind-review-v1",
+  "instructions": "Format template only; no answers or review results exist yet. Export one item per raw response after replacing placeholders. Keep the model/arm-to-response assignment map separate from the reviewer packet.",
+  "packet_fields": ["version", "items"],
+  "item_fields": ["blind_response_id", "case_id", "question", "scenario", "assumptions", "authorized_source", "raw_answer"],
+  "source_fields": ["file", "start", "end", "body"],
+  "review_fields": ["blind_response_id", "case_id", "verdict_supported", "mechanism_supported", "trigger_or_domain_supported", "citations_supported", "missing_evidence_specific", "review_notes"],
+  "dimension_values": ["supported", "partial", "contradicted", "unknown", "not_applicable"],
+  "separation": "Give reviewers every authorized source file for the case and the unchanged raw answer, without model name, method arm, gold, family, expected verdict, prompt tuning history, or prior scores. Record source view/evidence parity and the assignment map outside the reviewer packet. Join gold only after independent reviews are recorded."
+}

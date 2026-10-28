@@ -69,6 +69,10 @@ Outermost CPU, an independent deadline-qualified exit upper bound and sustained-
 behavior remain unverified; the dated records retain all remaining limits.
 Local reports contain source/input and must stay private; never expose the workbench publicly.
 
+## DeepSeek policy research
+
+A separate research harness compares four bounded diagnostic strategies over twelve author-known synthetic development cases. Two live pilots stopped after five requests in total; the results do not establish diagnostic accuracy or a benefit from tools. An unknown request remains reserved in the local budget, and there is no supported continuation path for the unexecuted cells. See the [experiment protocol](docs/deepseek-policy-experiment-v1.md), [aggregate results and limits](docs/deepseek-policy-results.md), and [live-run checklist](docs/deepseek-policy-pilot-checklist-v1.md).
+
 ## Documentation
 
 - [CLI, Python API, profiles and report semantics](docs/static-evidence.md)

@@ -1,0 +1,416 @@
+{
+  "version": "deepseek-policy-dev-v1",
+  "split": "development",
+  "cases": {
+    "p01": {
+      "expected_verdict": "unknown",
+      "family": "deployed-text-newline-translation",
+      "mechanism": null,
+      "trigger": null,
+      "missing_evidence": [
+        "The deployed text-mode newline translation / OS line separator, or a deployment-bound byte observation, is absent from the entire snapshot."
+      ],
+      "missing_from_snapshot": [
+        "runtime_newline.json"
+      ],
+      "compatible_outcomes": [
+        "A deployment translating newline to LF writes b\"oak\\n\".",
+        "A deployment translating newline to CRLF writes b\"oak\\r\\n\"."
+      ],
+      "evidence_roles": [
+        {
+          "file": "logic.py",
+          "start": 1,
+          "end": 3,
+          "role": "default-newline-translation-on-write",
+          "excerpt": "def emit(path):\n    with open(path, \"w\", encoding=\"ascii\", newline=None) as stream:\n        stream.write(\"oak\\n\")"
+        }
+      ],
+      "rubric": {
+        "must_establish": [
+          "Identify deployed newline translation or OS line separator as the missing determinant of the physical bytes.",
+          "Distinguish the explicit ASCII encoding from newline translation and retain this-deployment scope."
+        ],
+        "reject": [
+          "Assume LF or CRLF solely from the review host.",
+          "Declare ASCII encoding alone guarantees the byte sequence, or claim missing write/close code."
+        ]
+      }
+    },
+    "p02": {
+      "expected_verdict": "supported_defect",
+      "family": "second-pass-exhausted-iterator",
+      "mechanism": "Both reductions consume the same iterator. Counting exhausts it before summing, so the total is always zero even when the original tuple has a positive sum.",
+      "trigger": "describe((2, 5)) returns (2, 0) instead of (2, 7).",
+      "missing_evidence": [],
+      "missing_from_snapshot": [],
+      "compatible_outcomes": [],
+      "evidence_roles": [
+        {
+          "file": "entry.py",
+          "start": 4,
+          "end": 5,
+          "role": "entrypoint-forwarding",
+          "excerpt": "def describe(values):\n    return summarize(values)"
+        },
+        {
+          "file": "metrics.py",
+          "start": 2,
+          "end": 5,
+          "role": "shared-iterator-two-passes",
+          "excerpt": "    source = iter(values)\n    count = sum(1 for _ in source)\n    total = sum(source)\n    return count, total"
+        }
+      ],
+      "rubric": {
+        "must_establish": [
+          "Identify consumption of the same iterator by the first reduction.",
+          "Explain the second reduction sees no remaining elements and give a nonzero-sum permitted tuple."
+        ],
+        "reject": [
+          "Claim the input tuple itself is emptied or mutated.",
+          "Claim the count is zero for (2, 5), or assert sum of an empty iterator raises."
+        ]
+      }
+    },
+    "p03": {
+      "expected_verdict": "no_defect_supported",
+      "family": "positive-modulus-ring-normalization",
+      "mechanism": "With a positive size Python integer modulo returns the nonnegative remainder below size; the entrypoint forwards that value for every allowed input.",
+      "trigger": "For every allowed position and size, including locate(-1, 4) returning 3 and size=1 returning 0.",
+      "missing_evidence": [],
+      "missing_from_snapshot": [],
+      "compatible_outcomes": [],
+      "evidence_roles": [
+        {
+          "file": "entry.py",
+          "start": 1,
+          "end": 5,
+          "role": "entrypoint-forwarding",
+          "excerpt": "from ring import slot\n\n\ndef locate(position, size):\n    return slot(position, size)"
+        },
+        {
+          "file": "ring.py",
+          "start": 1,
+          "end": 2,
+          "role": "positive-modulus-operation",
+          "excerpt": "def slot(position, size):\n    return position % size"
+        }
+      ],
+      "rubric": {
+        "must_establish": [
+          "Explain the nonnegative bounded remainder for a strictly positive divisor.",
+          "Cover negative positions, zero, positive positions and size=1 within the supplied domain."
+        ],
+        "reject": [
+          "A false alarm based on a negative modulo result for a positive divisor.",
+          "An out-of-scope size=0 example or a claim of whole-repository health."
+        ]
+      }
+    },
+    "p04": {
+      "expected_verdict": "unknown",
+      "family": "deployed-native-long-width",
+      "mechanism": null,
+      "trigger": null,
+      "missing_evidence": [
+        "The deployed native signed-long ABI width (32 versus 64 bits), or a deployment-bound observation of this conversion, is absent from the entire snapshot."
+      ],
+      "missing_from_snapshot": [
+        "runtime_abi.json"
+      ],
+      "compatible_outcomes": [
+        "A 64-bit signed c_long represents 2500000000 unchanged.",
+        "A 32-bit signed c_long wraps 2500000000 to -1794967296."
+      ],
+      "evidence_roles": [
+        {
+          "file": "logic.py",
+          "start": 1,
+          "end": 5,
+          "role": "native-width-conversion",
+          "excerpt": "from ctypes import c_long\n\n\ndef area(rows, columns):\n    return c_long(rows * columns).value"
+        }
+      ],
+      "rubric": {
+        "must_establish": [
+          "Identify the deployed ctypes.c_long/native signed long width as essential missing evidence.",
+          "Explain that multiplication is exact in Python but conversion can retain or wrap the value depending on the absent ABI."
+        ],
+        "reject": [
+          "Declare every deployment overflows or that Python integer multiplication itself overflows.",
+          "Assume the review machine ABI proves the deployed ABI, or diagnose a universal portability requirement that was not asked."
+        ]
+      }
+    },
+    "p05": {
+      "expected_verdict": "no_defect_supported",
+      "family": "xor-even-multiplicity-cancellation",
+      "mechanism": "XOR is associative and commutative with x XOR x equal to zero and zero as identity. All even multiplicities cancel, leaving the sole odd-multiplicity value regardless of order.",
+      "trigger": "For every allowed tuple, including (6, 2, 6) returning 2 and (0, 5, 5) returning 0.",
+      "missing_evidence": [],
+      "missing_from_snapshot": [],
+      "compatible_outcomes": [],
+      "evidence_roles": [
+        {
+          "file": "logic.py",
+          "start": 1,
+          "end": 5,
+          "role": "xor-fold-with-zero-identity",
+          "excerpt": "def odd_value(values):\n    result = 0\n    for value in values:\n        result ^= value\n    return result"
+        }
+      ],
+      "rubric": {
+        "must_establish": [
+          "Explain cancellation of every even-multiplicity integer and the surviving odd-multiplicity value.",
+          "Cover order independence and the permitted zero case without extending to multiple odd values."
+        ],
+        "reject": [
+          "A false alarm based on arbitrary ordering or zero initialization.",
+          "Use an empty tuple or two odd-multiplicity values, both outside the stated domain."
+        ]
+      }
+    },
+    "p06": {
+      "expected_verdict": "no_defect_supported",
+      "family": "bounded-first-delimiter-split",
+      "mechanism": "maxsplit=1 creates exactly two components at the first delimiter. The guaranteed delimiter makes unpacking valid, and the second component preserves later delimiters, whitespace and empty values.",
+      "trigger": "Every allowed string, including mode=a=b returning (mode, a=b) and mode= returning (mode, empty string).",
+      "missing_evidence": [],
+      "missing_from_snapshot": [],
+      "compatible_outcomes": [],
+      "evidence_roles": [
+        {
+          "file": "entry.py",
+          "start": 4,
+          "end": 5,
+          "role": "entrypoint-forwarding",
+          "excerpt": "def parse(text):\n    return split_field(text)"
+        },
+        {
+          "file": "fields.py",
+          "start": 1,
+          "end": 3,
+          "role": "maxsplit-and-pair-return",
+          "excerpt": "def split_field(text):\n    name, value = text.split(\"=\", 1)\n    return name, value"
+        }
+      ],
+      "rubric": {
+        "must_establish": [
+          "Explain the single split and valid two-component unpacking under the guaranteed delimiter scope.",
+          "Cover later delimiters, empty values and whitespace preservation."
+        ],
+        "reject": [
+          "Claim a=b becomes three fields despite maxsplit=1.",
+          "Use a delimiter-free string outside the supplied domain or invent trimming behavior."
+        ]
+      }
+    },
+    "p07": {
+      "expected_verdict": "supported_defect",
+      "family": "loop-accumulator-overwrite",
+      "mechanism": "The loop assigns the current count to total instead of adding it, so every prior count is discarded and a nonempty tuple returns only its last value.",
+      "trigger": "total_units((2, 5, 3)) returns 3 although the required sum is 10.",
+      "missing_evidence": [],
+      "missing_from_snapshot": [],
+      "compatible_outcomes": [],
+      "evidence_roles": [
+        {
+          "file": "logic.py",
+          "start": 2,
+          "end": 5,
+          "role": "initialization-loop-and-return",
+          "excerpt": "    total = 0\n    for units in batches:\n        total = units\n    return total"
+        }
+      ],
+      "rubric": {
+        "must_establish": [
+          "Explain replacement of the accumulator on each iteration.",
+          "Give a permitted tuple with a nonzero earlier element and the wrong returned total."
+        ],
+        "reject": [
+          "A verdict without the overwrite mechanism.",
+          "Claim that the empty tuple fails, or that assignment mutates the input tuple."
+        ]
+      }
+    },
+    "p08": {
+      "expected_verdict": "unknown",
+      "family": "deployed-filesystem-symlink-resolution",
+      "mechanism": null,
+      "trigger": null,
+      "missing_evidence": [
+        "The deployment symlink topology/resolved target binding for /demo/assets/current/note.txt is absent from the entire authorized snapshot."
+      ],
+      "missing_from_snapshot": [
+        "deployed_paths.json",
+        "runtime_filesystem"
+      ],
+      "compatible_outcomes": [
+        "The deployed final resolved target is the ordinary regular file /demo/assets/current/note.txt beneath the canonical asset root.",
+        "The deployed final resolved target is the ordinary regular file /demo/elsewhere/note.txt outside the canonical asset root."
+      ],
+      "evidence_roles": [
+        {
+          "file": "entry.py",
+          "start": 4,
+          "end": 6,
+          "role": "open-selected-path",
+          "excerpt": "def read_note(root):\n    with open(note_path(root), \"r\", encoding=\"utf-8\") as stream:\n        return stream.read()"
+        },
+        {
+          "file": "layout.py",
+          "start": 1,
+          "end": 2,
+          "role": "lexical-path-construction",
+          "excerpt": "def note_path(root):\n    return root + \"/current/note.txt\""
+        }
+      ],
+      "rubric": {
+        "must_establish": [
+          "Identify missing deployment symlink topology/resolved target for /demo/assets/current/note.txt.",
+          "Explain that a lexical prefix alone does not determine this deployed resolved target; retrieving layout.py does not supply runtime topology."
+        ],
+        "reject": [
+          "Declare escape definitely occurs or assume current is an ordinary internal directory.",
+          "Apply an all-filesystems guarantee instead of the stated deployment-specific question.",
+          "A generic missing-helper claim after the full authorized snapshot is available."
+        ]
+      }
+    },
+    "p09": {
+      "expected_verdict": "no_defect_supported",
+      "family": "finally-cleanup-on-return-and-raise",
+      "mechanism": "The finally suite executes once both when returning the indexed value and when the lookup raises KeyError. It appends to log without changing data or suppressing the exception.",
+      "trigger": "For every allowed mapping, including a present value 0 and an absent value key, log gains one entry; the return or original KeyError is preserved.",
+      "missing_evidence": [],
+      "missing_from_snapshot": [],
+      "compatible_outcomes": [],
+      "evidence_roles": [
+        {
+          "file": "logic.py",
+          "start": 1,
+          "end": 5,
+          "role": "lookup-and-unconditional-cleanup",
+          "excerpt": "def read_value(data, log):\n    try:\n        return data[\"value\"]\n    finally:\n        log.append(\"closed\")"
+        }
+      ],
+      "rubric": {
+        "must_establish": [
+          "Explain finally execution on both the successful return path and the missing-key exception path.",
+          "Retain the bounded built-in scope and state that append neither overrides the return nor catches KeyError."
+        ],
+        "reject": [
+          "Claim return skips finally, or finally suppresses KeyError here.",
+          "Invent a custom append failure or require a deep copy of the input dictionary."
+        ]
+      }
+    },
+    "p10": {
+      "expected_verdict": "supported_defect",
+      "family": "unicode-character-count-as-byte-length",
+      "mechanism": "The helper encodes UTF-8 but reports len(text), a count of Unicode code points. The entrypoint prefixes that character count instead of the encoded payload length.",
+      "trigger": "frame(\"é\") returns b\"1:\\xc3\\xa9\" instead of b\"2:\\xc3\\xa9\".",
+      "missing_evidence": [],
+      "missing_from_snapshot": [],
+      "compatible_outcomes": [],
+      "evidence_roles": [
+        {
+          "file": "entry.py",
+          "start": 4,
+          "end": 6,
+          "role": "reported-size-prefix",
+          "excerpt": "def frame(text):\n    payload, size = encode_payload(text)\n    return str(size).encode(\"ascii\") + b\":\" + payload"
+        },
+        {
+          "file": "encoding.py",
+          "start": 1,
+          "end": 3,
+          "role": "encoded-bytes-versus-text-length",
+          "excerpt": "def encode_payload(text):\n    payload = text.encode(\"utf-8\")\n    return payload, len(text)"
+        }
+      ],
+      "rubric": {
+        "must_establish": [
+          "Connect the helper character count to the entrypoint length prefix.",
+          "Give a permitted multibyte character and distinguish actual payload bytes from prefix count."
+        ],
+        "reject": [
+          "Claim UTF-8 encoding itself fails for the allowed scalar values.",
+          "Claim ASCII-only or empty inputs demonstrate the mismatch, or confuse code points with payload bytes."
+        ]
+      }
+    },
+    "p11": {
+      "expected_verdict": "unknown",
+      "family": "deployed-sql-uniqueness-collation",
+      "mechanism": null,
+      "trigger": null,
+      "missing_evidence": [
+        "The deployed labels.name unique constraint/index definition and comparison collation are absent from the entire authorized snapshot."
+      ],
+      "missing_from_snapshot": [
+        "deployed_schema.sql",
+        "labels.sqlite"
+      ],
+      "compatible_outcomes": [
+        "A UNIQUE index using NOCASE rejects the second ASCII spelling.",
+        "An unconstrained table or a BINARY unique index accepts both distinct spellings."
+      ],
+      "evidence_roles": [
+        {
+          "file": "entry.py",
+          "start": 4,
+          "end": 6,
+          "role": "specific-insertion-sequence",
+          "excerpt": "def add_pair(conn):\n    insert_label(conn, \"Alder\")\n    insert_label(conn, \"alder\")"
+        },
+        {
+          "file": "db_ops.py",
+          "start": 1,
+          "end": 2,
+          "role": "schema-dependent-insert",
+          "excerpt": "def insert_label(conn, name):\n    conn.execute(\"INSERT INTO labels(name) VALUES (?)\", (name,))"
+        }
+      ],
+      "rubric": {
+        "must_establish": [
+          "Identify missing deployed uniqueness/index and collation definitions for labels.name.",
+          "Explain why the complete source cannot decide whether the second spelling conflicts in this deployment."
+        ],
+        "reject": [
+          "Infer case-insensitive uniqueness merely from parameterized SQL.",
+          "Declare a defect by assuming no unique constraint, or claim the missing helper can be retrieved from elsewhere in this authorized snapshot.",
+          "A generic request for more code without the deployed schema/collation gap."
+        ]
+      }
+    },
+    "p12": {
+      "expected_verdict": "supported_defect",
+      "family": "delete-shifts-forward-iteration",
+      "mechanism": "Deleting the current element shifts its successor left, but enumerate advances to the next index, skipping the shifted element. Adjacent zero values can therefore survive.",
+      "trigger": "remove_zeros((0, 0, 4)) returns [0, 4] instead of [4].",
+      "missing_evidence": [],
+      "missing_from_snapshot": [],
+      "compatible_outcomes": [],
+      "evidence_roles": [
+        {
+          "file": "logic.py",
+          "start": 2,
+          "end": 6,
+          "role": "copy-forward-iteration-and-delete",
+          "excerpt": "    pending = list(values)\n    for index, value in enumerate(pending):\n        if value == 0:\n            del pending[index]\n    return pending"
+        }
+      ],
+      "rubric": {
+        "must_establish": [
+          "Explain left-shift after deletion and the iterator advancing past the shifted successor.",
+          "Give a permitted adjacent-zero trigger and its surviving zero."
+        ],
+        "reject": [
+          "Claim the tuple input is modified or every zero is removed.",
+          "A vague mutation-during-iteration warning without the skipped-successor mechanism."
+        ]
+      }
+    }
+  }
+}
