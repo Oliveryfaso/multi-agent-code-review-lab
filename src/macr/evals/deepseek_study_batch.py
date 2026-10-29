@@ -9,7 +9,7 @@ from macr.evals.deepseek_policy_runner import PolicyRunError, _write_exclusive
 from macr.evals.deepseek_policy_spend import _parse_usd, _usd, _usage_evidence
 from macr.evals.deepseek_study_profile import StudyError, load_study, digest
 from macr.evals.deepseek_study_runner import run_study_cell
-from macr.providers.base import validate_billing_evidence
+from macr.providers.base import validate_billing_evidence, validate_identity_evidence
 
 KNOWN_CONTRACT_ERRORS = _KNOWN_CONTRACT_ERRORS | {
     'read_tool_arguments_invalid', 'read_tool_limit_or_forbidden', 'read_tool_budget_exhausted'}
@@ -68,6 +68,24 @@ class _FixtureGate:
                     raw = billing['raw_usage']
             except ValueError:
                 pass
+        # Identity and billing are separate envelopes: a content failure may
+        # invalidate the assistant while both pieces of wire evidence survive.
+        identity = None
+        identity_rejected = False
+        if error is not None:
+            try:
+                candidate = error.identity_evidence
+                if candidate is not None:
+                    candidate = validate_identity_evidence(candidate)
+                    if (candidate['request_sha256'] != request_sha256 or
+                            candidate['provider'] != 'deepseek' or
+                            candidate['requested_model'] != 'deepseek-flash'):
+                        raise ValueError()
+                    identity = candidate
+                    row['identity_evidence'] = candidate
+            except (AttributeError, ValueError):
+                identity_rejected = True
+                row['identity_evidence_rejected'] = True
         evidence = _usage_evidence(raw,2000)
         if evidence is not None:
             cost, usage = evidence
@@ -79,8 +97,18 @@ class _FixtureGate:
         self.pending = None
         if self.halted:
             raise PolicyRunError('study_halted_unknown')
-        identity=response if response is not None else getattr(error,'response',None)
-        fingerprint=getattr(identity,'system_fingerprint',None)
+        if identity_rejected:
+            raise PolicyRunError('study_identity_evidence_invalid')
+        if identity is not None:
+            if identity['model_state'] == 'mismatch':
+                raise PolicyRunError('model_identity_drift')
+            if identity['model_state'] != 'validated':
+                raise PolicyRunError('model_identity_unknown')
+            fingerprint = (identity['system_fingerprint']
+                if identity['fingerprint_state'] == 'validated' else None)
+        else:
+            canonical=response if response is not None else getattr(error,'response',None)
+            fingerprint=getattr(canonical,'system_fingerprint',None)
         if not isinstance(fingerprint,str) or not fingerprint.strip():
             raise PolicyRunError('system_fingerprint_unknown')
         if self.fingerprint is not None and fingerprint != self.fingerprint:

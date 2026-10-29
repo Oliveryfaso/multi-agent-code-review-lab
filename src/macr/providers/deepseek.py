@@ -7,7 +7,8 @@ from hashlib import sha256
 from time import perf_counter
 from macr.providers.base import (ConversationRequest, ConversationResponse, ModelRequest, ModelResponse,
     ProviderCapabilities, ProviderError, _conversation_usage, _validate_conversation_message,
-    validate_conversation_request, validate_request, validate_response, validate_billing_evidence)
+    validate_conversation_request, validate_request, validate_response, validate_billing_evidence,
+    _valid_identity_text, validate_identity_evidence)
 from macr.providers.failure_evidence import (http_failure_metadata,
     make_failure_diagnostic, validate_failure_diagnostic)
 from macr.providers.response_normalization import (ResponseNormalizationError,
@@ -91,6 +92,29 @@ def _billing_evidence(data, *, model, body, max_output_tokens, latency_ms):
             'max_output_tokens': max_output_tokens, 'raw_usage': _conversation_usage(data.get('usage')),
             'latency_ms': latency_ms})
     except (ValueError, TypeError, KeyError, OverflowError):
+        return None
+
+def _identity_evidence(data, *, body):
+    """Retain only independently validated identity from a clean JSON envelope."""
+    if (type(data) is not dict or 'error' in data
+            or type(data.get('choices')) is not list or len(data['choices']) != 1
+            or type(data['choices'][0]) is not dict):
+        return None
+    try:
+        requested_model = json.loads(body)['model']
+        model_state = ('missing' if 'model' not in data else
+                       'validated' if _valid_identity_text(data['model']) else 'invalid')
+        if model_state == 'validated' and data['model'] != requested_model:
+            model_state = 'mismatch'
+        fingerprint_state = ('missing' if 'system_fingerprint' not in data else
+                             'validated' if _valid_identity_text(data['system_fingerprint']) else 'invalid')
+        return validate_identity_evidence({'schema': 'macr.provider.identity.v1',
+            'provider': 'deepseek', 'request_sha256': sha256(body).hexdigest(),
+            'requested_model': requested_model, 'model_state': model_state,
+            'model': data['model'] if model_state == 'validated' else None,
+            'fingerprint_state': fingerprint_state,
+            'system_fingerprint': data['system_fingerprint'] if fingerprint_state == 'validated' else None})
+    except (ValueError, TypeError, KeyError, UnicodeError, OverflowError):
         return None
 
 class DeepSeekProvider:
@@ -186,7 +210,7 @@ class DeepSeekProvider:
                 'transport', metadata=_transport_metadata(transport))) from None
         except ProviderError as error:
             # A transport exception did not produce a clean JSON envelope;
-            # transport-provided diagnostic counters cannot become billing proof.
+            # Transport-supplied evidence cannot become billing or identity proof.
             raise ProviderError(error.code, response=(None if error.failure_kind == 'transport'
                 else error.response),
                 failure_kind=error.failure_kind, diagnostic=error.diagnostic or make_failure_diagnostic(
@@ -198,6 +222,7 @@ class DeepSeekProvider:
         billing = _billing_evidence(data, model=self.model, body=body,
             max_output_tokens=request.max_output_tokens,
             latency_ms=int((perf_counter() - started) * 1000))
+        identity = _identity_evidence(data, body=body)
         try:
             if type(data) is not dict:
                 raise ValueError()
@@ -238,19 +263,22 @@ class DeepSeekProvider:
                 raise ValueError() from None
             if finish in {'length', 'content_filter', 'insufficient_system_resource', 'aborted'}:
                 raise ProviderError('model_output_incomplete', response=response, billing_evidence=billing,
+                    identity_evidence=identity,
                     diagnostic=make_failure_diagnostic(stage, data=data,
                         metadata=_transport_metadata(transport)))
             if bool(calls) != (finish == 'tool_calls') or not response.content.strip() and not calls:
                 raise ProviderError('model_response_invalid', response=response, billing_evidence=billing,
+                    identity_evidence=identity,
                     diagnostic=make_failure_diagnostic('finish_consistency', data=data,
                         metadata=_transport_metadata(transport)))
             return response
         except ProviderError:
             raise
         except ResponseNormalizationError as error:
-            raise ProviderError('model_response_invalid', billing_evidence=billing,
+            raise ProviderError('model_response_invalid', billing_evidence=billing, identity_evidence=identity,
                 diagnostic=make_failure_diagnostic(stage, data=data,
                     metadata=_transport_metadata(transport), validation_error=error.code)) from None
         except (KeyError, IndexError, TypeError, ValueError, AttributeError):
-            raise ProviderError('model_response_invalid', billing_evidence=billing, diagnostic=make_failure_diagnostic(
+            raise ProviderError('model_response_invalid', billing_evidence=billing, identity_evidence=identity,
+                diagnostic=make_failure_diagnostic(
                 stage, data=data, metadata=_transport_metadata(transport))) from None

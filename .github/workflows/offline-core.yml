@@ -107,7 +107,7 @@ jobs:
         run: >-
           python -I -S -B scripts/run_offline_tests.py
           test_deepseek_conversation test_deepseek_response_normalization
-          test_provider_billing_evidence test_provider_failure_structure
+          test_provider_billing_evidence test_provider_identity_evidence test_provider_failure_structure
           test_deepseek_policy_observability test_deepseek_policy_live_entry
           test_deepseek_policy_batch test_deepseek_policy_spend
 

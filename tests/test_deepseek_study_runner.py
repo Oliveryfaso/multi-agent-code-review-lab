@@ -195,6 +195,7 @@ class StudyRunnerTests(unittest.TestCase):
         result=self.run_cell('direct_initial_3',transport,
             settle=lambda request_hash, **kwargs: rows.append(kwargs))
         self.assertEqual(result['status'],'remote_outcome_unknown')
+        self.assertEqual(result['requests'][0]['response']['identity_evidence_state'],'unverified')
         self.assertEqual(len(transport.posts),1)
         self.assertEqual(len(rows),1)
         self.assertIsNotNone(rows[0]['error'])

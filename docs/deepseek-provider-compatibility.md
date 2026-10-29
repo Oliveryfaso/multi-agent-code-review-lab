@@ -18,6 +18,38 @@ A parsing error may therefore have independent billing evidence while its assist
 
 The runner records billing evidence separately, without manufacturing an answer or marking an unavailable assistant as received. New accounting-aware records distinguish `batch_halted_contract` from an unknown outcome. Both halt further execution, including before another credential read. Older records without the billing contract marker keep their original interpretation. The legacy `complete` interface is otherwise unchanged.
 
+## Identity is separate from assistant usability
+
+The conversation adapter now checks identity fields from the decoded provider
+envelope before normalizing the assistant. A bounded `macr.provider.identity.v1`
+record binds provider, exact request hash and requested model. Model state is
+`validated`, `missing`, `invalid` or `mismatch`; fingerprint state is
+`validated`, `missing` or `invalid`. Only validated scalar values are retained.
+Missing means an absent field; invalid means a present value failed type,
+nonblank, size or encoding checks. These checks do not attest provider hardware
+or establish a batch-wide fingerprint match: the batch still compares the
+actual validated value against its pin.
+
+`ProviderError.identity_evidence` preserves that independent record when tool
+arguments or other assistant fields fail. The paired-study failure trace marks
+evidence as captured, unverified or rejected, and records identity separately
+from billing without manufacturing a canonical assistant or answer. Transport
+errors do not carry identity supplied by a transport as trusted evidence.
+
+The paired study may count a known content-contract failure and proceed only
+when billing and request-bound identity remain independently valid. Missing,
+invalid, mismatched or changed identity still stops it. Unknown usage retains
+its reservation and stops even when identity is valid. Tool/diagnosis validators
+and prompts are unchanged.
+
+Earlier presence-only diagnostics cannot be upgraded to this contract. In the
+stopped neutral-study request, assistant normalization failed before identity
+validation; its actual fingerprint value/type was not retained. This patch
+cannot determine whether that historical value was valid or matched. The
+original request stays failed and identity-unverified; its known usage stays
+settled. A continuation would be a separately reviewed segment and must disclose
+the gap rather than claiming uninterrupted identity across all requests.
+
 ## Failure records and historical limits
 
 Failure metadata stays within the existing 4,096-byte cap. Fixed validation-error codes and allowlisted first-call field kinds identify the failed checks; known `index` presence/type can be observed. Extension names/values, response text, arguments and arbitrary headers are not failure diagnostics. Retention of a valid response in an authorized private run is governed by its separate log policy.

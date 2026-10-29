@@ -147,6 +147,15 @@ def _run_study_cell_core(manifest_dir: Path, *, dataset_root: Path, strategy: st
         evidence = _response_record(response)
         if billing is not None:
             evidence['billing_evidence'] = billing
+        if error is not None:
+            try:
+                identity = error.identity_evidence
+                evidence['identity_evidence_state'] = 'captured' if identity is not None else 'unverified'
+                if identity is not None:
+                    evidence['identity_evidence'] = identity
+            except (AttributeError, ValueError):
+                evidence['identity_evidence_rejected'] = True
+                evidence['identity_evidence_state'] = 'rejected'
         if error is not None and error.diagnostic is not None:
             try:
                 evidence['failure_diagnostic'] = validate_failure_diagnostic(error.diagnostic)

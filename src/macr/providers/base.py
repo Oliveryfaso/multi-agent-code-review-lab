@@ -12,12 +12,14 @@ _CONVERSATION_FINISH_REASONS = {'stop', 'tool_calls', 'length', 'content_filter'
 
 class ProviderError(Exception):
     def __init__(self, code: str, *, response: ModelResponse | None = None, failure_kind: str | None = None,
-                 diagnostic: dict | None = None, billing_evidence: dict | None = None):
+                 diagnostic: dict | None = None, billing_evidence: dict | None = None,
+                 identity_evidence: dict | None = None):
         self.code = code
         # A validated failure envelope is evidence for recording, never a successful output.
         self.response = validate_response(response) if response is not None else None
         self._diagnostic = validate_failure_diagnostic(diagnostic) if diagnostic is not None else None
         self._billing_evidence = validate_billing_evidence(billing_evidence) if billing_evidence is not None else None
+        self._identity_evidence = validate_identity_evidence(identity_evidence) if identity_evidence is not None else None
         inferred_kind = {
             'model_timeout': 'transport', 'model_transport': 'transport', 'model_busy': 'transport',
             'model_http_error': 'transport', 'model_redirect_blocked': 'transport',
@@ -42,6 +44,10 @@ class ProviderError(Exception):
     @property
     def billing_evidence(self):
         return validate_billing_evidence(self._billing_evidence) if self._billing_evidence is not None else None
+
+    @property
+    def identity_evidence(self):
+        return validate_identity_evidence(self._identity_evidence) if self._identity_evidence is not None else None
 
 @dataclass
 class ModelRequest:
@@ -264,6 +270,44 @@ def validate_billing_evidence(value) -> dict:
             raise ValueError()
     except (ValueError, TypeError, KeyError, OverflowError, RecursionError):
         raise ValueError('provider_billing_evidence_invalid') from None
+    return result
+
+def _valid_identity_text(value):
+    try:
+        return (type(value) is str and 1 <= len(value) <= 256
+                and bool(value.strip()) and bool(value.encode('utf-8')))
+    except UnicodeError:
+        return False
+
+def validate_identity_evidence(value) -> dict:
+    """Validate bounded request-bound identity independently of usage or assistant output."""
+    try:
+        if type(value) is not dict or set(value) != {
+                'schema', 'provider', 'request_sha256', 'requested_model',
+                'model', 'model_state', 'system_fingerprint', 'fingerprint_state'}:
+            raise ValueError()
+        if (type(value['schema']) is not str or value['schema'] != 'macr.provider.identity.v1'
+                or type(value['provider']) is not str or value['provider'] != 'deepseek'
+                or type(value['request_sha256']) is not str or len(value['request_sha256']) != 64
+                or any(char not in '0123456789abcdef' for char in value['request_sha256'])
+                or not _valid_identity_text(value['requested_model'])
+                or type(value['model_state']) is not str
+                or value['model_state'] not in {'validated', 'missing', 'invalid', 'mismatch'}
+                or type(value['fingerprint_state']) is not str
+                or value['fingerprint_state'] not in {'validated', 'missing', 'invalid'}):
+            raise ValueError()
+        if (value['model_state'] == 'validated' and (
+                not _valid_identity_text(value['model']) or value['model'] != value['requested_model'])
+                or value['model_state'] != 'validated' and value['model'] is not None
+                or value['fingerprint_state'] == 'validated' and not _valid_identity_text(value['system_fingerprint'])
+                or value['fingerprint_state'] != 'validated' and value['system_fingerprint'] is not None):
+            raise ValueError()
+        result = dict(value)
+        if len(json.dumps(result, ensure_ascii=False, allow_nan=False,
+                          separators=(',', ':')).encode('utf-8')) > 4096:
+            raise ValueError()
+    except (ValueError, TypeError, KeyError, UnicodeError, OverflowError):
+        raise ValueError('provider_identity_evidence_invalid') from None
     return result
 
 def validate_response(response):
