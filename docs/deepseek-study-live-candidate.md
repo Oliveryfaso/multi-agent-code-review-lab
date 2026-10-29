@@ -108,3 +108,8 @@ bounded to 131,072 bytes, so 108 bodies are at most 14,155,776 bytes, excluding
 HTTP authentication/headers. Gold, concrete rubric/labels/proofs, reference
 tests, repairs, old private logs, private projects/configuration and new
 Search/Fetch or third-party services remain excluded.
+
+An explicitly approved [one-time continuation](deepseek-study-continuation.md)
+can select only the frozen study's untouched cells after a historical identity
+gap. It retains the original results and spending, pins future identity to the
+verified historical value, and reports both implementation segments separately.

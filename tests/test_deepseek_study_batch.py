@@ -191,6 +191,39 @@ class StudyBatchTests(unittest.TestCase):
         self.assertEqual(result['model_calls_live'],0)
         self.assertEqual(len(calls),4)
 
+    def test_private_subset_loop_keeps_segment_and_original_denominators_separate(self):
+        out,study=self.prepare()
+        selected=study['cells'][1:]
+        observed=[]
+        def report_builder(full,results):
+            self.assertEqual(len(full['cells']),4)
+            self.assertEqual(set(results),{row['cell_id'] for row in selected})
+            observed.append(True)
+            return {'original_planned_cells':4,'segment_cells':3}
+        result=batch._run_study_core(out,provider_factory=self.factory,
+            cell_runner=batch.run_study_cell,provenance='scripted_offline_fixture',
+            execution_cells=selected,report_builder=report_builder)
+        self.assertEqual(result['planned_cells'],3)
+        self.assertEqual(result['original_planned_cells'],4)
+        self.assertEqual(result['planned_request_ceiling'],9)
+        self.assertEqual([row['cell_id'] for row in result['rows']],
+            [row['cell_id'] for row in selected])
+        self.assertEqual(observed,[True])
+        self.assertFalse((out/'cells'/study['cells'][0]['cell_id']).exists())
+
+    def test_private_subset_rejects_duplicate_reordered_or_changed_cells_before_claim(self):
+        for mode in ('empty','duplicate','reorder','changed'):
+            out,study=self.prepare()
+            if mode=='empty':selected=[]
+            elif mode=='duplicate':selected=[study['cells'][0],study['cells'][0]]
+            elif mode=='reorder':selected=list(reversed(study['cells'][:2]))
+            else:selected=[study['cells'][0]|{'strategy':'adaptive_read_3','task_id':'unapproved'}]
+            with self.assertRaisesRegex(StudyError,'study_execution_subset_invalid'):
+                batch._run_study_core(out,provider_factory=lambda _:self.fail('provider touched'),
+                    cell_runner=batch.run_study_cell,provenance='scripted_offline_fixture',
+                    execution_cells=selected,report_builder=lambda *_:{})
+            self.assertFalse((out/'execution.claim.json').exists())
+
     def test_gate_rejects_usage_from_wrong_provider_identity(self):
         from types import SimpleNamespace
         root=fixture_root()

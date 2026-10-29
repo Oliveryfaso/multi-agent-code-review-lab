@@ -31,6 +31,7 @@ OFFLINE_MODULES = frozenset({
     'test_deepseek_study_runner', 'test_deepseek_study_report', 'test_deepseek_study_batch',
     'test_deepseek_study_live',
     'test_provider_identity_evidence',
+    'test_deepseek_study_continuation',
     'test_offline_tests', 'test_code_graph', 'test_repository_scope',
     'test_repository_snapshots', 'test_repository_index', 'test_context_reader',
     'test_static_readers', 'test_static_facts', 'test_static_locate_abstention', 'test_contracts',

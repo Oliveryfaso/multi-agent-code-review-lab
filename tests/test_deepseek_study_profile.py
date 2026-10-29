@@ -112,6 +112,7 @@ class StudyProfileTests(unittest.TestCase):
             project_root=Path(study.__file__).parents[3])
         dependency='src/macr/investigation/evidence_profiles.py'
         self.assertIn('src/macr/evals/deepseek_study_live.py',frozen['implementation'])
+        self.assertIn('src/macr/evals/deepseek_study_continuation.py',frozen['implementation'])
         self.assertIn('scripts/run_deepseek_study_live.py',frozen['implementation'])
         self.assertIn(dependency,frozen['implementation'])
         self.assertIn('src/macr/__init__.py',frozen['implementation'])

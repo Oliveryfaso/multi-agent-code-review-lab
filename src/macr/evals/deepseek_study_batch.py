@@ -127,12 +127,21 @@ def run_study(control_root, *, provider_factory):
 
 
 def _run_study_core(control_root, *, provider_factory, cell_runner,
-                    provenance, gate_factory=None):
+                    provenance, gate_factory=None, execution_cells=None, report_builder=None):
     """One claimed, sequential pass; no reset, recovery or implicit retry."""
     if provenance not in {'scripted_offline_fixture','approved_live_fake','approved_live'}:
         raise StudyError('study_provenance_invalid')
     root = Path(control_root).absolute()
     study = load_study(root)
+    selected=study['cells'] if execution_cells is None else execution_cells
+    if execution_cells is not None:
+        approved={cell['cell_id']:(index,cell) for index,cell in enumerate(study['cells'])}
+        valid=(type(selected) is list and 0<len(selected)<=len(approved)
+            and all(type(cell) is dict and type(cell.get('cell_id')) is str
+                and cell['cell_id'] in approved and cell==approved[cell['cell_id']][1] for cell in selected))
+        indices=[approved[cell['cell_id']][0] for cell in selected] if valid else []
+        if not valid or indices!=sorted(set(indices)) or not callable(report_builder):
+            raise StudyError('study_execution_subset_invalid')
     try:
         _write_exclusive(root/'execution.claim.json',{'profile_sha256':study['profile_sha256'],
             'state':'claimed_before_dispatch','provenance':provenance},4096)
@@ -145,7 +154,7 @@ def _run_study_core(control_root, *, provider_factory, cell_runner,
     live_attempts = 0
     tasks={task['id']:task for task in study['tasks']}
     halted = False
-    for cell in study['cells']:
+    for cell in selected:
         cell_id=cell['cell_id']
         if halted:
             rows.append(cell|{'status':'not_attempted'})
@@ -176,14 +185,16 @@ def _run_study_core(control_root, *, provider_factory, cell_runner,
             (result['status'] not in {'semantic_pending','ask_user_terminated'} and
              error not in KNOWN_CONTRACT_ERRORS))
     from macr.evals.deepseek_study_report import build_study_report
-    report=build_study_report(study,results)
+    report=(report_builder or build_study_report)(study,results)
     _write_exclusive(root/'paired-report.json',report,262144)
     summary={'schema':('macr.deepseek.study.dryrun.v1' if provenance=='scripted_offline_fixture'
                       else 'macr.deepseek.study.execution.v1'),
         'profile_sha256':study['profile_sha256'],'provenance':provenance,
-        'planned_cells':len(study['cells']),'planned_request_ceiling':study['planned_request_ceiling'],
+        'planned_cells':len(selected),'planned_request_ceiling':len(selected)*3,
         'rows':rows,'accounting':gate.state() | {'model_calls_live':live_attempts},
         'model_calls_live':live_attempts,
         'semantic_scoring':'pending_independent_review','batch_halted':halted}
+    if execution_cells is not None:
+        summary['original_planned_cells']=len(study['cells'])
     _write_exclusive(root/'summary.json',summary,262144)
     return summary

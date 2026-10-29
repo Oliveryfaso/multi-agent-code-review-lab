@@ -122,6 +122,9 @@ jobs:
           test_deepseek_study_profile test_deepseek_study_plan test_deepseek_study_runner
           test_deepseek_study_report test_deepseek_study_batch test_deepseek_study_live
 
+      - name: One-time neutral study segment without network
+        run: python -I -S -B scripts/run_offline_tests.py test_deepseek_study_continuation
+
       - name: Frozen continuation proofs without network
         run: python -I -S -B scripts/run_offline_tests.py test_deepseek_policy_recovery
 
