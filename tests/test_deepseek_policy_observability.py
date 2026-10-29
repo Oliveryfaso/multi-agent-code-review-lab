@@ -70,6 +70,71 @@ class PolicyObservabilityTests(unittest.TestCase):
         durable = json.loads((self.root / "unknown" / "decision-01.response.json").read_text())
         self.assertEqual(durable, evidence)
 
+    def test_invalid_assistant_keeps_billing_separate_and_stops_without_tools(self):
+        invalid = reply(None, calls=[call("read-1", "search", {"query": "gate"})])
+        invalid["choices"][0]["message"]["role"] = "tool"
+        transport = FakeTransport(invalid, reply(json.dumps(UNKNOWN)))
+        row = self.run_arm("D", transport, "billing-only")
+        self.assertEqual(row.get("billing_contract_version"), "macr.provider.billing.v1")
+        self.assertEqual((row["status"], row["error_code"], row["review_status"]),
+                         ("failed", "model_response_invalid", "not_ready"))
+        self.assertIsNone(row["answer"])
+        self.assertEqual((row["tool_reads"], row["tool_events"]), (0, []))
+        self.assertEqual((row["requests_attempted"], len(transport.posts)), (1, 1))
+        entry = row["requests"][0]
+        evidence = entry["response"]
+        self.assertEqual(evidence["state"], "unknown")
+        self.assertIsNone(evidence["assistant_message"])
+        self.assertIsNone(evidence["raw_usage"])
+        self.assertEqual(evidence["billing_evidence"]["raw_usage"], invalid["usage"])
+        self.assertEqual(evidence["billing_evidence"]["request_sha256"], entry["request_sha256"])
+        self.assertEqual(row["reservations"][0]["state"], "failed_known_usage")
+        self.assertEqual(row["reservations"][0]["usage"], {"input_tokens": 12, "output_tokens": 8})
+        outcome = json.loads((self.root / "billing-only" / "decision-01.outcome.json").read_text())
+        self.assertEqual(outcome["state"], "failed_known_usage")
+        self.assertFalse(outcome["response_evidence_complete"])
+        self.assertEqual(outcome["usage"], {"input_tokens": 12, "output_tokens": 8})
+        self.assertEqual(json.loads((self.root / "billing-only" /
+            "decision-01.response.json").read_text()), evidence)
+
+    def test_missing_or_invalid_usage_cannot_promote_diagnostic_counters(self):
+        for suffix, usage in (("missing", None), ("inconsistent", {
+                "prompt_tokens": 12, "completion_tokens": 8, "total_tokens": 99})):
+            with self.subTest(suffix=suffix):
+                invalid = reply("bad role")
+                invalid["choices"][0]["message"]["role"] = "tool"
+                invalid["usage"] = usage
+                row = self.run_arm("A", FakeTransport(invalid), "bill-" + suffix)
+                evidence = row["requests"][0]["response"]
+                self.assertNotIn("billing_evidence", evidence)
+                self.assertEqual(row["reservations"][0]["state"], "reserved_unknown_outcome")
+                self.assertIsNone(row["reservations"][0]["usage"])
+                self.assertEqual(evidence["state"], "unknown")
+
+    def test_request_mismatched_billing_is_rejected_before_recording(self):
+        invalid = {"schema": "macr.provider.billing.v1", "provider": "deepseek",
+            "model": MODEL["model_id"], "request_sha256": "0" * 64,
+            "max_output_tokens": 6000, "latency_ms": 1,
+            "raw_usage": {"prompt_tokens": 12, "completion_tokens": 8}}
+        error = ProviderError("model_response_invalid", billing_evidence=invalid)
+        with patch.object(DeepSeekProvider, "converse", side_effect=error):
+            row = self.run_arm("A", FakeTransport(), "wrong-request-bill")
+        self.assertEqual(row["error_code"], "provider_billing_evidence_invalid")
+        self.assertIsNone(row["reservations"][0]["usage"])
+        self.assertEqual(row["requests"][0]["response"]["state"], "unknown")
+        self.assertNotIn("billing_evidence", row["requests"][0]["response"])
+
+    def test_duplicate_verdict_cannot_become_a_semantic_candidate(self):
+        diagnosis = ('{"verdict":"supported_defect","verdict":"unknown",'
+                     '"cause":null,"when":null,"refs":[],"unknowns":["Missing context."]}')
+        transport = FakeTransport(reply(diagnosis))
+        row = self.run_arm("A", transport, "duplicate-verdict")
+        self.assertEqual((row["status"], row["error_code"], row["review_status"]),
+                         ("failed", "diagnosis_json_invalid", "not_ready"))
+        self.assertIsNone(row["answer"])
+        self.assertIsNone(row["candidate"])
+        self.assertEqual((row["requests_attempted"], row["tool_reads"]), (1, 0))
+
     def test_partial_failure_envelope_marks_absent_fields_unknown(self):
         partial = ModelResponse(content="partial", usage={"input_tokens": 7},
             latency_ms=9, model=MODEL["model_id"], provider="deepseek",

@@ -12,8 +12,8 @@ from pathlib import Path
 import re
 
 from macr.evals.deepseek_policy_batch import (
-    PolicyBatchError, _digest, _load_batch, _locked, _read, _read_json, _registry,
-    _scan_names, _ticket, _write_new,
+    BILLING_CONTRACT_VERSION, PolicyBatchError, _digest, _load_batch, _locked,
+    _read, _read_json, _registry, _request_billing_usage, _scan_names, _ticket, _write_new,
 )
 from macr.evals.deepseek_policy_runner import ARM_REQUESTS
 from macr.investigation.scope import open_directory
@@ -260,16 +260,29 @@ def _derive_carry(root: Path, batch: dict, predecessor_control_root,
             for cell_id, ticket in claims.items():
                 output = Path(ticket["out"])
                 count = closed[cell_id]["request_count"]
+                result = _read_json(output, "result.json",
+                    old_batch["budget"]["max_record_bytes"], "spend_predecessor_invalid")
                 names = {"claim.json", "result.json"}
                 for decision in range(1, count + 1):
                     names.update(f"decision-{decision:02d}.{kind}.json" for kind in
                                  ("reservation", "response", "outcome"))
                     response = _read_json(output, f"decision-{decision:02d}.response.json",
                         old_batch["budget"]["max_record_bytes"], "spend_predecessor_invalid")
-                    evidence = _usage_evidence(response.get("raw_usage"),
+                    if (response.get("state") == "received" and
+                            result.get("billing_contract_version") == BILLING_CONTRACT_VERSION):
+                        _require(response.get("model") == old_batch["model"]["model_id"],
+                                 "spend_predecessor_usage_mismatch")
+                    raw_usage = response.get("raw_usage") if response.get("state") == "received" else None
+                    if (response.get("state") == "unknown" and
+                            result.get("billing_contract_version") == BILLING_CONTRACT_VERSION):
+                        reservation = _read_json(output, f"decision-{decision:02d}.reservation.json",
+                            4096, "spend_predecessor_invalid")
+                        raw_usage = _request_billing_usage(response, reservation,
+                            model=old_batch["model"]["model_id"])
+                    evidence = _usage_evidence(raw_usage,
                         reservations[(cell_id, decision)]["max_output_tokens"])
                     settled = outcomes[(cell_id, decision)]
-                    _require(response.get("state") == "received" and evidence is not None and
+                    _require(evidence is not None and
                              evidence[1] == settled["usage"] and
                              _usd(evidence[0]) == settled["charged_usd"],
                              "spend_predecessor_usage_mismatch")

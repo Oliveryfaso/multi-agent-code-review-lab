@@ -3,6 +3,7 @@ import json
 import unittest
 from unittest.mock import patch
 import urllib.error
+from hashlib import sha256
 
 from macr.providers import base
 from macr.providers.deepseek import DeepSeekProvider
@@ -38,6 +39,71 @@ def completion(content='answer', *, calls=None, finish='stop', reasoning='fixtur
 
 
 class DeepSeekConversationTests(unittest.TestCase):
+    def test_wire_metadata_is_removed_before_strict_validation_and_replay(self):
+        sentinel = 'EXTENSION_VALUE_MUST_NOT_REPLAY'
+        data = completion(None, calls=[CALL], finish='tool_calls')
+        data['choices'][0]['message']['annotations'] = [{'private': sentinel}]
+        data['choices'][0]['message']['tool_calls'][0]['index'] = 0
+        data['choices'][0]['message']['tool_calls'][0]['function']['vendor_metadata'] = sentinel
+        provider = DeepSeekProvider(model='fixture-deepseek', transport=FakeTransport(data))
+        response = provider.converse(self.request())
+        self.assertEqual(response.tool_calls, [CALL])
+        self.assertEqual(response.assistant_message['reasoning_content'], 'fixture reasoning')
+        self.assertNotIn(sentinel, json.dumps(response.assistant_message))
+        replay = base.ConversationRequest(messages=[{'role': 'user', 'content': 'fixture'},
+            response.assistant_message, {'role': 'tool', 'tool_call_id': 'call_1', 'content': '{}'}],
+            tools=TOOLS)
+        wire = provider.encode_conversation_request(replay)
+        self.assertNotIn(sentinel.encode(), wire)
+        self.assertNotIn(b'vendor_metadata', wire)
+
+    def test_invalid_assistant_preserves_independent_request_bound_billing_usage(self):
+        class Wire(FakeTransport):
+            def post(self, endpoint, body, timeout_seconds, max_response_bytes):
+                self.body = body
+                return super().post(endpoint, body, timeout_seconds, max_response_bytes)
+        data = completion()
+        data['choices'][0]['message']['role'] = 'invalid-role'
+        data['unrelated_metadata'] = 'VALUE_NEVER_BILLED_OR_LOGGED'
+        wire = Wire(data)
+        provider = DeepSeekProvider(model='fixture-deepseek', transport=wire)
+        error = self.assert_code('model_response_invalid', lambda: provider.converse(self.request()))
+        self.assertIsNone(error.response)
+        evidence = getattr(error, 'billing_evidence', None)
+        self.assertIsNotNone(evidence)
+        self.assertEqual(evidence['request_sha256'], sha256(wire.body).hexdigest())
+        self.assertEqual((evidence['model'], evidence['raw_usage']['prompt_tokens'],
+                          evidence['raw_usage']['completion_tokens']), ('fixture-deepseek', 10, 4))
+        self.assertNotIn('VALUE_NEVER', json.dumps(evidence))
+
+    def test_transport_uncertainty_cannot_supply_a_trusted_response_or_billing(self):
+        partial = DeepSeekProvider(transport=FakeTransport(completion())).converse(self.request())
+        for code in ('model_timeout', 'model_transport'):
+            with self.subTest(code=code):
+                error = self.assert_code(code, lambda: DeepSeekProvider(transport=FakeTransport(
+                    error=base.ProviderError(code, response=partial))).converse(self.request()))
+                self.assertIsNone(error.response)
+                self.assertIsNone(error.billing_evidence)
+
+    def test_http_duplicate_fields_never_become_a_billable_envelope(self):
+        from macr.providers.deepseek import _ApprovedTransport
+        raw = b'{"usage":{"prompt_tokens":10,"prompt_tokens":100,"completion_tokens":4},"model":"fixture-deepseek","choices":[]}'
+        class Reply:
+            status = 200
+            headers = {}
+            def __enter__(self): return self
+            def __exit__(self, *args): return False
+            def read(self, limit): return raw[:limit]
+        class Opener:
+            def open(self, *args, **kwargs): return Reply()
+        with patch('macr.providers.deepseek.urllib.request.build_opener', return_value=Opener()):
+            error = self.assert_code('model_response_invalid', lambda: _ApprovedTransport('DUMMY').post(
+                'https://api.deepseek.com/chat/completions', b'{}', 1, 4096))
+        self.assertEqual(error.diagnostic['stage'], 'json_decode')
+        self.assertEqual(error.diagnostic['validation_error'], 'duplicate_json_key')
+        self.assertIsNone(error.response)
+        self.assertIsNone(error.billing_evidence)
+
     def test_failure_diagnostic_is_bounded_validated_and_not_aliased(self):
         from macr.providers.failure_evidence import validate_failure_diagnostic
         evidence = {'schema': 'macr.provider.failure.v1', 'stage': 'usage'}
@@ -81,7 +147,7 @@ class DeepSeekConversationTests(unittest.TestCase):
         del data['choices'][0]['message']['content']
         cases.append((data, 'assistant_message'))
         data = completion(None, calls=[CALL], finish='tool_calls')
-        data['choices'][0]['message']['tool_calls'][0]['index'] = 0
+        data['choices'][0]['message']['tool_calls'][0]['type'] = 'unsupported-action'
         cases.append((data, 'assistant_message'))
         data = completion()
         data['usage']['prompt_tokens'] = 'not an integer'
@@ -289,15 +355,27 @@ class DeepSeekConversationTests(unittest.TestCase):
         DeepSeekProvider(transport=transport).converse(self.request(messages))
         self.assertEqual(transport.calls[0][1]['messages'], messages)
 
-    def test_empty_tool_content_is_valid_and_arguments_stay_caller_owned(self):
+    def test_empty_tool_content_is_valid_and_argument_schema_stays_caller_owned(self):
         call = copy.deepcopy(CALL)
-        call['function']['arguments'] = '{unfinished'
+        call['function']['arguments'] = '{"unknown_to_schema":true}'
         for content in (None, ''):
             with self.subTest(content=content):
                 response = DeepSeekProvider(transport=FakeTransport(
                     completion(content, calls=[call], finish='tool_calls'))).converse(self.request())
                 self.assertEqual(response.assistant_message['content'], content)
-                self.assertEqual(response.tool_calls[0]['function']['arguments'], '{unfinished')
+                self.assertEqual(response.tool_calls[0]['function']['arguments'], '{"unknown_to_schema":true}')
+
+    def test_invalid_or_duplicate_argument_json_is_rejected_before_tool_use(self):
+        for arguments, code in (('{unfinished', 'tool_arguments_json'),
+                                ('{"path":"a","path":"b"}', 'duplicate_json_key')):
+            with self.subTest(code=code):
+                call = copy.deepcopy(CALL)
+                call['function']['arguments'] = arguments
+                error = self.assert_code('model_response_invalid', lambda: DeepSeekProvider(
+                    transport=FakeTransport(completion(None, calls=[call], finish='tool_calls'))
+                    ).converse(self.request()))
+                self.assertIsNone(error.response)
+                self.assertEqual(error.diagnostic['validation_error'], code)
 
     def test_blank_final_and_unsolicited_tool_calls_fail_explicitly(self):
         for content in (None, '', ' \n'):

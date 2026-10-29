@@ -3,12 +3,15 @@ import json
 import urllib.error
 import urllib.request
 from copy import deepcopy
+from hashlib import sha256
 from time import perf_counter
 from macr.providers.base import (ConversationRequest, ConversationResponse, ModelRequest, ModelResponse,
     ProviderCapabilities, ProviderError, _conversation_usage, _validate_conversation_message,
-    validate_conversation_request, validate_request, validate_response)
+    validate_conversation_request, validate_request, validate_response, validate_billing_evidence)
 from macr.providers.failure_evidence import (http_failure_metadata,
     make_failure_diagnostic, validate_failure_diagnostic)
+from macr.providers.response_normalization import (ResponseNormalizationError,
+    decode_provider_json, normalize_assistant_message)
 
 class _NoRedirect(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, *args, **kwargs):
@@ -57,7 +60,11 @@ class _ApprovedTransport:
             raise ProviderError('model_response_limit', diagnostic=make_failure_diagnostic(
                 'transport', metadata=self._response_metadata))
         try:
-            return json.loads(raw)
+            return decode_provider_json(raw)
+        except ResponseNormalizationError as error:
+            raise ProviderError('model_response_invalid', diagnostic=make_failure_diagnostic(
+                'json_decode', metadata=self._response_metadata,
+                validation_error=error.code)) from None
         except (ValueError, UnicodeError):
             raise ProviderError('model_response_invalid', diagnostic=make_failure_diagnostic(
                 'json_decode', metadata=self._response_metadata)) from None
@@ -69,6 +76,21 @@ def _transport_metadata(transport):
     try:
         return getattr(transport, 'response_metadata', None)
     except Exception:
+        return None
+
+
+def _billing_evidence(data, *, model, body, max_output_tokens, latency_ms):
+    """Validate billing independently, only after a clean JSON envelope arrived."""
+    if (type(data) is not dict or 'error' in data or data.get('model') != model
+            or type(data.get('choices')) is not list or len(data['choices']) != 1
+            or type(data['choices'][0]) is not dict):
+        return None
+    try:
+        return validate_billing_evidence({'schema': 'macr.provider.billing.v1',
+            'provider': 'deepseek', 'model': model, 'request_sha256': sha256(body).hexdigest(),
+            'max_output_tokens': max_output_tokens, 'raw_usage': _conversation_usage(data.get('usage')),
+            'latency_ms': latency_ms})
+    except (ValueError, TypeError, KeyError, OverflowError):
         return None
 
 class DeepSeekProvider:
@@ -163,15 +185,19 @@ class DeepSeekProvider:
             raise ProviderError('model_timeout', diagnostic=make_failure_diagnostic(
                 'transport', metadata=_transport_metadata(transport))) from None
         except ProviderError as error:
-            if error.diagnostic is not None:
-                raise
-            raise ProviderError(error.code, response=error.response,
-                failure_kind=error.failure_kind, diagnostic=make_failure_diagnostic(
+            # A transport exception did not produce a clean JSON envelope;
+            # transport-provided diagnostic counters cannot become billing proof.
+            raise ProviderError(error.code, response=(None if error.failure_kind == 'transport'
+                else error.response),
+                failure_kind=error.failure_kind, diagnostic=error.diagnostic or make_failure_diagnostic(
                     'transport', metadata=_transport_metadata(transport))) from None
         except Exception:
             raise ProviderError('model_transport', diagnostic=make_failure_diagnostic(
                 'transport', metadata=_transport_metadata(transport))) from None
         stage = 'response_envelope'
+        billing = _billing_evidence(data, model=self.model, body=body,
+            max_output_tokens=request.max_output_tokens,
+            latency_ms=int((perf_counter() - started) * 1000))
         try:
             if type(data) is not dict:
                 raise ValueError()
@@ -181,11 +207,11 @@ class DeepSeekProvider:
             if type(data.get('choices')) is not list or len(data['choices']) != 1:
                 raise ValueError()
             choice = data['choices'][0]
-            message = choice['message']
             stage = 'assistant_message'
-            _validate_conversation_message(message)
-            if message['role'] != 'assistant':
-                raise ValueError()
+            tool_names = {tool['function']['name'] for tool in request.tools
+                          if type(tool.get('function')) is dict
+                          and type(tool['function'].get('name')) is str}
+            message = normalize_assistant_message(choice.get('message'), tool_names=tool_names)
             stage = 'response_contract'
             json.dumps({'message': message, 'model': data.get('model'),
                         'system_fingerprint': data.get('system_fingerprint')},
@@ -211,16 +237,20 @@ class DeepSeekProvider:
             except ProviderError:
                 raise ValueError() from None
             if finish in {'length', 'content_filter', 'insufficient_system_resource', 'aborted'}:
-                raise ProviderError('model_output_incomplete', response=response,
+                raise ProviderError('model_output_incomplete', response=response, billing_evidence=billing,
                     diagnostic=make_failure_diagnostic(stage, data=data,
                         metadata=_transport_metadata(transport)))
             if bool(calls) != (finish == 'tool_calls') or not response.content.strip() and not calls:
-                raise ProviderError('model_response_invalid', response=response,
+                raise ProviderError('model_response_invalid', response=response, billing_evidence=billing,
                     diagnostic=make_failure_diagnostic('finish_consistency', data=data,
                         metadata=_transport_metadata(transport)))
             return response
         except ProviderError:
             raise
+        except ResponseNormalizationError as error:
+            raise ProviderError('model_response_invalid', billing_evidence=billing,
+                diagnostic=make_failure_diagnostic(stage, data=data,
+                    metadata=_transport_metadata(transport), validation_error=error.code)) from None
         except (KeyError, IndexError, TypeError, ValueError, AttributeError):
-            raise ProviderError('model_response_invalid', diagnostic=make_failure_diagnostic(
+            raise ProviderError('model_response_invalid', billing_evidence=billing, diagnostic=make_failure_diagnostic(
                 stage, data=data, metadata=_transport_metadata(transport))) from None

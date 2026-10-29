@@ -10,10 +10,18 @@ MAX_DIAGNOSTIC_BYTES = 4096
 STAGES = frozenset({'http_status', 'transport', 'json_decode', 'response_envelope',
     'assistant_message', 'finish_reason', 'usage', 'response_contract',
     'finish_consistency'})
+_VALIDATION_ERRORS = frozenset({'message_type', 'required_field', 'role_invalid',
+    'content_type', 'reasoning_type', 'tool_calls_type', 'tool_call_count',
+    'tool_call_shape', 'tool_call_id', 'tool_call_duplicate_id', 'tool_call_type',
+    'tool_function_shape', 'tool_function_name', 'tool_arguments_type',
+    'tool_arguments_json', 'duplicate_json_key', 'response_json_invalid',
+    'metadata_limit'})
 _KINDS = frozenset({'missing', 'null', 'object', 'array', 'string', 'integer',
                     'boolean', 'number', 'other'})
 _KIND_FIELDS = frozenset({'root_kind', 'choices_kind', 'message_kind', 'role_kind',
     'content_kind', 'reasoning_kind', 'tool_calls_kind', 'first_tool_arguments_kind',
+    'first_tool_call_kind', 'first_tool_id_kind', 'first_tool_type_kind',
+    'first_tool_function_kind', 'first_tool_name_kind', 'first_tool_index_kind',
     'usage_kind'})
 _COUNT_FIELDS = frozenset({'choices_count', 'tool_calls_count',
                           'message_extra_fields', 'tool_call_extra_fields'})
@@ -37,7 +45,8 @@ def _require(condition):
 def validate_failure_diagnostic(value) -> dict:
     """Reject unknown keys/types; return an independent, fixed-schema copy."""
     allowed = ({'schema', 'stage', 'http_status', 'response_bytes', 'request_id',
-                'model', 'finish_reason', 'usage_counters', 'usage_counter_types'} |
+                'model', 'finish_reason', 'usage_counters', 'usage_counter_types',
+                'validation_error'} |
                _KIND_FIELDS | _COUNT_FIELDS | _BOOL_FIELDS)
     _require(type(value) is dict and {'schema', 'stage'} <= set(value) <= allowed)
     _require(value['schema'] == SCHEMA and type(value['stage']) is str and
@@ -49,6 +58,8 @@ def validate_failure_diagnostic(value) -> dict:
             _require(type(item) is int and 0 <= item <= 1_000_000)
         elif key in _BOOL_FIELDS:
             _require(type(item) is bool)
+        elif key == 'validation_error':
+            _require(type(item) is str and item in _VALIDATION_ERRORS)
         elif key == 'http_status':
             _require(type(item) is int and 100 <= item <= 599)
         elif key == 'response_bytes':
@@ -101,13 +112,19 @@ def http_failure_metadata(stage, *, status=None, request_id=None,
     return validate_failure_diagnostic(result)
 
 
-def make_failure_diagnostic(stage, *, data=_MISSING, metadata=None) -> dict:
+def make_failure_diagnostic(stage, *, data=_MISSING, metadata=None,
+                            validation_error=None) -> dict:
     """Extract only fixed field types/counts and official integer counters.
 
-    Diagnostic usage counters are untrusted observations, never billing proof.
+    Diagnostic usage counters are untrusted observations, never settlement evidence.
     Body IDs are presence-only; exact IDs can only arrive via filtered HTTP metadata.
+    Only the known extension key ``index`` is identified; extension values and
+    arbitrary extension names are never retained.
     """
     result = {'schema': SCHEMA, 'stage': stage}
+    if validation_error is not None:
+        _require(type(validation_error) is str and validation_error in _VALIDATION_ERRORS)
+        result['validation_error'] = validation_error
     if metadata is not None:
         try:
             safe = validate_failure_diagnostic(metadata)
@@ -146,10 +163,18 @@ def make_failure_diagnostic(stage, *, data=_MISSING, metadata=None) -> dict:
             result['tool_calls_kind'] = _kind(calls)
             if type(calls) is list:
                 result['tool_calls_count'] = min(len(calls), 1_000_000)
-                first = calls[0] if calls and type(calls[0]) is dict else {}
+                observed_first = calls[0] if calls else _MISSING
+                first = observed_first if type(observed_first) is dict else {}
                 result['tool_call_extra_fields'] = min(len(set(first) -
                     {'id', 'type', 'function'}), 1_000_000)
-                function = first.get('function')
+                function = first.get('function', _MISSING)
+                result.update(first_tool_call_kind=_kind(observed_first),
+                    first_tool_id_kind=_kind(first.get('id', _MISSING)),
+                    first_tool_type_kind=_kind(first.get('type', _MISSING)),
+                    first_tool_function_kind=_kind(function),
+                    first_tool_name_kind=_kind(function.get('name', _MISSING))
+                        if type(function) is dict else 'missing',
+                    first_tool_index_kind=_kind(first.get('index', _MISSING)))
                 if type(function) is dict:
                     result['first_tool_arguments_kind'] = _kind(function.get('arguments', _MISSING))
     usage = data.get('usage', _MISSING)

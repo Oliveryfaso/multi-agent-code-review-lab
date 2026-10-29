@@ -19,11 +19,12 @@ from macr.evals.deepseek_policy_manifest import load_policy_manifest
 from macr.evals.deepseek_policy_tools import StaticEvidenceTools
 from macr.investigation.scope import open_directory, validate_workspace_path
 from macr.investigation.validation import ContractError
-from macr.providers.base import ConversationRequest, ProviderError
+from macr.providers.base import ConversationRequest, ProviderError, validate_billing_evidence
 from macr.providers.deepseek import DeepSeekProvider
 from macr.providers.failure_evidence import validate_failure_diagnostic
 
 SCHEMA = "macr.deepseek.policy.run.v1"
+BILLING_CONTRACT_VERSION = "macr.provider.billing.v1"
 ARM_REQUESTS = {"A": 1, "B": 1, "C": 2, "D": 3}
 READ_TOOLS = frozenset({"search", "read_symbol", "read_caller"})
 TERMINAL_TOOLS = frozenset({"finish", "ask_user"})
@@ -169,11 +170,38 @@ class _ReservationLedger:
             row["state"] = "measured_budget_overrun"
             raise PolicyRunError("measured_budget_overrun")
 
-    def fail(self, row: dict, error: ProviderError) -> None:
+    def fail(self, row: dict, error: ProviderError, *, request_sha256: str,
+             model: str) -> dict | None:
         row["state"] = "reserved_unknown_outcome"
         self.unknown = True
-        if error.response is not None:
-            row["usage"] = dict(error.response.usage)
+        try:
+            billing = error.billing_evidence
+            if billing is not None:
+                billing = validate_billing_evidence(billing)
+                if (billing["request_sha256"] != request_sha256 or billing["model"] != model
+                        or billing["max_output_tokens"] != row["reserved_output_tokens"]):
+                    raise ValueError()
+        except ValueError:
+            raise PolicyRunError("provider_billing_evidence_invalid") from None
+        usage = billing["raw_usage"] if billing is not None else None
+        if usage is None and error.response is not None:
+            response = error.response
+            try:
+                usage = validate_billing_evidence({"schema": BILLING_CONTRACT_VERSION,
+                    "provider": response.provider, "model": response.model,
+                    "request_sha256": request_sha256,
+                    "max_output_tokens": row["reserved_output_tokens"],
+                    "raw_usage": getattr(response, "raw_usage", None),
+                    "latency_ms": response.latency_ms})["raw_usage"]
+                if response.model != model:
+                    usage = None
+            except ValueError:
+                usage = None
+        if usage is not None:
+            row["usage"] = {"input_tokens": usage["prompt_tokens"],
+                            "output_tokens": usage["completion_tokens"]}
+            row["state"] = "failed_known_usage"
+        return billing
 
 
 def _initial_static_evidence(source: list[dict]) -> dict:
@@ -307,6 +335,7 @@ def _run_policy_arm_core(manifest_dir: Path, *, dataset_root: Path, arm: str,
     ledger = _ReservationLedger(budget, arm)
     timing = {"preparation": 0.0, "provider": 0.0, "tool": 0.0}
     result = {"schema": SCHEMA, "manifest_sha256": manifest["manifest_sha256"],
+              "billing_contract_version": BILLING_CONTRACT_VERSION,
               "task_id": manifest["task"]["id"], "repeat": manifest["repeat"], "arm": arm,
               "status": "running", "error_code": None, "review_status": "not_ready",
               "answer": None, "candidate": None, "verification": None, "tool_reads": 0,
@@ -326,8 +355,13 @@ def _run_policy_arm_core(manifest_dir: Path, *, dataset_root: Path, arm: str,
     timing["preparation"] = monotonic() - started
     pinned_fingerprint: str | None = None
 
-    def record_response(decision: int, response, diagnostic=None) -> tuple[dict, bool]:
+    def record_response(decision: int, response, diagnostic=None, *, billing=None,
+                        billing_rejected=False) -> tuple[dict, bool]:
         evidence = _response_record(response)
+        if billing is not None:
+            evidence["billing_evidence"] = billing
+        if billing_rejected:
+            evidence["billing_evidence_rejected"] = True
         if diagnostic is not None:
             try:
                 evidence["failure_diagnostic"] = validate_failure_diagnostic(diagnostic)
@@ -397,19 +431,25 @@ def _run_policy_arm_core(manifest_dir: Path, *, dataset_root: Path, arm: str,
             response = provider.converse(request)
         except ProviderError as error:
             timing["provider"] += monotonic() - provider_started
-            ledger.fail(reservation, error)
-            entry["error_code"] = error.code
+            billing, billing_rejected, error_code = None, False, error.code
+            try:
+                billing = ledger.fail(reservation, error, request_sha256=wire_sha256,
+                                      model=manifest["model"]["model_id"])
+            except PolicyRunError as rejected:
+                billing_rejected, error_code = True, rejected.code
+            entry["error_code"] = error_code
             entry["response"], evidence_complete = record_response(
-                decision, error.response, error.diagnostic)
+                decision, error.response, error.diagnostic, billing=billing,
+                billing_rejected=billing_rejected)
             _write_exclusive(root / f"decision-{decision:02d}.outcome.json", {
                 "schema": SCHEMA, "decision": decision, "state": reservation["state"],
-                "error_code": error.code, "usage": reservation["usage"],
+                "error_code": error_code, "usage": reservation["usage"],
                 "response_evidence_complete": evidence_complete,
                 "response_sha256": sha256(_json_bytes(entry["response"])).hexdigest()}, 4096)
             if error.response is not None and not evidence_complete:
                 raise PolicyRunError("run_record_limit") from None
             raise PolicyRunError("remote_outcome_unknown" if error.failure_kind == "transport"
-                                 else error.code) from None
+                                 and not billing_rejected else error_code) from None
         timing["provider"] += monotonic() - provider_started
         entry["response"], evidence_complete = record_response(decision, response)
         try:
@@ -545,6 +585,7 @@ def _run_policy_arm_core(manifest_dir: Path, *, dataset_root: Path, arm: str,
         # The full trace did not fit. Keep a truthful bounded result and the
         # already durable decision files; never present the answer as accepted.
         fallback = {"schema": SCHEMA, "manifest_sha256": manifest["manifest_sha256"],
+            "billing_contract_version": BILLING_CONTRACT_VERSION,
             "task_id": manifest["task"]["id"], "arm": arm,
             "status": "record_limit_exceeded", "error_code": "run_record_limit",
             "review_status": "not_ready", "requests_attempted": len(result["requests"]),

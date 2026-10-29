@@ -22,7 +22,7 @@ from macr.evals.deepseek_policy_runner import ARM_REQUESTS, _run_policy_arm_core
 from macr.evals.deepseek_policy_spend import (PRICE_SNAPSHOT, PolicySpendError,
     initialize_spend_ledger, mark_spend_unknown, reserve_spend, settle_spend,
     spend_state)
-from macr.providers.base import ConversationRequest, ProviderError
+from macr.providers.base import ConversationRequest, ProviderError, validate_billing_evidence
 from macr.providers.deepseek import DeepSeekProvider, _ApprovedTransport
 from macr.providers.failure_evidence import validate_failure_diagnostic
 
@@ -183,13 +183,17 @@ class _MeteredDeepSeekProvider(DeepSeekProvider):
                 response = super().converse(request)
             except ProviderError as error:
                 if error.response is None:
-                    # Even a local timeout does not prove that remote billing stopped.
-                    try:
-                        mark_spend_unknown(self.control_root,
-                            batch_sha256=self.scope.batch_sha256,
-                            cell_id=self.cell_id, decision=decision)
-                    except PolicySpendError:
-                        pass  # An unresolved reservation still blocks the batch.
+                    evidence = error.billing_evidence
+                    if self._billing_matches(evidence, body, wire['max_tokens']):
+                        self._settle_billing(decision, evidence, error.diagnostic)
+                    else:
+                        # Diagnostic counters and unmatched evidence never settle.
+                        try:
+                            mark_spend_unknown(self.control_root,
+                                batch_sha256=self.scope.batch_sha256,
+                                cell_id=self.cell_id, decision=decision)
+                        except PolicySpendError:
+                            pass  # An unresolved reservation still blocks the batch.
                 else:
                     self._settle(decision, error.response)
                 raise
@@ -198,7 +202,39 @@ class _MeteredDeepSeekProvider(DeepSeekProvider):
         finally:
             self.transport.expected_digest = None
 
+    def _billing_matches(self, evidence, body, max_output_tokens) -> bool:
+        if evidence is None:
+            return False
+        try:
+            safe = validate_billing_evidence(evidence)
+        except (ValueError, TypeError):
+            return False
+        return (safe['provider'] == 'deepseek' and safe['model'] == self.scope.model_id
+                and safe['request_sha256'] == sha256(body).hexdigest()
+                and safe['max_output_tokens'] == max_output_tokens)
+
+    def _settle_billing(self, decision, evidence, diagnostic):
+        try:
+            outcome = settle_spend(self.control_root,
+                batch_sha256=self.scope.batch_sha256, cell_id=self.cell_id,
+                decision=decision, raw_usage=evidence['raw_usage'])
+        except PolicySpendError:
+            raise ProviderError('model_token_accounting_unavailable',
+                billing_evidence=evidence, diagnostic=diagnostic) from None
+        if outcome['state'] != 'settled':
+            raise ProviderError('model_token_accounting_unavailable',
+                billing_evidence=evidence, diagnostic=diagnostic)
+
     def _settle(self, decision: int, response) -> None:
+        if response.provider != 'deepseek' or response.model != self.scope.model_id:
+            try:
+                mark_spend_unknown(self.control_root,
+                    batch_sha256=self.scope.batch_sha256,
+                    cell_id=self.cell_id, decision=decision)
+            except PolicySpendError:
+                pass  # The unresolved reservation remains held.
+            raise ProviderError('model_identity_drift', response=response,
+                                failure_kind='invalid_contract')
         try:
             outcome = settle_spend(self.control_root,
                 batch_sha256=self.scope.batch_sha256,
@@ -243,6 +279,8 @@ def run_next_approved_policy_cell(control_root, *, dataset_root, task_id, repeat
         root = Path(control_root).absolute()
         with _locked(root):
             claims, outcomes = _registry(root, batch)
+            _require(not any(row['state'].startswith('batch_halted')
+                             for row in outcomes.values()), 'live_batch_halted')
             _require(set(claims) == set(outcomes), "live_cell_unresolved")
             _require(len(claims) < len(batch["cells"]), "live_batch_complete")
             next_cell = batch["cells"][len(claims)]

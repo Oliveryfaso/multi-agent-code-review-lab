@@ -50,11 +50,11 @@ class FakeTransport:
 
 
 class PolicyRunnerTests(unittest.TestCase):
-    def test_tool_argument_json_and_policy_schema_fail_after_valid_provider_reply(self):
-        cases = [("{unfinished", "diagnosis_json_invalid"),
+    def test_tool_argument_json_and_policy_schema_fail_at_their_own_boundaries(self):
+        cases = [("{unfinished", "model_response_invalid", "unknown"),
                  (json.dumps({"diagnosis": {"verdict": "bogus"}}),
-                  "eval_contract_invalid")]
-        for number, (arguments, expected) in enumerate(cases):
+                  "eval_contract_invalid", "received")]
+        for number, (arguments, expected, state) in enumerate(cases):
             invocation = call("finish-1", "finish", {})
             invocation["function"]["arguments"] = arguments
             result = self.run_arm("D", FakeTransport(reply(None, calls=[invocation])),
@@ -62,8 +62,11 @@ class PolicyRunnerTests(unittest.TestCase):
             self.assertEqual(result["error_code"], expected)
             self.assertEqual(result["tool_reads"], 0)
             response = result["requests"][0]["response"]
-            self.assertEqual(response["state"], "received")
-            self.assertNotIn("failure_diagnostic", response)
+            self.assertEqual(response["state"], state)
+            if state == "unknown":
+                self.assertEqual(response["failure_diagnostic"]["validation_error"], "tool_arguments_json")
+            else:
+                self.assertNotIn("failure_diagnostic", response)
 
     def test_invalid_tool_envelope_records_safe_failure_stage_without_body(self):
         bad = reply(None, calls=[call("bad-1", "finish", {"diagnosis": UNKNOWN})])

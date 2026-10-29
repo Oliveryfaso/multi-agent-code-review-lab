@@ -1,5 +1,6 @@
 from __future__ import annotations
 import inspect
+import json
 import math
 from dataclasses import dataclass, field, replace
 from typing import Any, Protocol
@@ -11,11 +12,12 @@ _CONVERSATION_FINISH_REASONS = {'stop', 'tool_calls', 'length', 'content_filter'
 
 class ProviderError(Exception):
     def __init__(self, code: str, *, response: ModelResponse | None = None, failure_kind: str | None = None,
-                 diagnostic: dict | None = None):
+                 diagnostic: dict | None = None, billing_evidence: dict | None = None):
         self.code = code
         # A validated failure envelope is evidence for recording, never a successful output.
         self.response = validate_response(response) if response is not None else None
         self._diagnostic = validate_failure_diagnostic(diagnostic) if diagnostic is not None else None
+        self._billing_evidence = validate_billing_evidence(billing_evidence) if billing_evidence is not None else None
         inferred_kind = {
             'model_timeout': 'transport', 'model_transport': 'transport', 'model_busy': 'transport',
             'model_http_error': 'transport', 'model_redirect_blocked': 'transport',
@@ -36,6 +38,10 @@ class ProviderError(Exception):
     @property
     def diagnostic(self):
         return validate_failure_diagnostic(self._diagnostic) if self._diagnostic is not None else None
+
+    @property
+    def billing_evidence(self):
+        return validate_billing_evidence(self._billing_evidence) if self._billing_evidence is not None else None
 
 @dataclass
 class ModelRequest:
@@ -228,6 +234,36 @@ def _conversation_usage(raw):
         raise ValueError()
     if hit is not None and cached is not None and hit != cached or output is not None and reasoning is not None and reasoning > output:
         raise ValueError()
+    return result
+
+def validate_billing_evidence(value) -> dict:
+    """Validate request-bound usage independently of assistant usability."""
+    try:
+        if type(value) is not dict or set(value) != {
+                'schema', 'provider', 'model', 'request_sha256',
+                'max_output_tokens', 'raw_usage', 'latency_ms'}:
+            raise ValueError()
+        if (type(value['schema']) is not str or value['schema'] != 'macr.provider.billing.v1'
+                or type(value['provider']) is not str or value['provider'] != 'deepseek'
+                or type(value['model']) is not str or not 1 <= len(value['model']) <= 256
+                or type(value['request_sha256']) is not str or len(value['request_sha256']) != 64
+                or any(char not in '0123456789abcdef' for char in value['request_sha256'])
+                or type(value['max_output_tokens']) is not int
+                or not 1 <= value['max_output_tokens'] <= 2 ** 31 - 1
+                or type(value['latency_ms']) is not int or not 0 <= value['latency_ms'] <= 2 ** 31 - 1):
+            raise ValueError()
+        usage = _conversation_usage(value['raw_usage'])
+        if (usage != value['raw_usage'] or not {'prompt_tokens', 'completion_tokens'} <= usage.keys()
+                or not 1 <= usage['prompt_tokens'] <= 1_000_000
+                or not 1 <= usage['completion_tokens'] <= value['max_output_tokens']):
+            raise ValueError()
+        result = dict(value, raw_usage=usage)
+        encoded = json.dumps(result, ensure_ascii=True, allow_nan=False,
+                             separators=(',', ':')).encode('ascii')
+        if len(encoded) > 4096:
+            raise ValueError()
+    except (ValueError, TypeError, KeyError, OverflowError, RecursionError):
+        raise ValueError('provider_billing_evidence_invalid') from None
     return result
 
 def validate_response(response):

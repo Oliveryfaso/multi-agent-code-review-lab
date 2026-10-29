@@ -103,6 +103,14 @@ jobs:
           test_diagnostic_compact test_diagnostic_orchestrator
           test_diagnostic_dataset test_diagnostic_holdout_cases test_diagnostic_holdout_replay
 
+      - name: Provider compatibility and independent usage evidence without network
+        run: >-
+          python -I -S -B scripts/run_offline_tests.py
+          test_deepseek_conversation test_deepseek_response_normalization
+          test_provider_billing_evidence test_provider_failure_structure
+          test_deepseek_policy_observability test_deepseek_policy_live_entry
+          test_deepseek_policy_batch test_deepseek_policy_spend
+
       - name: Static evidence contracts and CLI without native dispatch
         run: python -I -S -B scripts/run_static_evidence_tests.py
 

@@ -1,6 +1,7 @@
 """Persistent local USD reservations for a future fake-tested policy pilot."""
 import json
 from hashlib import sha256
+from pathlib import Path
 import shutil
 import unittest
 from types import SimpleNamespace
@@ -14,13 +15,25 @@ from macr.evals.deepseek_policy_spend import (PRICE_SNAPSHOT, PolicySpendError,
     spend_state)
 from macr.evals.deepseek_policy_runner import ARM_REQUESTS, run_policy_arm
 from macr.providers.deepseek import DeepSeekProvider
-from macr.providers.base import ConversationRequest
+from macr.providers.base import ConversationRequest, ProviderError
 from macr.evals.deepseek_policy_live_entry import _MeteredDeepSeekProvider, _ScriptedWire
 from test_deepseek_policy_runner import FakeTransport, UNKNOWN, call, reply
 
 
 MODEL = {"model_id": "deepseek-flash", "provider": "deepseek",
          "thinking": True, "reasoning_effort": "high"}
+
+
+class BillingFailureProvider(DeepSeekProvider):
+    def converse(self, request):
+        body = self.encode_conversation_request(request)
+        raise ProviderError("model_response_invalid", billing_evidence={
+            "schema": "macr.provider.billing.v1", "provider": "deepseek",
+            "model": self.model, "request_sha256": sha256(body).hexdigest(),
+            "max_output_tokens": request.max_output_tokens, "latency_ms": 1,
+            "raw_usage": {"prompt_tokens": 357, "completion_tokens": 1616,
+                          "prompt_cache_hit_tokens": 0,
+                          "prompt_cache_miss_tokens": 357}})
 
 
 class SpendLedgerTests(unittest.TestCase):
@@ -233,6 +246,11 @@ class CarryForwardTests(unittest.TestCase):
         run_policy_arm(cell["manifest_dir"], dataset_root=self.root/"previous"/"dataset",
             arm=cell["arm"], provider=DeepSeekProvider(model="deepseek-flash",
                 transport=FakeTransport(response)), out=cell["out"])
+        # Keep this predecessor fixture under its historical accounting contract.
+        result_path = Path(cell["out"]) / "result.json"
+        result = json.loads(result_path.read_text())
+        result.pop("billing_contract_version", None)
+        result_path.write_text(json.dumps(result), encoding="utf-8")
         settle_spend(self.previous, batch_sha256=self.old_batch["batch_sha256"],
             cell_id=cell["cell_id"], decision=1, raw_usage=response["usage"])
         self.assertEqual(record_policy_cell(self.previous, ticket)["state"],
@@ -288,6 +306,164 @@ class CarryForwardTests(unittest.TestCase):
     def reserve(self, decision=1):
         return reserve_spend(self.current, batch_sha256=self.batch["batch_sha256"],
             cell_id=self.cell["cell_id"], decision=decision, max_output_tokens=2000)
+
+    def make_billing_failure(self, name, *, legacy_unknown=False):
+        control, batch = self.make_batch(name)
+        cell = batch["cells"][0]
+        ticket = claim_policy_cell(control, task_id=cell["task_id"],
+            repeat=cell["repeat"], arm=cell["arm"], out=cell["out"])
+        initialize_spend_ledger(control, batch_sha256=batch["batch_sha256"])
+        reserve_spend(control, batch_sha256=batch["batch_sha256"],
+            cell_id=cell["cell_id"], decision=1, max_output_tokens=2000)
+        result = run_policy_arm(cell["manifest_dir"], dataset_root=control.parent/"dataset",
+            arm=cell["arm"], provider=BillingFailureProvider(model="deepseek-flash",
+                                                         transport=FakeTransport()),
+            out=cell["out"])
+        self.assertEqual(result["requests"][0]["response"]["state"], "unknown")
+        self.assertEqual(result.get("billing_contract_version"), "macr.provider.billing.v1")
+        self.assertIn("billing_evidence", result["requests"][0]["response"])
+        if legacy_unknown:
+            result.pop("billing_contract_version")
+            response = result["requests"][0]["response"]
+            response.pop("billing_evidence")
+            response["failure_diagnostic"] = {
+                "schema": "macr.provider.failure.v1", "stage": "assistant_message",
+                "usage_counters": {"prompt_tokens": 357, "completion_tokens": 1616}}
+            self.replace_response(cell, result)
+            mark_spend_unknown(control, batch_sha256=batch["batch_sha256"],
+                cell_id=cell["cell_id"], decision=1)
+        else:
+            settle_spend(control, batch_sha256=batch["batch_sha256"],
+                cell_id=cell["cell_id"], decision=1,
+                raw_usage=result["requests"][0]["response"]["billing_evidence"]["raw_usage"])
+        return control, batch, cell, ticket, result
+
+    def replace_response(self, cell, result):
+        output = Path(cell["out"])
+        response = result["requests"][0]["response"]
+        (output/"result.json").write_text(json.dumps(result), encoding="utf-8")
+        (output/"decision-01.response.json").write_text(json.dumps(response), encoding="utf-8")
+        path = output/"decision-01.outcome.json"
+        outcome = json.loads(path.read_text())
+        outcome["response_sha256"] = sha256(json.dumps(response, ensure_ascii=False,
+            allow_nan=False, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
+        path.write_text(json.dumps(outcome), encoding="utf-8")
+
+    def initialize_from(self, control, batch):
+        return initialize_spend_ledger(self.current, batch_sha256=self.batch["batch_sha256"],
+            predecessor_control_root=control, predecessor_batch_sha256=batch["batch_sha256"])
+
+    def test_bound_billing_on_a_new_parsing_failure_can_carry_settled_usage(self):
+        control, batch, cell, ticket, result = self.make_billing_failure("billing-known")
+        self.assertEqual(record_policy_cell(control, ticket)["state"], "batch_halted_contract")
+        before = {str(path): path.read_bytes() for path in control.parent.rglob("*")
+                  if path.is_file()}
+        policy = self.initialize_from(control, batch)
+        self.assertEqual(policy["carry_forward"]["spent_usd"], "0.002047")
+        state = spend_state(self.current)
+        self.assertEqual((state["carried_request_count"], state["carried_spent_usd"],
+                          state["reserved_usd"]), (1, "0.002047", "0.000000"))
+        self.assertEqual(before, {str(path): path.read_bytes()
+            for path in control.parent.rglob("*") if path.is_file()})
+        self.assertEqual(result["requests"][0]["response"]["state"], "unknown")
+        self.assertIsNone(result["answer"])
+
+    def test_versioned_received_usage_requires_the_expected_model_and_legacy_is_unchanged(self):
+        for legacy in (False, True):
+            with self.subTest(legacy=legacy):
+                control, batch = self.make_batch("received-model-drift-" + str(legacy))
+                cell = batch["cells"][0]
+                ticket = claim_policy_cell(control, task_id=cell["task_id"],
+                    repeat=cell["repeat"], arm=cell["arm"], out=cell["out"])
+                initialize_spend_ledger(control, batch_sha256=batch["batch_sha256"])
+                reserve_spend(control, batch_sha256=batch["batch_sha256"],
+                    cell_id=cell["cell_id"], decision=1, max_output_tokens=2000)
+                wire = reply("{}")
+                wire["model"] = "deepseek-v4-pro"
+                result = run_policy_arm(cell["manifest_dir"], dataset_root=control.parent/"dataset",
+                    arm=cell["arm"], provider=DeepSeekProvider(model="deepseek-flash",
+                        transport=FakeTransport(wire)), out=cell["out"])
+                self.assertEqual(result["requests"][0]["response"]["state"], "received")
+                self.assertEqual(result["error_code"], "model_identity_drift")
+                if legacy:
+                    result.pop("billing_contract_version")
+                    (Path(cell["out"])/"result.json").write_text(json.dumps(result), encoding="utf-8")
+                settle_spend(control, batch_sha256=batch["batch_sha256"],
+                    cell_id=cell["cell_id"], decision=1, raw_usage=wire["usage"])
+                self.assertEqual(record_policy_cell(control, ticket)["state"], "batch_halted_model_drift")
+                if legacy:
+                    self.assertEqual(self.initialize_from(control, batch)["carry_forward"]["spent_usd"],
+                                     "0.000014")
+                else:
+                    with self.assertRaises(PolicySpendError) as blocked:
+                        self.initialize_from(control, batch)
+                    self.assertEqual(blocked.exception.code, "spend_predecessor_usage_mismatch")
+
+    def test_billing_on_an_unknown_response_without_the_new_marker_cannot_carry(self):
+        control, batch, cell, ticket, result = self.make_billing_failure("billing-no-marker")
+        result.pop("billing_contract_version")
+        self.replace_response(cell, result)
+        self.assertEqual(record_policy_cell(control, ticket)["state"], "batch_halted_unknown")
+        with self.assertRaises(PolicySpendError) as blocked:
+            self.initialize_from(control, batch)
+        self.assertEqual(blocked.exception.code, "spend_predecessor_usage_mismatch")
+
+    def test_historical_unknown_and_diagnostic_counters_keep_the_full_hold(self):
+        control, batch, cell, ticket, _ = self.make_billing_failure("legacy-unknown",
+                                                                  legacy_unknown=True)
+        self.assertEqual(record_policy_cell(control, ticket)["state"], "batch_halted_unknown")
+        before = spend_state(control)
+        with self.assertRaises(PolicySpendError) as blocked:
+            self.initialize_from(control, batch)
+        self.assertEqual(blocked.exception.code, "spend_predecessor_unsettled")
+        self.assertEqual(spend_state(control), before)
+        self.assertEqual((before["state"], before["spent_usd"], before["reserved_usd"]),
+                         ("halted_unknown", "0.000000", "0.330000"))
+
+    def test_future_billing_usage_must_match_the_settled_charge(self):
+        control, batch, cell, ticket, _ = self.make_billing_failure("billing-usage-mismatch")
+        record_policy_cell(control, ticket)
+        path = control/"spend"/"entries"/(cell["cell_id"]+"-01.outcome.json")
+        outcome = json.loads(path.read_text())
+        outcome["usage"]["completion_tokens"] = 1615
+        outcome["charged_usd"] = "0.002046"
+        path.write_text(json.dumps(outcome), encoding="utf-8")
+        with self.assertRaises(PolicySpendError) as blocked:
+            self.initialize_from(control, batch)
+        self.assertEqual(blocked.exception.code, "spend_predecessor_usage_mismatch")
+
+    def test_future_billing_charge_is_recomputed_before_carry(self):
+        control, batch, cell, ticket, _ = self.make_billing_failure("billing-charge-mismatch")
+        record_policy_cell(control, ticket)
+        path = control/"spend"/"entries"/(cell["cell_id"]+"-01.outcome.json")
+        outcome = json.loads(path.read_text())
+        outcome["charged_usd"] = "0.000000"
+        path.write_text(json.dumps(outcome), encoding="utf-8")
+        with self.assertRaises(PolicySpendError) as blocked:
+            self.initialize_from(control, batch)
+        self.assertEqual(blocked.exception.code, "spend_entries_invalid")
+
+    def test_future_billing_binding_and_usage_are_rechecked_before_carry(self):
+        mutations = (("request_sha256", "0" * 64), ("max_output_tokens", 2001),
+                     ("model", "deepseek-v4-pro"), ("provider", "mock"),
+                     ("raw_usage", {"prompt_tokens": 357, "completion_tokens": 0}))
+        for number, (field, value) in enumerate(mutations):
+            with self.subTest(field=field):
+                control, batch, cell, ticket, result = self.make_billing_failure(
+                    "billing-invalid-" + str(number))
+                record_policy_cell(control, ticket)
+                result["requests"][0]["response"]["billing_evidence"][field] = value
+                self.replace_response(cell, result)
+                output = Path(cell["out"])
+                path = control/"registry"/(cell["cell_id"]+".outcome.json")
+                registry = json.loads(path.read_text())
+                registry["result_sha256"] = sha256((output/"result.json").read_bytes()).hexdigest()
+                registry["response_receipts"] = [sha256(
+                    (output/"decision-01.response.json").read_bytes()).hexdigest()]
+                path.write_text(json.dumps(registry), encoding="utf-8")
+                with self.assertRaises(PolicySpendError) as blocked:
+                    self.initialize_from(control, batch)
+                self.assertEqual(blocked.exception.code, "spend_predecessor_invalid")
 
     def test_carry_is_derived_persistent_and_old_files_unchanged(self):
         policy = self.initialize()

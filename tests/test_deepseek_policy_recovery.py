@@ -94,6 +94,7 @@ def make_recovery_source(root, *, dataset_root=None, project_root=None, ancestor
         (reply(json.dumps(UNKNOWN)), reply('{"status":"accept","coverage":"complete","reason":"Fixture"}')))
     invalid = reply(None)
     del invalid["choices"][0]["message"]["content"]
+    invalid["usage"] = None
     _run_fixture_cell(current, batch, batch["cells"][2], (invalid,), unknown=True)
     return SimpleNamespace(root=root, previous=previous, old_batch=old_batch,
         current=current, batch=batch, dataset=Path(batch["dataset_root"]),

@@ -16,10 +16,12 @@ import re
 
 from macr.evals.deepseek_policy_manifest import (ARMS, PolicyManifestError,
     load_policy_manifest)
-from macr.evals.deepseek_policy_runner import ARM_REQUESTS, SCHEMA as RUN_SCHEMA
+from macr.evals.deepseek_policy_runner import (ARM_REQUESTS, BILLING_CONTRACT_VERSION,
+    SCHEMA as RUN_SCHEMA)
 from macr.investigation.evidence_budget import BudgetExceeded
 from macr.investigation.scope import open_directory, read_safe, validate_workspace_path
 from macr.investigation.validation import ContractError
+from macr.providers.base import validate_billing_evidence
 
 SCHEMA = "macr.deepseek.policy.batch.v1"
 
@@ -37,6 +39,7 @@ CORE_IMPLEMENTATION_FILES = (
     "src/macr/providers/base.py",
     "src/macr/providers/deepseek.py",
     "src/macr/providers/failure_evidence.py",
+    "src/macr/providers/response_normalization.py",
     "src/macr/investigation/scope.py",
     "src/macr/investigation/source_text.py",
     "src/macr/investigation/validation.py",
@@ -439,6 +442,25 @@ def _check_drift(batch: dict) -> None:
                  "batch_manifest_drift")
 
 
+def _request_billing_usage(response: dict, reservation: dict, *, model: str) -> dict | None:
+    """Accept only canonical billing evidence bound to this reserved request."""
+    _require(type(response) is dict and type(reservation) is dict,
+             "batch_billing_evidence_invalid")
+    if "billing_evidence" not in response:
+        return None
+    try:
+        billing = validate_billing_evidence(response["billing_evidence"])
+        _require(response.get("billing_evidence_rejected") is not True and
+                 type(reservation.get("reserved_output_tokens")) is int and
+                 type(model) is str and
+                 billing["request_sha256"] == reservation.get("request_sha256") and
+                 billing["max_output_tokens"] == reservation.get("reserved_output_tokens") and
+                 billing["model"] == model, "batch_billing_evidence_invalid")
+    except (ValueError, TypeError, KeyError):
+        raise PolicyBatchError("batch_billing_evidence_invalid") from None
+    return billing["raw_usage"]
+
+
 def _inspect_result(batch: dict, ticket: dict) -> dict:
     """Derive one cell outcome from the runner's immutable local evidence files."""
     try:
@@ -458,6 +480,8 @@ def _inspect_result(batch: dict, ticket: dict) -> dict:
                        "arm": ticket["arm"], "state": "claimed_before_first_dispatch"},
              "batch_result_unresolved")
     status = result.get("status")
+    billing_version = result.get("billing_contract_version")
+    _require(billing_version in (None, BILLING_CONTRACT_VERSION), "batch_result_unresolved")
     success = status in {"semantic_pending", "ask_user_terminated",
                          "verification_rejected"}
     _require(success or status in {"failed", "remote_outcome_unknown",
@@ -485,6 +509,7 @@ def _inspect_result(batch: dict, ticket: dict) -> dict:
     _require(names == expected_names, "batch_result_unresolved")
     models, fingerprints, receipt_hashes = [], [], []
     all_completed = True
+    all_billing_known = billing_version == BILLING_CONTRACT_VERSION and count > 0
     for decision, entry in enumerate(requests, 1):
         _require(type(entry) is dict and entry.get("decision") == decision and
                  type(entry.get("request")) is dict, "batch_result_unresolved")
@@ -515,6 +540,28 @@ def _inspect_result(batch: dict, ticket: dict) -> dict:
                  type(outcome.get("response_evidence_complete")) is bool,
                  "batch_result_unresolved")
         receipt_hashes.append(sha256(raw_response).hexdigest())
+        if billing_version == BILLING_CONTRACT_VERSION:
+            _require(type(reservation.get("reserved_output_tokens")) is int and
+                     reservation["reserved_output_tokens"] == entry["request"].get("max_tokens") and
+                     entry["request"].get("model") == ticket["model_id"],
+                     "batch_result_unresolved")
+            usage = _request_billing_usage(response, reservation, model=ticket["model_id"])
+            if (usage is None and response.get("state") == "received"
+                    and response.get("model") == ticket["model_id"]):
+                try:
+                    usage = validate_billing_evidence({"schema": BILLING_CONTRACT_VERSION,
+                        "provider": "deepseek", "model": response.get("model"),
+                        "request_sha256": reservation["request_sha256"],
+                        "max_output_tokens": reservation["reserved_output_tokens"],
+                        "raw_usage": response.get("raw_usage"),
+                        "latency_ms": response.get("latency_ms")})["raw_usage"]
+                except ValueError:
+                    usage = None
+            known = (usage is not None and response.get("billing_evidence_rejected") is not True
+                     and outcome.get("usage") == {"input_tokens": usage["prompt_tokens"],
+                                                 "output_tokens": usage["completion_tokens"]}
+                     and outcome.get("state") in {"completed", "failed_known_usage"})
+            all_billing_known = all_billing_known and known
         if response.get("state") == "received":
             models.append(response.get("model"))
             fingerprints.append(response.get("system_fingerprint"))
@@ -532,6 +579,7 @@ def _inspect_result(batch: dict, ticket: dict) -> dict:
     return {"status": status, "model": models[0] if models else None,
             "fingerprint": fingerprints[0] if fingerprints else None,
             "identity_bad": identity_bad, "all_completed": all_completed,
+            "all_billing_known": all_billing_known,
             "request_count": count, "result_sha256": sha256(raw_result).hexdigest(),
             "response_receipts": receipt_hashes}
 
@@ -542,6 +590,8 @@ def _state_from_evidence(evidence: dict, pinned_fingerprint: str | None) -> str:
         return "batch_halted_model_drift"
     if not evidence["all_completed"] or evidence["status"] not in {
             "semantic_pending", "ask_user_terminated", "verification_rejected"}:
+        if evidence.get("all_billing_known"):
+            return "batch_halted_contract"
         return "batch_halted_unknown"
     return "completed"
 
@@ -585,6 +635,7 @@ def _registry(root: Path, batch: dict) -> tuple[dict, dict]:
                      outcome["schema"] == SCHEMA + ".outcome" and
                      outcome["cell_id"] == cell_id and
                      outcome["state"] in {"completed", "batch_halted_unknown",
+                                          "batch_halted_contract",
                                           "batch_halted_model_drift"} and
                      type(outcome["request_count"]) is int and
                      0 <= outcome["request_count"] <= ARM_REQUESTS[cell["arm"]] and

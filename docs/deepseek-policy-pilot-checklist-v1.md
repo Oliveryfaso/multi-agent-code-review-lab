@@ -1,6 +1,6 @@
 # DeepSeek live-run checklist
 
-This is a review checklist, not authorization to run. The historical pilots remain stopped: the unknown request must not be retried, its $0.33 reservation must not be released, and frozen results must not be rewritten. Continuing requires a separately confirmed recovery plan for unattempted cells; a new name or directory alone cannot enable it.
+This is a review checklist, not authorization to run. The historical pilots and recovery remain stopped: neither unknown request may be retried, the two reservations totaling $0.66 remain held, and frozen results must not be rewritten. The one-time recovery confirmation has been consumed. A new adapter, name or directory cannot enable another paid run.
 
 ## Scope to approve and freeze
 
@@ -52,7 +52,7 @@ The historical authorization was **84 requests and $3 in total**. Those same cum
 
 The historical $0.33 reservation assumed the frozen official context/output contract and peak prices. It and the $3 local threshold are conservative local controls, not a supplier-account hard cap or a guarantee that every planned cell can run. Missing or inconsistent usage, timeout, interruption or unknown outcome retains the reservation and halts the batch. Consult the [current official pricing](https://api-docs.deepseek.com/quick_start/pricing/); do not turn a character/token estimate into a claimed hard limit.
 
-The historical unresolved state is **5 total requests, $0.004719 locally accrued and $0.33 still reserved**. The provider's actual charges have not been reconciled. An approved recovery carries all three values forward: the unknown reservation remains separately visible and occupied for this authorization, rather than becoming a claimed bill or a settled charge. Before any new reservation, $0.334719 is therefore already occupied and at most $2.665281 remains available.
+Before the approved recovery, the historical state was five requests, $0.004719 locally accrued and $0.33 still reserved. The recovery carried those totals and then stopped after one additional unknown response. Current totals are **6 requests, $0.004719 known accrual and $0.66 reserved**; supplier charges remain unreconciled. These reservations occupy the allowance without becoming claimed bills or settled charges. Updating response parsing does not release them.
 
 ## Explicit retained-unknown recovery
 
@@ -60,7 +60,7 @@ Recovery defaults to denied. After the implementation passes offline tests and i
 
 The frozen recovery plan and one-time confirmation bind the predecessor evidence, cumulative request count and occupied funds, the new batch's manifests, prompt and implementation digests, model and source scope, and its unique output directory. A separate durable recovery lock permits one target batch. A copied directory, reused confirmation or changed plan cannot reset the allowance; a partially completed preparation remains locked rather than silently starting over. The original successor lock, registries, unknown receipts and stopped states remain unchanged.
 
-Eligibility is derived from logical `(task, repeat, arm)` identities across both historical pilots, not prompt-dependent cell IDs. All previously claimed cells are excluded, including failed or unknown cells. The current eligible subset has **45 cells**, with at most **78 new requests**: 11 A, 12 B, 11 C at two requests each and 11 D at three each. Each receives a new execution identity. Together with the previous five requests, this plan can use at most 83 requests; the unused request allowance does not authorize replay. A normal full-batch launch with a cell limit is not a substitute for this subset plan.
+Eligibility is derived from logical `(task, repeat, arm)` identities across both historical pilots, not prompt-dependent cell IDs. All previously claimed cells are excluded, including failed or unknown cells. The approved subset had **45 cells**, with at most **78 new requests**: 11 A, 12 B, 11 C at two requests each and 11 D at three each. Each received a new execution identity. It then stopped after its first request, leaving 44 unattempted cells. The one-time confirmation does not permit another recovery or replay. A normal full-batch launch with a cell limit is not a substitute for a reviewed subset plan.
 
 Every dispatch rechecks the bound evidence and cumulative budget before reserving funds. The $0.33 historical hold is never settled or released by a new response. New missing usage, timeout or unknown outcome still stops the recovery batch; this confirmation is not permission to ignore future uncertainty. The local reservation requirement can stop execution before all 45 cells finish, even when the request ceiling has not been reached.
 

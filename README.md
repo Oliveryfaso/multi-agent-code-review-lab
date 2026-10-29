@@ -71,7 +71,7 @@ Local reports contain source/input and must stay private; never expose the workb
 
 ## DeepSeek policy research
 
-A separate research harness compares four bounded diagnostic strategies over twelve author-known synthetic development cases. Two live pilots stopped after five requests in total; the results do not establish diagnostic accuracy or a benefit from tools. Explicitly approved recovery can select only unattempted cells while retaining the unknown cost reservation and the original cumulative limits. This does not complete the stopped pilots or establish a tool benefit. See the [experiment protocol](docs/deepseek-policy-experiment-v1.md), [aggregate results and limits](docs/deepseek-policy-results.md), and [live-run checklist](docs/deepseek-policy-pilot-checklist-v1.md).
+A separate research harness compares four bounded diagnostic strategies over twelve author-known synthetic development cases. The live pilots and recovery attempt stopped after six requests in total; the results do not establish diagnostic accuracy or a benefit from tools. Explicitly approved recovery retains unknown cost reservations and the original cumulative limits. Response compatibility and independently validated billing evidence do not complete or rescore stopped runs. See the [experiment protocol](docs/deepseek-policy-experiment-v1.md), [aggregate results and limits](docs/deepseek-policy-results.md), [provider contract](docs/deepseek-provider-compatibility.md), and [live-run checklist](docs/deepseek-policy-pilot-checklist-v1.md).
 
 ## Documentation
 
@@ -81,5 +81,7 @@ A separate research harness compares four bounded diagnostic strategies over twe
 - [Architecture assessment](docs/architecture-assessment.md), [documentation maintenance](docs/documentation-maintenance.md)
 - [Bounded regression commands and CI](docs/offline-ci.md), [workflow](.github/workflows/offline-core.yml)
 - [Security notes for the separate legacy viewer](SECURITY.md)
+
+A pinned source snapshot of this project is included in XERJ Corpus Hub, with attribution to [Oliveryfaso](https://hub.xerj.org/contributors/Oliveryfaso).
 
 MIT licensed; see [LICENSE](LICENSE).

@@ -187,6 +187,79 @@ class PolicyBatchTests(unittest.TestCase):
             record_policy_cell(self.control, ticket)
         self.assertEqual(duplicate.exception.code, "batch_outcome_already_recorded")
 
+    def test_billing_known_contract_failure_halts_without_semantic_success(self):
+        batch = self.prepare()
+        first, second = batch["cells"][:2]
+        ticket = self.claim(first)
+        invalid = reply("invalid role")
+        invalid["choices"][0]["message"]["role"] = "tool"
+        result = self.run_ticket(ticket, responses=[invalid])
+        self.assertIsNone(result["answer"])
+        self.assertEqual(result["tool_reads"], 0)
+        outcome = record_policy_cell(self.control, ticket)
+        self.assertEqual((outcome["state"], outcome["status"]),
+                         ("batch_halted_contract", "failed"))
+        with self.assertRaises(PolicyBatchError) as halted:
+            self.claim(second)
+        self.assertEqual(halted.exception.code, "batch_halted")
+
+    def test_received_incomplete_usage_is_known_but_failure_still_halts(self):
+        batch = self.prepare()
+        ticket = self.claim(batch["cells"][0])
+        incomplete = reply("partial")
+        incomplete["choices"][0]["finish_reason"] = "length"
+        self.run_ticket(ticket, responses=[incomplete])
+        self.assertEqual(record_policy_cell(self.control, ticket)["state"],
+                         "batch_halted_contract")
+
+    def test_absent_billing_version_preserves_historical_failure_state(self):
+        batch = self.prepare()
+        ticket = self.claim(batch["cells"][0])
+        invalid = reply("invalid role")
+        invalid["choices"][0]["message"]["role"] = "tool"
+        self.run_ticket(ticket, responses=[invalid])
+        path = Path(ticket["out"]) / "result.json"
+        legacy = json.loads(path.read_text())
+        legacy.pop("billing_contract_version", None)
+        path.write_text(json.dumps(legacy))
+        self.assertEqual(record_policy_cell(self.control, ticket)["state"],
+                         "batch_halted_unknown")
+
+    def test_request_billing_helper_rejects_mismatched_or_malformed_proof(self):
+        from macr.evals import deepseek_policy_batch as batch_module
+        self.assertTrue(callable(getattr(batch_module, "_request_billing_usage", None)))
+        reservation = {"request_sha256": "a" * 64, "reserved_output_tokens": 2000}
+        billing = {"schema": "macr.provider.billing.v1", "provider": "deepseek",
+            "model": "deepseek-flash", "request_sha256": "a" * 64,
+            "max_output_tokens": 2000, "latency_ms": 1,
+            "raw_usage": {"prompt_tokens": 12, "completion_tokens": 8}}
+        response = {"state": "unknown", "billing_evidence": billing}
+        self.assertEqual(batch_module._request_billing_usage(response, reservation,
+            model="deepseek-flash"), {"prompt_tokens": 12, "completion_tokens": 8})
+        for field, value in (("request_sha256", "b" * 64), ("max_output_tokens", 1999),
+                             ("model", "deepseek-other"), ("raw_usage", {})):
+            with self.subTest(field=field):
+                bad = dict(billing, **{field: value})
+                with self.assertRaises(PolicyBatchError) as rejected:
+                    batch_module._request_billing_usage({"billing_evidence": bad}, reservation,
+                        model="deepseek-flash")
+                self.assertEqual(rejected.exception.code, "batch_billing_evidence_invalid")
+
+    def test_billing_helper_rejects_ambiguous_rejected_proof_and_boolean_reservation_cap(self):
+        from macr.evals.deepseek_policy_batch import _request_billing_usage
+        billing = {"schema": "macr.provider.billing.v1", "provider": "deepseek",
+            "model": "deepseek-flash", "request_sha256": "a" * 64,
+            "max_output_tokens": 1, "latency_ms": 0,
+            "raw_usage": {"prompt_tokens": 1, "completion_tokens": 1}}
+        for response, reservation in (({"billing_evidence": billing}, {
+                "request_sha256": "a" * 64, "reserved_output_tokens": True}),
+                ({"billing_evidence": billing, "billing_evidence_rejected": True}, {
+                "request_sha256": "a" * 64, "reserved_output_tokens": 1})):
+            with self.subTest(response_rejected=response.get("billing_evidence_rejected")):
+                with self.assertRaises(PolicyBatchError) as rejected:
+                    _request_billing_usage(response, reservation, model="deepseek-flash")
+                self.assertEqual(rejected.exception.code, "batch_billing_evidence_invalid")
+
     def test_response_model_or_fingerprint_drift_halts_batch(self):
         for suffix, model, fingerprint in (("missing", "deepseek-flash", None),
                                            ("wrong-model", "deepseek-other", "fp-one")):
@@ -219,6 +292,18 @@ class PolicyBatchTests(unittest.TestCase):
         with self.assertRaises(PolicyBatchError) as halted:
             self.claim(third, control=control)
         self.assertEqual(halted.exception.code, "batch_halted")
+
+    def test_versioned_received_model_mismatch_does_not_establish_billing_usage(self):
+        from macr.evals.deepseek_policy_batch import _inspect_result
+        batch = self.prepare()
+        ticket = self.claim(batch["cells"][0])
+        result = self.run_ticket(ticket, model="deepseek-other")
+        self.assertEqual(result["billing_contract_version"], "macr.provider.billing.v1")
+        self.assertEqual(result["requests"][0]["response"]["state"], "received")
+        self.assertEqual(result["error_code"], "model_identity_drift")
+        evidence = _inspect_result(batch, ticket)
+        self.assertTrue(evidence["identity_bad"])
+        self.assertFalse(evidence["all_billing_known"])
 
     def test_gold_source_manifest_and_implementation_drift_refuse_dispatch_claim(self):
         for suffix in ("gold", "source", "implementation", "manifest"):

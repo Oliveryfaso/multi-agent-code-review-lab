@@ -26,6 +26,67 @@ MODEL = {"model_id": "deepseek-flash", "provider": "deepseek",
 
 
 class LiveEntryTests(unittest.TestCase):
+    def test_model_drift_keeps_reservation_instead_of_pricing_as_approved_model(self):
+        self.prepare()
+        bad = reply(json.dumps(UNKNOWN))
+        bad['model'] = 'different-model'
+        completed, _ = self.run_first(bad)
+        money = spend_state(self.control)
+        self.assertEqual((money['state'], money['spent_usd'], money['reserved_usd']),
+                         ('halted_unknown', '0.000000', '0.330000'))
+        result = completed['result']
+        self.assertEqual((result['status'], result['requests_attempted'], result['tool_reads']),
+                         ('failed', 1, 0))
+        self.assertIsNone(result['answer'])
+        self.assertEqual(result['requests'][0]['error_code'], 'model_identity_drift')
+        self.assertEqual(completed['outcome']['state'], 'batch_halted_model_drift')
+        self.assertEqual(money['request_count'], 1)
+
+    def test_invalid_assistant_settles_bound_usage_but_stops_before_another_key_read(self):
+        self.prepare()
+        bad = reply(json.dumps(UNKNOWN))
+        bad['choices'][0]['message']['role'] = 'invalid-role'
+        completed, _ = self.run_first(bad)
+        money = spend_state(self.control)
+        self.assertEqual((money['state'], money['spent_usd'], money['reserved_usd']),
+                         ('open', '0.000014', '0.000000'))
+        result = completed['result']
+        self.assertEqual((result['status'], result['requests_attempted'], result['tool_reads']),
+                         ('failed', 1, 0))
+        self.assertIsNone(result['answer'])
+        evidence = result['requests'][0]['response']
+        self.assertEqual(evidence['state'], 'unknown')
+        self.assertIsNone(evidence['raw_usage'])
+        self.assertEqual(evidence['billing_evidence']['raw_usage']['prompt_tokens'], 12)
+        self.assertEqual(completed['outcome']['state'], 'batch_halted_contract')
+        next_cell = self.batch['cells'][1]
+        reads = []
+        with self.assertRaises(LiveEntryError):
+            run_next_approved_policy_cell(self.control, dataset_root=DATASET,
+                task_id=next_cell['task_id'], repeat=next_cell['repeat'], arm=next_cell['arm'],
+                out=next_cell['out'], approval=self.approval,
+                key_reader=lambda: reads.append(True) or self.key,
+                scripted_replies=(reply(json.dumps(UNKNOWN)),))
+        self.assertEqual(reads, [])
+        self.assertEqual(spend_state(self.control)['request_count'], 1)
+
+    def test_unbound_billing_evidence_keeps_full_reservation(self):
+        import macr.providers.deepseek as adapter
+        self.prepare()
+        bad = reply(json.dumps(UNKNOWN))
+        bad['choices'][0]['message']['role'] = 'invalid-role'
+        original = adapter._billing_evidence
+        def wrong_binding(*args, **kwargs):
+            return original(*args, **kwargs) | {'request_sha256': 'f' * 64}
+        with patch.object(adapter, '_billing_evidence', side_effect=wrong_binding):
+            completed, _ = self.run_first(bad)
+        money = spend_state(self.control)
+        self.assertEqual((money['state'], money['reserved_usd'], money['spent_usd']),
+                         ('halted_unknown', '0.330000', '0.000000'))
+        evidence = completed['result']['requests'][0]['response']
+        self.assertNotIn('billing_evidence', evidence)
+        self.assertTrue(evidence['billing_evidence_rejected'])
+
     def test_real_dispatch_uses_approved_predecessor_and_refuses_mismatch_before_key(self):
         self.prepare()
         approved = replace(self.approval, predecessor_batch_sha256="a" * 64)
@@ -72,6 +133,7 @@ class LiveEntryTests(unittest.TestCase):
         self.prepare()
         bad = reply(None)
         del bad["choices"][0]["message"]["content"]
+        bad['usage'] = None  # No independent usage proof: the hold must remain.
 
         class Wire:
             response_metadata = {"schema": "macr.provider.failure.v1",
