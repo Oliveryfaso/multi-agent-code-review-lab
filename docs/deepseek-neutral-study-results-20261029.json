@@ -1,0 +1,718 @@
+{
+  "billing": {
+    "basis": "frozen_peak_rates_conservative_local_accrual_not_supplier_invoice",
+    "new_unknown_reserved_usd": "0.000000",
+    "older_reservation_released": false,
+    "separate_older_unknown_reserved_usd": "0.660000",
+    "supplier_invoice_verified": false
+  },
+  "by_strategy": {
+    "adaptive_read_3": {
+      "actual": {
+        "cache_hit_tokens": 28544,
+        "cache_miss_tokens": 8780,
+        "elapsed_seconds": 73.680927,
+        "input_tokens": 37324,
+        "known_accrued_usd": "0.014549",
+        "output_tokens": 9779,
+        "reasoning_tokens": 7581,
+        "requests": 18,
+        "requests_with_unknown_usage": 0,
+        "standard_full_miss_usd": "0.022939",
+        "timing_seconds": {
+          "preparation": 0.055191000000000004,
+          "provider": 73.458412,
+          "tool": 0.051396
+        },
+        "tool_reads": 10,
+        "unknown_reserved_usd": "0.000000"
+      },
+      "counts": {
+        "contract_failed": 1,
+        "failed": 1,
+        "not_attempted": 0,
+        "review_pending": 0,
+        "reviewed": 7,
+        "unknown": 0
+      },
+      "metrics": {
+        "arm_evidence_gap": {
+          "denominator": 9,
+          "numerator": 0,
+          "state": "final"
+        },
+        "complete_all": {
+          "denominator": 9,
+          "numerator": 5,
+          "state": "final"
+        },
+        "complete_solvable": {
+          "denominator": 6,
+          "numerator": 5,
+          "state": "final"
+        },
+        "conditional_reviewed_disposition": {
+          "denominator": 7,
+          "numerator": 5,
+          "state": "final"
+        },
+        "contract_failed": {
+          "denominator": 9,
+          "numerator": 1,
+          "state": "final"
+        },
+        "disposition_all": {
+          "denominator": 9,
+          "numerator": 5,
+          "state": "final"
+        },
+        "false_positive": {
+          "denominator": 3,
+          "numerator": 0,
+          "state": "final"
+        },
+        "false_release": {
+          "denominator": 3,
+          "numerator": 0,
+          "state": "final"
+        },
+        "necessary_abstention": {
+          "denominator": 3,
+          "numerator": 0,
+          "state": "final"
+        },
+        "partial": {
+          "denominator": 9,
+          "numerator": 2,
+          "state": "final"
+        },
+        "unknown_or_not_attempted": {
+          "denominator": 9,
+          "numerator": 0,
+          "state": "final"
+        },
+        "unnecessary_abstention": {
+          "denominator": 6,
+          "numerator": 0,
+          "state": "final"
+        }
+      },
+      "planned_cells": 9
+    },
+    "direct_full_3": {
+      "actual": {
+        "cache_hit_tokens": 16384,
+        "cache_miss_tokens": 4993,
+        "elapsed_seconds": 151.232172,
+        "input_tokens": 21377,
+        "known_accrued_usd": "0.028423",
+        "output_tokens": 22349,
+        "reasoning_tokens": 20043,
+        "requests": 20,
+        "requests_with_unknown_usage": 0,
+        "standard_full_miss_usd": "0.033240",
+        "timing_seconds": {
+          "preparation": 0.057514,
+          "provider": 151.050799,
+          "tool": 0.0
+        },
+        "tool_reads": 0,
+        "unknown_reserved_usd": "0.000000"
+      },
+      "counts": {
+        "contract_failed": 5,
+        "failed": 0,
+        "not_attempted": 0,
+        "review_pending": 0,
+        "reviewed": 4,
+        "unknown": 0
+      },
+      "metrics": {
+        "arm_evidence_gap": {
+          "denominator": 9,
+          "numerator": 0,
+          "state": "final"
+        },
+        "complete_all": {
+          "denominator": 9,
+          "numerator": 1,
+          "state": "final"
+        },
+        "complete_solvable": {
+          "denominator": 6,
+          "numerator": 1,
+          "state": "final"
+        },
+        "conditional_reviewed_disposition": {
+          "denominator": 4,
+          "numerator": 1,
+          "state": "final"
+        },
+        "contract_failed": {
+          "denominator": 9,
+          "numerator": 5,
+          "state": "final"
+        },
+        "disposition_all": {
+          "denominator": 9,
+          "numerator": 1,
+          "state": "final"
+        },
+        "false_positive": {
+          "denominator": 3,
+          "numerator": 0,
+          "state": "final"
+        },
+        "false_release": {
+          "denominator": 3,
+          "numerator": 0,
+          "state": "final"
+        },
+        "necessary_abstention": {
+          "denominator": 3,
+          "numerator": 0,
+          "state": "final"
+        },
+        "partial": {
+          "denominator": 9,
+          "numerator": 3,
+          "state": "final"
+        },
+        "unknown_or_not_attempted": {
+          "denominator": 9,
+          "numerator": 0,
+          "state": "final"
+        },
+        "unnecessary_abstention": {
+          "denominator": 6,
+          "numerator": 0,
+          "state": "final"
+        }
+      },
+      "planned_cells": 9
+    },
+    "direct_initial_3": {
+      "actual": {
+        "cache_hit_tokens": 20352,
+        "cache_miss_tokens": 6999,
+        "elapsed_seconds": 135.273794,
+        "input_tokens": 27351,
+        "known_accrued_usd": "0.026114",
+        "output_tokens": 19899,
+        "reasoning_tokens": 16813,
+        "requests": 27,
+        "requests_with_unknown_usage": 0,
+        "standard_full_miss_usd": "0.032099",
+        "timing_seconds": {
+          "preparation": 0.042461,
+          "provider": 135.06243,
+          "tool": 0.0
+        },
+        "tool_reads": 0,
+        "unknown_reserved_usd": "0.000000"
+      },
+      "counts": {
+        "contract_failed": 0,
+        "failed": 0,
+        "not_attempted": 0,
+        "review_pending": 0,
+        "reviewed": 9,
+        "unknown": 0
+      },
+      "metrics": {
+        "arm_evidence_gap": {
+          "denominator": 9,
+          "numerator": 5,
+          "state": "final"
+        },
+        "complete_all": {
+          "denominator": 9,
+          "numerator": 1,
+          "state": "final"
+        },
+        "complete_solvable": {
+          "denominator": 6,
+          "numerator": 1,
+          "state": "final"
+        },
+        "conditional_reviewed_disposition": {
+          "denominator": 9,
+          "numerator": 1,
+          "state": "final"
+        },
+        "contract_failed": {
+          "denominator": 9,
+          "numerator": 0,
+          "state": "final"
+        },
+        "disposition_all": {
+          "denominator": 9,
+          "numerator": 1,
+          "state": "final"
+        },
+        "false_positive": {
+          "denominator": 3,
+          "numerator": 0,
+          "state": "final"
+        },
+        "false_release": {
+          "denominator": 3,
+          "numerator": 0,
+          "state": "final"
+        },
+        "necessary_abstention": {
+          "denominator": 3,
+          "numerator": 0,
+          "state": "final"
+        },
+        "partial": {
+          "denominator": 9,
+          "numerator": 4,
+          "state": "final"
+        },
+        "unknown_or_not_attempted": {
+          "denominator": 9,
+          "numerator": 0,
+          "state": "final"
+        },
+        "unnecessary_abstention": {
+          "denominator": 6,
+          "numerator": 4,
+          "state": "final"
+        }
+      },
+      "planned_cells": 9
+    },
+    "fixed_read_3": {
+      "actual": {
+        "cache_hit_tokens": 18688,
+        "cache_miss_tokens": 8272,
+        "elapsed_seconds": 182.537389,
+        "input_tokens": 26960,
+        "known_accrued_usd": "0.035377",
+        "output_tokens": 27308,
+        "reasoning_tokens": 24463,
+        "requests": 25,
+        "requests_with_unknown_usage": 0,
+        "standard_full_miss_usd": "0.040869",
+        "timing_seconds": {
+          "preparation": 0.086719,
+          "provider": 182.291267,
+          "tool": 0.011087
+        },
+        "tool_reads": 9,
+        "unknown_reserved_usd": "0.000000"
+      },
+      "counts": {
+        "contract_failed": 4,
+        "failed": 0,
+        "not_attempted": 0,
+        "review_pending": 0,
+        "reviewed": 5,
+        "unknown": 0
+      },
+      "metrics": {
+        "arm_evidence_gap": {
+          "denominator": 9,
+          "numerator": 0,
+          "state": "final"
+        },
+        "complete_all": {
+          "denominator": 9,
+          "numerator": 1,
+          "state": "final"
+        },
+        "complete_solvable": {
+          "denominator": 6,
+          "numerator": 1,
+          "state": "final"
+        },
+        "conditional_reviewed_disposition": {
+          "denominator": 5,
+          "numerator": 2,
+          "state": "final"
+        },
+        "contract_failed": {
+          "denominator": 9,
+          "numerator": 4,
+          "state": "final"
+        },
+        "disposition_all": {
+          "denominator": 9,
+          "numerator": 2,
+          "state": "final"
+        },
+        "false_positive": {
+          "denominator": 3,
+          "numerator": 0,
+          "state": "final"
+        },
+        "false_release": {
+          "denominator": 3,
+          "numerator": 0,
+          "state": "final"
+        },
+        "necessary_abstention": {
+          "denominator": 3,
+          "numerator": 1,
+          "state": "final"
+        },
+        "partial": {
+          "denominator": 9,
+          "numerator": 2,
+          "state": "final"
+        },
+        "unknown_or_not_attempted": {
+          "denominator": 9,
+          "numerator": 0,
+          "state": "final"
+        },
+        "unnecessary_abstention": {
+          "denominator": 6,
+          "numerator": 1,
+          "state": "final"
+        }
+      },
+      "planned_cells": 9
+    }
+  },
+  "ceilings": {
+    "output_tokens_per_cell": 6000,
+    "output_tokens_per_request": 2000,
+    "requests_per_cell": 3,
+    "same_ceiling_is_not_same_spend": true,
+    "study_requests": 108,
+    "study_usd": "2.000000",
+    "tool_reads_per_cell": 4
+  },
+  "date": "2026-10-29",
+  "failure_codes": {
+    "eval_contract_invalid": 2,
+    "model_output_incomplete": 7,
+    "system_fingerprint_unknown": 1,
+    "third_decision_must_terminate": 1
+  },
+  "failure_evidence": {
+    "historical_identity": {
+      "count": 1,
+      "fingerprint_value_reconstructable": false,
+      "usage_known": true
+    },
+    "output_truncation": {
+      "by_strategy": {
+        "direct_full_3": 4,
+        "fixed_read_3": 3
+      },
+      "count": 7,
+      "finish_reason_length": 7,
+      "output_token_ceiling": 2000,
+      "output_tokens_each": 2000,
+      "reasoning_2000_content_empty": 6,
+      "reasoning_and_assistant_envelopes_retained": true,
+      "remaining_response": {
+        "assistant_content_characters": 298,
+        "reasoning_tokens": 1922
+      },
+      "unrecorded_continuation_inferred": false,
+      "usage_settled": true
+    },
+    "result_contract": {
+      "count": 2,
+      "frozen_validator_reproduced": true,
+      "outputs_trimmed_or_regraded": false,
+      "violations": [
+        {
+          "actual_characters": 233,
+          "decision": 3,
+          "field": "unknowns_item",
+          "maximum_characters": 200,
+          "strategy": "direct_full_3"
+        },
+        {
+          "actual_characters": 321,
+          "decision": 3,
+          "field": "when",
+          "maximum_characters": 300,
+          "strategy": "fixed_read_3"
+        }
+      ]
+    },
+    "termination_contract": {
+      "advertised_tools": [
+        "ask_user",
+        "finish",
+        "read_caller",
+        "read_symbol",
+        "search"
+      ],
+      "count": 1,
+      "decision": 3,
+      "explicit_third_decision_terminal_instruction_present": true,
+      "forbidden_third_read_executed": false,
+      "requested_tool": "search",
+      "required_action": [
+        "finish",
+        "ask_user"
+      ]
+    }
+  },
+  "followups_proposed_not_implemented": [
+    "Calibrate one shared output budget using known development fixtures; recalculate fee reservations and freeze/approve any future paid protocol.",
+    "Consider terminal-only advertised tools on decision three while retaining local validation; verify serialized requests using fake transport before a future freeze."
+  ],
+  "identity": {
+    "all_requests_fingerprint_verified": false,
+    "historical_gap_accepted": true,
+    "historical_validated_requests": 6,
+    "new_segment_verified_requests": 83,
+    "unverifiable_request": 7,
+    "whole_run_uninterrupted_identity_established": false
+  },
+  "limits": [
+    "Nine synthetic tasks from three project units; descriptive only, without significance or external-project claims.",
+    "Two implementation/identity segments and the historical seventh-response fingerprint gap prevent whole-run uninterrupted verified identity.",
+    "Pooled pair totals do not establish same-segment-only or pure reasoning/tool-function gains.",
+    "Known contract failures receive zero disposition credit; the identity failure makes affected pairs not comparable.",
+    "Ceilings match; actual calls, evidence, output, tool reads, costs and timings differ.",
+    "Review blindness is partial; evidence quantity and answer form can reveal strategy, and the custodian held frozen gold and delivery-level totals.",
+    "Reasoning tokens are included in output tokens; summed local elapsed/provider times are not supplier server latency or experiment wall time.",
+    "No raw source, answer, reasoning, per-cell score, category map, private path or credential is exported."
+  ],
+  "model": {
+    "model_id": "deepseek-flash",
+    "provider": "deepseek",
+    "reasoning_effort": "high",
+    "thinking": true
+  },
+  "overall": {
+    "actual": {
+      "cache_hit_tokens": 83968,
+      "cache_miss_tokens": 29044,
+      "elapsed_seconds": 542.724282,
+      "input_tokens": 113012,
+      "known_accrued_usd": "0.104463",
+      "output_tokens": 79335,
+      "reasoning_tokens": 68900,
+      "requests": 90,
+      "requests_with_unknown_usage": 0,
+      "standard_full_miss_usd": "0.129147",
+      "timing_seconds": {
+        "preparation": 0.24188500000000002,
+        "provider": 541.8629080000001,
+        "tool": 0.062483
+      },
+      "tool_reads": 19,
+      "unknown_reserved_usd": "0.000000"
+    },
+    "counts": {
+      "contract_failed": 10,
+      "failed": 1,
+      "not_attempted": 0,
+      "review_pending": 0,
+      "reviewed": 25,
+      "unknown": 0
+    },
+    "metrics": {
+      "arm_evidence_gap": {
+        "denominator": 36,
+        "numerator": 5,
+        "state": "final"
+      },
+      "complete_all": {
+        "denominator": 36,
+        "numerator": 8,
+        "state": "final"
+      },
+      "complete_solvable": {
+        "denominator": 24,
+        "numerator": 8,
+        "state": "final"
+      },
+      "conditional_reviewed_disposition": {
+        "denominator": 25,
+        "numerator": 9,
+        "state": "final"
+      },
+      "contract_failed": {
+        "denominator": 36,
+        "numerator": 10,
+        "state": "final"
+      },
+      "disposition_all": {
+        "denominator": 36,
+        "numerator": 9,
+        "state": "final"
+      },
+      "false_positive": {
+        "denominator": 12,
+        "numerator": 0,
+        "state": "final"
+      },
+      "false_release": {
+        "denominator": 12,
+        "numerator": 0,
+        "state": "final"
+      },
+      "necessary_abstention": {
+        "denominator": 12,
+        "numerator": 1,
+        "state": "final"
+      },
+      "partial": {
+        "denominator": 36,
+        "numerator": 11,
+        "state": "final"
+      },
+      "unknown_or_not_attempted": {
+        "denominator": 36,
+        "numerator": 0,
+        "state": "final"
+      },
+      "unnecessary_abstention": {
+        "denominator": 24,
+        "numerator": 5,
+        "state": "final"
+      }
+    },
+    "planned_cells": 36
+  },
+  "paired": {
+    "adaptive_vs_fixed": {
+      "all_tasks": {
+        "independently_reviewed_pairs": 4,
+        "known_contract_failure_pairs": 4,
+        "not_comparable_pairs": 1,
+        "outcomes": {
+          "loss": 1,
+          "not_comparable": 1,
+          "tie": 3,
+          "win": 4
+        },
+        "planned_pairs": 9
+      },
+      "cost_delta_adaptive_minus_baseline_usd": "-0.020828",
+      "elapsed_seconds_delta_sum": -108.856462,
+      "external_gap_tasks": {
+        "independently_reviewed_pairs": 0,
+        "known_contract_failure_pairs": 2,
+        "not_comparable_pairs": 1,
+        "outcomes": {
+          "loss": 1,
+          "not_comparable": 1,
+          "tie": 1,
+          "win": 0
+        },
+        "planned_pairs": 3
+      },
+      "requests_delta": -7,
+      "solvable_tasks": {
+        "independently_reviewed_pairs": 4,
+        "known_contract_failure_pairs": 2,
+        "not_comparable_pairs": 0,
+        "outcomes": {
+          "loss": 0,
+          "not_comparable": 0,
+          "tie": 2,
+          "win": 4
+        },
+        "planned_pairs": 6
+      }
+    },
+    "adaptive_vs_initial": {
+      "all_tasks": {
+        "independently_reviewed_pairs": 7,
+        "known_contract_failure_pairs": 1,
+        "not_comparable_pairs": 1,
+        "outcomes": {
+          "loss": 0,
+          "not_comparable": 1,
+          "tie": 4,
+          "win": 4
+        },
+        "planned_pairs": 9
+      },
+      "cost_delta_adaptive_minus_baseline_usd": "-0.011565",
+      "elapsed_seconds_delta_sum": -61.592867,
+      "external_gap_tasks": {
+        "independently_reviewed_pairs": 1,
+        "known_contract_failure_pairs": 1,
+        "not_comparable_pairs": 1,
+        "outcomes": {
+          "loss": 0,
+          "not_comparable": 1,
+          "tie": 2,
+          "win": 0
+        },
+        "planned_pairs": 3
+      },
+      "requests_delta": -9,
+      "solvable_tasks": {
+        "independently_reviewed_pairs": 6,
+        "known_contract_failure_pairs": 0,
+        "not_comparable_pairs": 0,
+        "outcomes": {
+          "loss": 0,
+          "not_comparable": 0,
+          "tie": 2,
+          "win": 4
+        },
+        "planned_pairs": 6
+      }
+    }
+  },
+  "provenance": {
+    "completion_sha256": "6c72b6d518fc3be2142ff91e0dacffdcc7cdb6c6e630816722e970f505440a28",
+    "native_reviews_only_import_audit_sha256": "5a6ec66852a73549cb10029172d0b93a3684e923f08690227405801025689ffe",
+    "original_terminal_files_sha256": "5dbf600125df7c6f319a2cb073d837fd08a23ffe6328ffa91838b5af15cfc9bb",
+    "second_terminal_files_sha256": "c5fd7d1dd94f3b6d5c077a155209b8ece7a23b9cc530574a27d684dcae8391fd",
+    "semantic_metrics_sha256": "85048163cc322507bc2f9f2a643e3c74cafb90e03262a751a8731aa0d6df28e2"
+  },
+  "schema": "debugger.neutral-study.aggregate-results.v1",
+  "scope": {
+    "blind_review_is_complete_double_blind": false,
+    "contract_failed_cells": 10,
+    "external_evidence_tasks_per_arm": 3,
+    "identity_failed_cells": 1,
+    "planned_cells": 36,
+    "project_units": 3,
+    "reviewed_outputs": 25,
+    "solvable_tasks_per_arm": 6,
+    "synthetic_tasks": 9,
+    "unattempted_cells": 0
+  },
+  "scoring": {
+    "credit_downgrades": 1,
+    "credit_upgrades": 0,
+    "executor_imported_bound_locked_reviews": 25,
+    "executor_native_semantic_state_without_private_merge": "pending",
+    "false_positive_definition": "Definite supported_defect verdict on a custodian-qualified healthy task.",
+    "false_release_definition": "Definite no_defect_supported verdict on a custodian-qualified defect task.",
+    "first_answers_are_additional_samples": false,
+    "first_answers_assessed": 13,
+    "first_answers_observed": 15,
+    "identical_prior_result_counted_once": true,
+    "mutually_exclusive_reviewed_categories": {
+      "appropriate_necessary_abstention": 1,
+      "complete_solution": 8,
+      "incorrect": 8,
+      "partial": 8
+    },
+    "quality_metrics_source": "frozen_custodian_aggregate_private_adjudication_not_read_or_replayed",
+    "resolved_semantic_disputes": 3,
+    "unresolved_disputes": 0,
+    "zero_sign_errors_does_not_mean_all_correct": true
+  },
+  "segments": [
+    {
+      "implementation_commit": "074dea2aa63daf0f9dde72cc8f400a45a0591f5d",
+      "processed_cells": 3,
+      "requests": 7
+    },
+    {
+      "implementation_commit": "3632ceb48b5fda1537c2c6e37afd003f0117c71b",
+      "processed_cells": 33,
+      "requests": 83
+    }
+  ],
+  "status": "custodian_final_aggregate_with_strict_reviews_only_native_import"
+}

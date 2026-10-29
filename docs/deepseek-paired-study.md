@@ -9,6 +9,11 @@ for live access. A separate [activation candidate](deepseek-study-live-candidate
 requires a new exact-scope approval and explicit enablement; no live
 authorization is included.
 
+A separately approved nine-task execution and frozen custodian review are now
+summarized in the [descriptive results](deepseek-neutral-study-results-20261029.md).
+Those aggregate observations retain all failures and the two-segment identity
+limitation; they do not turn the fixtures below into measured quality evidence.
+
 | Strategy | Evidence and process | Request ceiling |
 |---|---|---:|
 | `direct_initial_3` (A-I) | Initial evidence, allowed-domain self-check, final diagnosis | 3 |
