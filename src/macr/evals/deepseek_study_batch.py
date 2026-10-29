@@ -9,6 +9,7 @@ from macr.evals.deepseek_policy_runner import PolicyRunError, _write_exclusive
 from macr.evals.deepseek_policy_spend import _parse_usd, _usd, _usage_evidence
 from macr.evals.deepseek_study_profile import StudyError, load_study, digest
 from macr.evals.deepseek_study_runner import run_study_cell
+from macr.evals.deepseek_study_generation import get_generation
 from macr.providers.base import validate_billing_evidence, validate_identity_evidence
 
 KNOWN_CONTRACT_ERRORS = _KNOWN_CONTRACT_ERRORS | {
@@ -22,11 +23,14 @@ class _FixtureGate:
         self.rows, self.pending = [], None
         self.halted, self.fingerprint = False, None
         self.cell_id = None
+        self.generation = get_generation(study.get('execution_profile'))
+        self.reservation = self.generation['reservation_micro_usd']
+        self.output_cap = self.generation['max_output_per_request']
 
     def state(self, cell_id=None):
         rows = [row for row in self.rows if cell_id is None or row['cell_id'] == cell_id]
         spent = sum(row.get('charged_micro_usd', 0) for row in rows)
-        held = 330000 * sum(row['state'] != 'settled' for row in rows)
+        held = sum(row['reserved_micro_usd'] for row in rows if row['state'] != 'settled')
         return {'state':'halted_unknown' if self.halted else 'awaiting_outcome' if self.pending else 'open',
             'request_count':len(rows), 'known_accrued_usd':_usd(spent),
             'unknown_held_usd':_usd(held), 'full_miss_sensitivity_usd':_usd(sum(
@@ -42,11 +46,11 @@ class _FixtureGate:
         budget = self.study['budget']
         if len(self.rows) >= budget['max_requests']:
             raise PolicyRunError('study_request_budget_exhausted')
-        occupied = sum(row.get('charged_micro_usd',330000) for row in self.rows)
-        if occupied + 330000 > _parse_usd(budget['max_usd'],code='study_budget_invalid'):
+        occupied = sum(row.get('charged_micro_usd',row['reserved_micro_usd']) for row in self.rows)
+        if occupied + self.reservation > _parse_usd(budget['max_usd'],code='study_budget_invalid'):
             raise PolicyRunError('study_usd_budget_exhausted')
         row = {'number':len(self.rows)+1,'cell_id':self.cell_id,'request_sha256':request_sha256,
-               'reserved_micro_usd':330000,'state':'reserved_unknown','usage':None}
+               'reserved_micro_usd':self.reservation,'state':'reserved_unknown','usage':None}
         _write_exclusive(self.root/'ledger'/f"{row['number']:03d}.reservation.json", row,4096)
         self.rows.append(row)
         self.pending = row
@@ -64,7 +68,7 @@ class _FixtureGate:
                 billing = validate_billing_evidence(error.billing_evidence)
                 if (billing['request_sha256']==request_sha256 and billing['model']=='deepseek-flash'
                         and billing['provider']=='deepseek'
-                        and billing['max_output_tokens']==2000):
+                        and billing['max_output_tokens']==self.output_cap):
                     raw = billing['raw_usage']
             except ValueError:
                 pass
@@ -86,7 +90,7 @@ class _FixtureGate:
             except (AttributeError, ValueError):
                 identity_rejected = True
                 row['identity_evidence_rejected'] = True
-        evidence = _usage_evidence(raw,2000)
+        evidence = _usage_evidence(raw,self.output_cap)
         if evidence is not None:
             cost, usage = evidence
             row.update(state='settled',charged_micro_usd=cost,usage=usage)

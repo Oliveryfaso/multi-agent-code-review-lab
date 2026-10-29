@@ -12,6 +12,7 @@ from pathlib import Path
 from time import monotonic
 
 from macr.evals.deepseek_policy_manifest import PROMPT_VERSION, load_policy_manifest
+from macr.evals.deepseek_study_generation import V2_PROFILE, V2_PROMPT_VERSION, get_generation
 from macr.evals.deepseek_policy_runner import (
     ASK_USER_GAP_SCHEMA, DIAGNOSIS_CRITERIA, DIRECT_INSTRUCTIONS, OUTPUT_SCHEMA,
     READ_TOOLS, TERMINAL_TOOLS, TOOL_INSTRUCTIONS, TOOL_SCHEMAS, PolicyRunError,
@@ -31,6 +32,13 @@ CHECK_INSTRUCTIONS = ('Check the preceding diagnosis against the allowed input d
     'counterexamples. Use only the supplied evidence. Return the diagnosis JSON again.')
 FINAL_INSTRUCTIONS = ('Give the final diagnosis for the full allowed input domain using only the '
     'supplied evidence. Return the diagnosis JSON; do not select between answers after scoring.')
+EXTERNAL_EVIDENCE_CRITERIA = (
+    'Distinguish what the supplied code establishes from decisive facts about the current external situation. '
+    'If compatible external states change the conclusion, do not select an unsupported current outcome. '
+    'Name the missing decisive fact, the smallest evidence needed to distinguish the outcomes, and its causal role. '
+    'Missing authorized source is not automatically a genuine external gap; describe that access limitation accurately. '
+    'A possible failure scenario is not proof of the current outcome; avoid demands for unrelated data. '
+    'Use existing unknowns or gap fields and citations within their schema limits; do not add fields or headings.')
 
 
 def initial_evidence(manifest: dict, tools: StaticEvidenceTools) -> dict:
@@ -83,7 +91,8 @@ def _run_study_cell_core(manifest_dir: Path, *, dataset_root: Path, strategy: st
     if strategy not in STRATEGIES:
         raise PolicyRunError('study_strategy_invalid')
     manifest = load_policy_manifest(manifest_dir, dataset_root=dataset_root)
-    if manifest['prompt_version'] != PROMPT_VERSION:
+    generation = get_generation(V2_PROFILE if manifest['prompt_version']==V2_PROMPT_VERSION else None)
+    if manifest['prompt_version'] != generation['prompt_version']:
         raise PolicyRunError('policy_prompt_version_invalid')
     if provider.model != manifest['model']['model_id']:
         raise PolicyRunError('model_identity_drift')
@@ -95,7 +104,7 @@ def _run_study_cell_core(manifest_dir: Path, *, dataset_root: Path, strategy: st
         raise PolicyRunError('study_model_contract_invalid')
     budget = manifest['budget']
     if (budget['max_total_input_tokens'] != 24000
-            or budget['max_total_output_tokens'] != 6000
+            or budget['max_total_output_tokens'] != generation['max_total_output_tokens']
             or budget['max_wall_seconds'] != 180 or budget['max_tool_reads'] != 4):
         raise PolicyRunError('study_cell_budget_invalid')
     if (sum(row['size_bytes'] for row in manifest['snapshot']['files'].values()) > 12 * 1024
@@ -113,7 +122,7 @@ def _run_study_cell_core(manifest_dir: Path, *, dataset_root: Path, strategy: st
     e0 = initial_evidence(manifest, tools)
     visible = list(e0['source'])
     plan = _fixed_plan(manifest, dataset_root, fixed_plan) if strategy == 'fixed_read_3' else None
-    ledger = _ReservationLedger(budget, 'D')  # Common three-request allocation: 8k/2k.
+    ledger = _ReservationLedger(budget, 'D')  # Three requests; the frozen budget derives each cap.
     timing = {'preparation': 0.0, 'provider': 0.0, 'tool': 0.0}
     result = {'schema': SCHEMA, 'task_id': manifest['task']['id'], 'repeat': manifest['repeat'],
         'manifest_sha256': manifest['manifest_sha256'], 'strategy': strategy,
@@ -126,6 +135,8 @@ def _run_study_cell_core(manifest_dir: Path, *, dataset_root: Path, strategy: st
     messages = [{'role':'system', 'content': DIRECT_INSTRUCTIONS if strategy != 'adaptive_read_3'
         else DIAGNOSIS_CRITERIA + ' ' + TOOL_INSTRUCTIONS + ' This task permits 4 read tools in total.'},
         {'role':'user', 'content':_json_bytes(e0).decode('utf-8')}]
+    if generation['name'] is not None:
+        messages[0]['content'] += ' ' + EXTERNAL_EVIDENCE_CRITERIA
     if strategy == 'direct_full_3':
         additional = tools.source([name for name in sorted(manifest['task']['authorized_files'])
                                    if name not in manifest['task']['initial_evidence_files']])
@@ -173,12 +184,15 @@ def _run_study_cell_core(manifest_dir: Path, *, dataset_root: Path, strategy: st
         row = ledger.reserve()
         decision = row['decision']
         use_tools = strategy == 'adaptive_read_3'
-        request = ConversationRequest(messages=messages, tools=TOOL_SCHEMAS if use_tools else [],
+        declared_tools = TOOL_SCHEMAS if use_tools else []
+        if use_tools and generation['name'] is not None and decision==3:
+            declared_tools = [tool for tool in TOOL_SCHEMAS if tool['function']['name'] in TERMINAL_TOOLS]
+        request = ConversationRequest(messages=messages, tools=declared_tools,
             response_schema=None if use_tools else OUTPUT_SCHEMA,
             max_input_tokens=row['reserved_input_tokens'],
             max_output_tokens=row['reserved_output_tokens'],
             timeout_seconds=min(60.0, remaining), thinking={'type':'enabled'}, reasoning_effort='high',
-            metadata={'prompt_version':PROMPT_VERSION, 'strategy':strategy,
+            metadata={'prompt_version':manifest['prompt_version'], 'strategy':strategy,
                       'task_id':manifest['task']['id']})
         try:
             body = provider.encode_conversation_request(request)
@@ -201,8 +215,8 @@ def _run_study_cell_core(manifest_dir: Path, *, dataset_root: Path, strategy: st
                 raise
         _write_exclusive(root / f'decision-{decision:02d}.reservation.json',
             {'schema':SCHEMA, 'decision':decision, 'state':'reserved_unknown_outcome',
-             'request_sha256':request_hash, 'reserved_input_tokens':8000,
-             'reserved_output_tokens':2000}, 4096)
+             'request_sha256':request_hash, 'reserved_input_tokens':row['reserved_input_tokens'],
+             'reserved_output_tokens':row['reserved_output_tokens']}, 4096)
         wire = json.loads(body)
         _write_exclusive(root / f'decision-{decision:02d}.request.json', wire, budget['max_record_bytes'])
         entry = {'decision':decision, 'request':wire, 'request_sha256':request_hash,

@@ -11,6 +11,7 @@ sys.path.insert(0,str(PROJECT/'src'))
 
 from macr.evals.deepseek_study_profile import StudyError, prepare_study, PACK_SCHEMA, validate_budget
 from macr.evals.deepseek_study_batch import run_study
+from macr.evals.deepseek_study_generation import V2_PROFILE
 from macr.evals.deepseek_policy_runner import _write_exclusive
 from macr.investigation.scope import validate_workspace_path
 from macr.providers.deepseek import DeepSeekProvider
@@ -67,6 +68,8 @@ def main(argv=None):
     parser.add_argument('--out',required=True,type=Path)
     parser.add_argument('--max-requests',type=int,default=108)
     parser.add_argument('--max-usd',default='2.000000',help='Simulated local planning budget only.')
+    parser.add_argument('--profile',choices=[V2_PROFILE],default=None,
+        help='Explicit offline generation/evidence profile; omission preserves the original contract.')
     args=parser.parse_args(argv)
     out=args.out.absolute()
     validate_workspace_path(out,output=True)
@@ -78,7 +81,7 @@ def main(argv=None):
     prepare_study(out/'pack',custodian={'schema':'macr.deepseek.study.custodian.v1',
         'version':'public-fixture-only','gold_sha256':'a'*64,'rubric_sha256':'b'*64,
         'qualification_statement':'Dummy commitment; no real gold or unseen eligibility claimed.'},
-        out=out/'control',project_root=PROJECT,budget=budget)
+        out=out/'control',project_root=PROJECT,budget=budget,execution_profile=args.profile)
     summary=run_study(out/'control',provider_factory=lambda _:DeepSeekProvider(
         model='deepseek-flash',transport=ScriptedTransport()))
     print(json.dumps({'planned_cells':summary['planned_cells'],

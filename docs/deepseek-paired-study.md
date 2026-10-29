@@ -14,6 +14,10 @@ summarized in the [descriptive results](deepseek-neutral-study-results-20261029.
 Those aggregate observations retain all failures and the two-segment identity
 limitation; they do not turn the fixtures below into measured quality evidence.
 
+A separately selected [offline output profile v2](deepseek-study-output-profile-v2.md)
+adds an 8192-token total generation ceiling and terminal/evidence fixtures.
+The default protocol below and frozen results retain their original limits.
+
 | Strategy | Evidence and process | Request ceiling |
 |---|---|---:|
 | `direct_initial_3` (A-I) | Initial evidence, allowed-domain self-check, final diagnosis | 3 |

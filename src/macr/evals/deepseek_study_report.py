@@ -10,6 +10,7 @@ from hashlib import sha256
 import json
 import math
 import re
+from macr.evals.deepseek_study_generation import get_generation
 
 STRATEGIES = ('direct_initial_3', 'fixed_read_3', 'adaptive_read_3', 'direct_full_3')
 FLAGS = frozenset({'full_solution', 'reasonable_abstention', 'partial',
@@ -297,6 +298,7 @@ def build_study_report(study: dict, results: dict, *, reviews: dict | None = Non
     Its task classifications are never inferred from model verdicts or filenames.
     """
     tasks, cells = _study(study, results)
+    generation = get_generation(study.get('execution_profile'))
     qualifications, decisions = _review_inputs(tasks, cells, results,
         {} if reviews is None else reviews, {} if adjudications is None else adjudications)
     rows = []
@@ -368,8 +370,9 @@ def build_study_report(study: dict, results: dict, *, reviews: dict | None = Non
         'first_answer_observations': sum(row['first_answer_observed'] for row in rows),
         'first_answers_are_additional_samples': False,
         'invalid_tasks': [key for key, value in qualifications.items() if not value['valid']],
-        'caps': {'max_requests_per_cell': 3, 'max_output_tokens_per_request': 2000,
-                 'max_output_tokens_per_cell': 6000, 'planned_input_tokens_per_cell': 24000,
+        'caps': {'max_requests_per_cell': 3, 'max_output_tokens_per_request': generation['max_output_per_request'],
+                 'max_output_tokens_per_cell': generation['max_total_output_tokens'],
+                 'planned_input_tokens_per_cell': 24000,
                  'input_tokens_are_planning_limits': True},
         'cells': rows, 'strategies': strategies, 'pairs': pairs, 'pair_counts': pair_counts, 'groups': groups,
         'interpretation': 'Descriptive paired observations from three project units; no significance or generalization claim.'}

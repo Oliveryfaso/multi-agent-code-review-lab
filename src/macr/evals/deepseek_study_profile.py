@@ -12,6 +12,7 @@ from macr.evals.deepseek_policy_manifest import (DEFAULT_BUDGET, PROMPT_VERSION,
     _task, _read, _root, _relative, prepare_policy_manifest, load_policy_manifest)
 from macr.evals.deepseek_policy_runner import _json_bytes, _write_exclusive
 from macr.evals.deepseek_study_plan import build_fixed_plan
+from macr.evals.deepseek_study_generation import V2_PROFILE, get_generation
 from macr.investigation.scope import validate_workspace_path
 
 PACK_SCHEMA = 'macr.deepseek.study.pack.v1'
@@ -33,6 +34,7 @@ IMPLEMENTATION_FILES = (
     'scripts/run_deepseek_study_dryrun.py',
     'src/macr/evals/deepseek_study_live.py', 'scripts/run_deepseek_study_live.py',
     'src/macr/evals/deepseek_study_continuation.py',
+    'src/macr/evals/deepseek_study_generation.py',
 )
 # Trusted product import closure, including package initializers. These hashes
 # freeze existing dependencies; none of these modules execute target source.
@@ -186,12 +188,37 @@ def implementation(project_root):
             for file in sorted(set(IMPLEMENTATION_FILES) | set(IMPORTED_IMPLEMENTATION_FILES))}
 
 
-def prepare_study(pack_root, *, custodian, out, project_root, budget=None, seed=20261029):
+def _execution_settings(profile):
+    try:
+        generation = get_generation(profile)
+    except ValueError:
+        raise StudyError('study_generation_profile_invalid') from None
+    cell_budget = dict(DEFAULT_BUDGET) | {
+        'max_total_output_tokens':generation['max_total_output_tokens']}
+    price = {'checked_date':'2026-10-29', 'status':'planning_only_recheck_before_live',
+        'reservation_micro_usd':generation['reservation_micro_usd'],
+        'input_miss_per_million':'0.30', 'input_hit_per_million':'0.006',
+        'output_per_million':'1.20', 'context_tokens':1000000}
+    if profile is not None:
+        del price['context_tokens']
+        price.update(contract_input_envelope=generation['context_input_envelope'],
+            context_exact_provider_limit_verified=False,
+            minimum_reservation_micro_usd=generation['minimum_reservation_micro_usd'])
+    limits = cell_budget | {'max_requests':3,
+        'max_output_per_request':generation['max_output_per_request'],
+        'planned_input_per_request':generation['planned_input_per_request'],
+        'input_hard_cap_enforced':False}
+    return generation, cell_budget, price, limits
+
+
+def prepare_study(pack_root, *, custodian, out, project_root, budget=None, seed=20261029,
+                  execution_profile=None):
     """Freeze neutral inputs and external commitments, without opening answer files.
 
     This prepares a proposed study, never a live authorization. A custodian's
     declaration is a claim to verify externally, not self-certified eligibility.
     """
+    generation, cell_budget, price, limits = _execution_settings(execution_profile)
     pack = load_neutral_pack(pack_root)
     _custodian(custodian)
     budget = validate_budget(budget)
@@ -207,7 +234,8 @@ def prepare_study(pack_root, *, custodian, out, project_root, budget=None, seed=
     for task in pack['tasks']:
         manifest = prepare_policy_manifest(policy_task(task), dataset_root=pack_root,
             out=output / 'manifests' / task['id'], model={'model_id':'deepseek-flash',
-                'provider':'deepseek', 'thinking':True, 'reasoning_effort':'high'}, budget=DEFAULT_BUDGET)
+                'provider':'deepseek', 'thinking':True, 'reasoning_effort':'high'},
+            budget=cell_budget,prompt_version=generation['prompt_version'])
         tasks.append(task | {'manifest':manifest,
                             'fixed_plan':build_fixed_plan(manifest, Path(pack_root))})
     projects = {}
@@ -225,18 +253,16 @@ def prepare_study(pack_root, *, custodian, out, project_root, budget=None, seed=
         for strategy in base[index % 4:] + base[:index % 4]:
             cells.append({'task_id':task['id'], 'project_id':task['project_id'], 'strategy':strategy,
                 'cell_id':digest({'pack':digest(pack), 'task':task['id'], 'strategy':strategy,
-                    'prompt':PROMPT_VERSION, 'code':code, 'seed':seed})[:32]})
+                    'prompt':generation['prompt_version'], 'code':code, 'seed':seed})[:32]})
     value = {'schema':SCHEMA, 'pack_id':pack['pack_id'], 'pack_sha256':digest(pack),
         'pack_root':str(Path(pack_root).absolute()), 'project_root':str(Path(project_root).absolute()),
         'control_root':str(output),
-        'prompt_version':PROMPT_VERSION, 'implementation':code, 'tasks':tasks, 'cells':cells,
+        'prompt_version':generation['prompt_version'], 'implementation':code, 'tasks':tasks, 'cells':cells,
         'custodian':custodian, 'budget':budget, 'order_seed':seed,
         'planned_request_ceiling':len(cells)*3, 'remote_enabled':False,
-        'price_snapshot':{'checked_date':'2026-10-29', 'status':'planning_only_recheck_before_live',
-            'reservation_micro_usd':330000, 'input_miss_per_million':'0.30',
-            'input_hit_per_million':'0.006', 'output_per_million':'1.20', 'context_tokens':1000000},
-        'cell_limits':dict(DEFAULT_BUDGET) | {'max_requests':3, 'max_output_per_request':2000,
-            'planned_input_per_request':8000, 'input_hard_cap_enforced':False}}
+        'price_snapshot':price, 'cell_limits':limits}
+    if execution_profile is not None:
+        value['execution_profile'] = execution_profile
     value['profile_sha256'] = digest(value)
     _write_exclusive(output / 'study.json', value, 262144)
     return value
@@ -250,6 +276,13 @@ def load_study(out):
         value.get('remote_enabled') is False and value.get('profile_sha256') ==
         digest({k:v for k,v in value.items() if k != 'profile_sha256'}), 'study_profile_invalid')
     validate_budget(value['budget'])
+    generation, cell_budget, price, limits = _execution_settings(value.get('execution_profile'))
+    if 'execution_profile' in value:
+        require(value['execution_profile']==V2_PROFILE,
+            'study_generation_contract_drift')
+    require(value['prompt_version']==generation['prompt_version']
+        and value['cell_limits']==limits and value['price_snapshot']==price,
+        'study_generation_contract_drift')
     require(implementation(value['project_root']) == value['implementation'], 'study_implementation_drift')
     pack = load_neutral_pack(value['pack_root'])
     require(digest(pack) == value['pack_sha256'], 'study_pack_drift')
@@ -257,6 +290,8 @@ def load_study(out):
         for task in value['tasks']:
             manifest = load_policy_manifest(root / 'manifests' / task['id'], dataset_root=value['pack_root'])
             require(manifest == task['manifest'], 'study_manifest_drift')
+            require(manifest['budget']==cell_budget and manifest['prompt_version']==generation['prompt_version'],
+                'study_generation_contract_drift')
             plan = build_fixed_plan(manifest, Path(value['pack_root']))
             require(plan['sha256'] == task['fixed_plan']['sha256'], 'study_fixed_plan_drift')
     except ValueError:

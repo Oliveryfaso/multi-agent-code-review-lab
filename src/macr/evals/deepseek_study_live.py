@@ -32,6 +32,7 @@ LOG_POLICY = {'retention_days': 14, 'upload': False, 'auto_delete': False,
 
 
 def _proposal(study):
+    require('execution_profile' not in study, 'study_profile_live_disabled')
     tasks, cells = study['tasks'], study['cells']
     projects = Counter(task['project_id'] for task in tasks)
     expected = {(task['id'], strategy) for task in tasks for strategy in STRATEGIES}
