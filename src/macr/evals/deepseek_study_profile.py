@@ -31,6 +31,7 @@ IMPLEMENTATION_FILES = (
     'src/macr/investigation/validation.py', 'src/macr/investigation/source_text.py',
     'src/macr/investigation/evidence_budget.py', 'src/macr/investigation/records.py',
     'scripts/run_deepseek_study_dryrun.py',
+    'src/macr/evals/deepseek_study_live.py', 'scripts/run_deepseek_study_live.py',
 )
 # Trusted product import closure, including package initializers. These hashes
 # freeze existing dependencies; none of these modules execute target source.

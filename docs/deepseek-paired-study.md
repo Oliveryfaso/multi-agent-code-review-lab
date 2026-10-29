@@ -5,7 +5,9 @@ questions, 36 cells and at most 108 requests**. No unseen questions or answers
 are shipped. The nine generated development fixtures deliberately repeat a
 known mechanism; they prove execution/accounting contracts, not quality or
 generalization. Remote dispatch is refused even when a provider is configured
-for live access. There is no Key input or live approval interface here.
+for live access. A separate [activation candidate](deepseek-study-live-candidate.md)
+requires a new exact-scope approval and explicit enablement; no live
+authorization is included.
 
 | Strategy | Evidence and process | Request ceiling |
 |---|---|---:|

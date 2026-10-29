@@ -16,8 +16,9 @@ KNOWN_CONTRACT_ERRORS = _KNOWN_CONTRACT_ERRORS | {
 
 
 class _FixtureGate:
-    def __init__(self, root, study):
+    def __init__(self, root, study, *, provenance='scripted_offline_fixture'):
         self.root, self.study = root, study
+        self.provenance = provenance
         self.rows, self.pending = [], None
         self.halted, self.fingerprint = False, None
         self.cell_id = None
@@ -31,7 +32,9 @@ class _FixtureGate:
             'unknown_held_usd':_usd(held), 'full_miss_sensitivity_usd':_usd(sum(
                 ((row['usage']['prompt_tokens']*300000 + row['usage']['completion_tokens']*1200000
                  + 999999)//1000000) for row in rows if row['state']=='settled')),
-            'model_calls_live':0, 'basis':'scripted_usage_not_supplier_bill'}
+            'model_calls_live':None if self.provenance=='approved_live' else 0,
+            'basis':('provider_usage_peak_local_accrual_not_supplier_bill'
+                     if self.provenance=='approved_live' else 'scripted_usage_not_supplier_bill')}
 
     def admit(self, request_sha256):
         if self.halted or self.pending is not None:
@@ -53,12 +56,14 @@ class _FixtureGate:
         if row is None or row['request_sha256'] != request_sha256:
             raise PolicyRunError('study_receipt_binding_invalid')
         raw = None
-        if response is not None and response.model == 'deepseek-flash':
+        if (response is not None and response.model == 'deepseek-flash'
+                and response.provider == 'deepseek'):
             raw = response.raw_usage
         elif error is not None and error.billing_evidence is not None:
             try:
                 billing = validate_billing_evidence(error.billing_evidence)
                 if (billing['request_sha256']==request_sha256 and billing['model']=='deepseek-flash'
+                        and billing['provider']=='deepseek'
                         and billing['max_output_tokens']==2000):
                     raw = billing['raw_usage']
             except ValueError:
@@ -89,17 +94,27 @@ def run_study(control_root, *, provider_factory):
     Exclusive claims remain after errors. This deliberately has no credential,
     HTTP, resume, approval or legacy-ledger migration interface.
     """
+    return _run_study_core(control_root,provider_factory=provider_factory,
+        cell_runner=run_study_cell,provenance='scripted_offline_fixture')
+
+
+def _run_study_core(control_root, *, provider_factory, cell_runner,
+                    provenance, gate_factory=None):
+    """One claimed, sequential pass; no reset, recovery or implicit retry."""
+    if provenance not in {'scripted_offline_fixture','approved_live_fake','approved_live'}:
+        raise StudyError('study_provenance_invalid')
     root = Path(control_root).absolute()
     study = load_study(root)
     try:
         _write_exclusive(root/'execution.claim.json',{'profile_sha256':study['profile_sha256'],
-            'state':'claimed_before_dispatch','provenance':'scripted_offline_fixture'},4096)
+            'state':'claimed_before_dispatch','provenance':provenance},4096)
     except FileExistsError:
         raise StudyError('execution_already_claimed') from None
     (root/'cells').mkdir(mode=0o700)
     (root/'ledger').mkdir(mode=0o700)
-    gate = _FixtureGate(root,study)
+    gate = (gate_factory or _FixtureGate)(root,study,provenance=provenance)
     results, rows = {}, []
+    live_attempts = 0
     tasks={task['id']:task for task in study['tasks']}
     halted = False
     for cell in study['cells']:
@@ -111,7 +126,7 @@ def run_study(control_root, *, provider_factory):
         task=tasks[cell['task_id']]
         started=monotonic()
         try:
-            result=run_study_cell(root/'manifests'/cell['task_id'],
+            result=cell_runner(root/'manifests'/cell['task_id'],
                 dataset_root=Path(study['pack_root']),strategy=cell['strategy'],
                 provider=provider_factory(cell),out=root/'cells'/cell_id,
                 fixed_plan=task['fixed_plan'],admit=gate.admit,settle=gate.settle)
@@ -121,7 +136,8 @@ def run_study(control_root, *, provider_factory):
                 'requests_attempted':gate.state(cell_id)['request_count'],'model_calls_live':0,
                 'requests':[],'tool_reads':0,'elapsed_seconds':monotonic()-started,
                 'timing_seconds':{'preparation':monotonic()-started,'provider':0.,'tool':0.}}
-        result['accounting']=gate.state(cell_id)
+        result['accounting']=gate.state(cell_id) | {'model_calls_live':result.get('model_calls_live',0)}
+        live_attempts += result.get('model_calls_live',0)
         result['cell_id']=cell_id
         results[cell_id]=result
         _write_exclusive(root/'cells'/f'{cell_id}.accounted.json',result,1048576)
@@ -134,9 +150,12 @@ def run_study(control_root, *, provider_factory):
     from macr.evals.deepseek_study_report import build_study_report
     report=build_study_report(study,results)
     _write_exclusive(root/'paired-report.json',report,262144)
-    summary={'schema':'macr.deepseek.study.dryrun.v1','profile_sha256':study['profile_sha256'],
+    summary={'schema':('macr.deepseek.study.dryrun.v1' if provenance=='scripted_offline_fixture'
+                      else 'macr.deepseek.study.execution.v1'),
+        'profile_sha256':study['profile_sha256'],'provenance':provenance,
         'planned_cells':len(study['cells']),'planned_request_ceiling':study['planned_request_ceiling'],
-        'rows':rows,'accounting':gate.state(),'model_calls_live':0,
+        'rows':rows,'accounting':gate.state() | {'model_calls_live':live_attempts},
+        'model_calls_live':live_attempts,
         'semantic_scoring':'pending_independent_review','batch_halted':halted}
     _write_exclusive(root/'summary.json',summary,262144)
     return summary

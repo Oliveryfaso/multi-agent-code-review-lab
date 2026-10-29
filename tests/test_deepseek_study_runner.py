@@ -41,6 +41,21 @@ class StudyRunnerTests(unittest.TestCase):
     def test_runner_entry_exists(self):
         self.assertIsNotNone(importlib.util.find_spec('macr.evals.deepseek_study_runner'))
 
+    def test_private_core_keeps_approved_fake_provenance_and_public_fixture_guard(self):
+        from macr.evals import deepseek_study_runner as runner
+        self.assertTrue(callable(getattr(runner, '_run_study_cell_core', None)))
+        transport = FakeTransport(reply(None, calls=[call('end', 'finish', {'diagnosis': UNKNOWN})]))
+        provider = DeepSeekProvider(model=MODEL['model_id'], transport=transport, allow_remote=True)
+        with self.assertRaisesRegex(PolicyRunError, 'live_dispatch_disabled'):
+            runner.run_study_cell(self.manifest_dir, dataset_root=self.root,
+                strategy='adaptive_read_3', provider=provider, out=self.root/'public', fixed_plan=self.plan())
+        result = runner._run_study_cell_core(self.manifest_dir, dataset_root=self.root,
+            strategy='adaptive_read_3', provider=provider, out=self.root/'core', fixed_plan=self.plan(),
+            provenance='approved_live_fake')
+        self.assertEqual(result['provenance'], 'approved_live_fake')
+        self.assertEqual(result['model_calls_live'], 0)
+        self.assertEqual(result['status'], 'semantic_pending')
+
     def test_initial_evidence_is_byte_identical_and_every_request_cap_is_2000(self):
         initial_messages = []
         hashes = []

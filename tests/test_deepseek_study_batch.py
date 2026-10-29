@@ -116,6 +116,36 @@ class StudyBatchTests(unittest.TestCase):
         self.assertEqual(result['accounting']['request_count'],0)
         self.assertTrue(any(row['status']=='failed' for row in result['rows']))
 
+    def test_shared_loop_claims_before_provider_factory_and_preserves_provenance(self):
+        from macr.evals.deepseek_study_runner import _run_study_cell_core
+        self.assertTrue(callable(getattr(batch, '_run_study_core', None)))
+        out, _ = self.prepare()
+        calls=[]
+        def factory(cell):
+            self.assertTrue((out/'execution.claim.json').is_file())
+            self.assertTrue((out/'ledger').is_dir())
+            calls.append(cell['cell_id'])
+            return self.factory(cell)
+        def cell_runner(*args, **kwargs):
+            return _run_study_cell_core(*args, **kwargs, provenance='approved_live_fake')
+        result=batch._run_study_core(out,provider_factory=factory,cell_runner=cell_runner,
+            provenance='approved_live_fake')
+        self.assertEqual(result['provenance'],'approved_live_fake')
+        self.assertEqual(result['model_calls_live'],0)
+        self.assertEqual(len(calls),4)
+
+    def test_gate_rejects_usage_from_wrong_provider_identity(self):
+        from types import SimpleNamespace
+        root=fixture_root()
+        (root/'ledger').mkdir()
+        gate=batch._FixtureGate(root,{'budget':{'max_requests':108,'max_usd':'2.000000'}})
+        gate.admit('a'*64)
+        response=SimpleNamespace(model='deepseek-flash',provider='other-provider',
+            raw_usage=reply('{}')['usage'],system_fingerprint='fixture-fingerprint')
+        with self.assertRaisesRegex(PolicyRunError,'study_halted_unknown'):
+            gate.settle('a'*64,response=response)
+        self.assertEqual(gate.state()['unknown_held_usd'],'0.330000')
+
     def test_invalid_source_and_copied_control_rejected(self):
         import shutil
         out, _ = self.prepare()

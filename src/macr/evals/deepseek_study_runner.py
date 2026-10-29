@@ -62,11 +62,24 @@ def run_study_cell(manifest_dir: Path, *, dataset_root: Path, strategy: str,
     once after the provider returns, before parsing policy output. Unknown usage
     terminates this cell; the batch must retain its reservation and halt.
     """
-    started = monotonic()
     if (not isinstance(provider, DeepSeekProvider) or provider.allow_remote
             or provider.transport is None
             or getattr(provider.transport, 'offline_fixture', False) is not True):
         raise PolicyRunError('live_dispatch_disabled')
+    return _run_study_cell_core(manifest_dir, dataset_root=dataset_root, strategy=strategy,
+        provider=provider, out=out, fixed_plan=fixed_plan, admit=admit, settle=settle,
+        provenance='scripted_offline_fixture')
+
+
+def _run_study_cell_core(manifest_dir: Path, *, dataset_root: Path, strategy: str,
+                        provider: DeepSeekProvider, out: Path, fixed_plan: dict,
+                        admit=None, settle=None, provenance: str) -> dict:
+    """Shared policy body; the separate explicit live entry owns authorization."""
+    started = monotonic()
+    if provenance not in {'scripted_offline_fixture', 'approved_live_fake', 'approved_live'}:
+        raise PolicyRunError('study_provenance_invalid')
+    if not isinstance(provider, DeepSeekProvider) or provider.transport is None:
+        raise PolicyRunError('provider_invalid')
     if strategy not in STRATEGIES:
         raise PolicyRunError('study_strategy_invalid')
     manifest = load_policy_manifest(manifest_dir, dataset_root=dataset_root)
@@ -108,7 +121,7 @@ def run_study_cell(manifest_dir: Path, *, dataset_root: Path, strategy: str,
         'status': 'running', 'error_code': None, 'review_status': 'not_ready',
         'answer': None, 'first_answer': None, 'tool_reads': 0, 'tool_events': [],
         'requests': [], 'reservations': ledger.rows, 'model_calls_live': 0,
-        'semantic_proof': False, 'provenance': 'scripted_offline_fixture',
+        'semantic_proof': False, 'provenance': provenance,
         'fixed_plan': plan, 'timing_seconds': timing}
     messages = [{'role':'system', 'content': DIRECT_INSTRUCTIONS if strategy != 'adaptive_read_3'
         else DIAGNOSIS_CRITERIA + ' ' + TOOL_INSTRUCTIONS + ' This task permits 4 read tools in total.'},
@@ -331,6 +344,11 @@ def run_study_cell(manifest_dir: Path, *, dataset_root: Path, strategy: str,
     for field in ('question', 'scenario', 'assumptions'):
         result[field] = manifest['task'][field]
     result['requests_attempted'] = len(result['requests'])
+    if provenance == 'approved_live':
+        count = getattr(provider.transport, 'live_attempts', None)
+        if type(count) is not int or not 0 <= count <= len(result['requests']):
+            raise PolicyRunError('study_live_attempts_unknown')
+        result['model_calls_live'] = count
     result['elapsed_seconds'] = round(monotonic() - started,6)
     result['timing_seconds'] = {name:round(value,6) for name,value in timing.items()}
     try:
