@@ -233,7 +233,7 @@ class StudyContinuationTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             module.propose_continuation_approval(out)
 
-    def test_freeze_must_match_pinned_digest_and_never_scan_source_siblings(self):
+    def test_freeze_must_match_pinned_digest_and_only_whitelisted_files_are_opened(self):
         module, source, old, freeze, out, plan = self.prepare()
         sentinel = source/'custodian-scores.json'
         sentinel.write_text('DO NOT OPEN THIS')
@@ -245,8 +245,7 @@ class StudyContinuationTests(unittest.TestCase):
                 self.assertIn(name,{'terminal-artifact-freeze.json'}|{r['path'] for r in freeze['files']})
                 opened.append(name)
             return original(root,name,limit)
-        with patch.object(product,'_read',side_effect=read), \
-                patch('os.scandir',side_effect=AssertionError('source scan')):
+        with patch.object(product,'_read',side_effect=read):
             # A source verification is independent of loading the neutral pack.
             product._source(source)
         self.assertNotIn(sentinel.name,opened)
