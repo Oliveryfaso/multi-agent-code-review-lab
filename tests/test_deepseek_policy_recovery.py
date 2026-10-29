@@ -12,7 +12,7 @@ from debugger_fixtures import fixture_root
 from macr.evals.deepseek_policy_batch import (_digest, _ticket, _write_new,
     claim_policy_cell, record_policy_cell, prepare_policy_batch)
 from macr.evals.deepseek_policy_recovery import (RecoveryError,
-    _identity, build_recovery_plan, claim_recovery, validate_recovery_plan)
+    _identity, _logical, build_recovery_plan, claim_recovery, validate_recovery_plan)
 from macr.evals.deepseek_policy_manifest import prepare_policy_manifest
 from macr.evals.deepseek_policy_runner import ARM_REQUESTS, run_policy_arm
 from macr.evals.deepseek_policy_spend import (PolicySpendError,
@@ -440,6 +440,118 @@ class SecondRecoveryTests(unittest.TestCase):
         first_lock.write_bytes(first_lock.read_bytes() + b' ')
         with self.assertRaises(RecoveryError):
             validate_recovery_plan(plan)
+
+
+class KnownContractRecoveryTests(unittest.TestCase):
+    def setUp(self):
+        second = SecondRecoveryTests(methodName='runTest')
+        second.setUp()
+        self.factory = second
+        self.root = second.root
+        self.source, self.source_batch, _ = second.initialized()
+        self.failed = self.source_batch['cells'][0]
+        _run_fixture_cell(self.source, self.source_batch, self.failed, (reply('{}'),))
+        self.target = self.root / 'known-contract-continuation'
+
+    def preview(self, target=None):
+        target = target or self.target
+        return build_recovery_plan(self.source,
+            predecessor_batch_sha256=self.source_batch['batch_sha256'],
+            target_control_root=target / 'control', target_output_root=target / 'outputs',
+            recovery_version='known-contract-continuation-v1')
+
+    def prepared(self, target=None):
+        target = target or self.target
+        plan = self.preview(target)
+        target.mkdir(mode=0o700)
+        outputs = target / 'outputs'
+        outputs.mkdir(mode=0o700)
+        batch = prepare_policy_batch(
+            [row['manifest_dir'] for row in self.source_batch['manifests']],
+            dataset_root=self.factory.factory.dataset,
+            project_root=self.factory.factory.project,
+            control_root=target / 'control', output_root=outputs, seed=41,
+            implementation_version=plan['recovery_version'], recovery_plan=plan,
+            cell_failure_policy=plan['cell_failure_policy'])
+        return target / 'control', batch, plan
+
+    def confirmation(self, plan, batch):
+        return {'schema': 'macr.deepseek.policy.recovery.confirmation.v3',
+            'granted': True, 'approval_ref': 'original-unattempted-scope-confirmed',
+            'plan_sha256': plan['plan_sha256'], 'batch_sha256': batch['batch_sha256'],
+            'action': 'retain_unknown_and_continue_unattempted',
+            'max_requests': 84, 'max_usd': '3.000000'}
+
+    def test_known_source_continuation_retains_budget_and_excludes_every_claim(self):
+        old = spend_state(self.source)
+        plan = self.preview()
+        self.assertEqual(plan['schema'], 'macr.deepseek.policy.recovery.v3')
+        self.assertEqual(plan['cell_failure_policy'], 'record_known_contract_failure_v1')
+        self.assertEqual(plan['opening'], {'request_count': old['request_count'],
+            'spent_usd': old['spent_usd'], 'retained_unknown_usd': '0.660000'})
+        self.assertEqual(len(plan['eligible_cells']), 43)
+        self.assertEqual(len(plan['excluded_cells']), 5)
+        self.assertNotIn(_logical(self.failed), plan['eligible_cells'])
+        self.assertEqual(validate_recovery_plan(plan), plan)
+        control, batch, plan = self.prepared()
+        initialize_spend_ledger(control, batch_sha256=batch['batch_sha256'],
+            recovery_plan=plan, recovery_confirmation=self.confirmation(plan, batch))
+        new = spend_state(control)
+        self.assertEqual((new['request_count'], new['spent_usd'], new['reserved_usd']),
+                         (old['request_count'], old['spent_usd'], '0.660000'))
+        self.assertEqual(new['state'], 'open')
+
+    def test_known_continuation_cannot_be_claimed_twice_or_copied(self):
+        control, batch, plan = self.prepared()
+        initialize_spend_ledger(control, batch_sha256=batch['batch_sha256'],
+            recovery_plan=plan, recovery_confirmation=self.confirmation(plan, batch))
+        other, other_batch, other_plan = self.prepared(self.root / 'second-known-target')
+        with self.assertRaises(PolicySpendError) as blocked:
+            initialize_spend_ledger(other, batch_sha256=other_batch['batch_sha256'],
+                recovery_plan=other_plan,
+                recovery_confirmation=self.confirmation(other_plan, other_batch))
+        self.assertEqual(blocked.exception.code, 'recovery_already_claimed')
+        copied = self.root / 'copied-known' / 'control'
+        shutil.copytree(control, copied)
+        with self.assertRaises(PolicySpendError):
+            spend_state(copied)
+
+    def test_new_unknown_or_missing_received_identity_cannot_be_treated_as_known_source(self):
+        response_path = Path(self.failed['out']) / 'decision-01.response.json'
+        response = json.loads(response_path.read_text())
+        response['system_fingerprint'] = None
+        response_path.write_text(json.dumps(response))
+        with self.assertRaises(RecoveryError):
+            self.preview()
+
+    def test_first_and_second_lock_drift_and_policy_injection_do_not_reclassify_source(self):
+        plan = self.preview()
+        changed = deepcopy(plan)
+        changed['cell_failure_policy'] = 'ignore_all_failures'
+        changed['plan_sha256'] = _digest({k:v for k,v in changed.items() if k != 'plan_sha256'})
+        with self.assertRaises(RecoveryError):
+            validate_recovery_plan(changed)
+        lock = self.root / 'cumulative-recovery-2-lock.json'
+        lock.write_bytes(lock.read_bytes() + b' ')
+        with self.assertRaises(RecoveryError):
+            validate_recovery_plan(plan)
+
+    def test_crash_consumes_known_slot_and_a_v3_source_cannot_extend_again(self):
+        from unittest.mock import patch
+        control, batch, plan = self.prepared()
+        claim_recovery(control, batch, plan, self.confirmation(plan, batch))
+        self.assertTrue((self.root / 'cumulative-known-contract-lock.json').exists())
+        with self.assertRaises(PolicySpendError) as blocked:
+            initialize_spend_ledger(control, batch_sha256=batch['batch_sha256'],
+                recovery_plan=plan, recovery_confirmation=self.confirmation(plan, batch))
+        self.assertEqual(blocked.exception.code, 'recovery_already_claimed')
+        self.assertFalse((control / 'spend').exists())
+        with patch('macr.evals.deepseek_policy_spend._policy',
+                   side_effect=AssertionError('depth_rejection_must_precede_policy')):
+            with self.assertRaises(RecoveryError):
+                build_recovery_plan(control, predecessor_batch_sha256=batch['batch_sha256'],
+                    target_control_root=self.root / 'fourth' / 'control',
+                    target_output_root=self.root / 'fourth' / 'outputs', recovery_version='fourth')
 
 
 if __name__ == "__main__":

@@ -107,7 +107,8 @@ def _lock_record(run_dir: Path, approval_ref: str,
 
 
 def _check_one_batch(run_dir: Path, private_root: Path) -> dict:
-    if run_dir.name.startswith(("pilot-retained-v3-", "pilot-retained-v4-")):
+    if run_dir.name.startswith(("pilot-retained-v3-", "pilot-retained-v4-",
+                                "pilot-retained-v5-")):
         return _check_recovery_batch(run_dir, private_root)
     try:
         _private_root(private_root, create=False)
@@ -287,18 +288,22 @@ def prepare_recovery_run(run_dir: Path, *, project_root: Path = PROJECT,
     _require(not parent.is_relative_to(project) and not parent.is_relative_to(dataset),
              "live_private_root_overlap")
     from macr.evals.deepseek_policy_recovery import (CONFIRMATION_SCHEMA, SCHEMA,
-        SECOND_CONFIRMATION_SCHEMA, SECOND_SCHEMA, build_recovery_plan)
+        SECOND_CONFIRMATION_SCHEMA, SECOND_SCHEMA, THIRD_CONFIRMATION_SCHEMA,
+        THIRD_SCHEMA, build_recovery_plan)
     try:
         _, predecessor = _load_batch(predecessor_control_root)
         prior_plan = predecessor.get("recovery_plan")
         if prior_plan is None:
             generation, plan_schema, confirmation_schema = (
                 "v3", SCHEMA, CONFIRMATION_SCHEMA)
-        else:
-            _require(type(prior_plan) is dict and prior_plan.get("schema") == SCHEMA,
-                     "live_recovery_depth_invalid")
+        elif type(prior_plan) is dict and prior_plan.get("schema") == SCHEMA:
             generation, plan_schema, confirmation_schema = (
                 "v4", SECOND_SCHEMA, SECOND_CONFIRMATION_SCHEMA)
+        else:
+            _require(type(prior_plan) is dict and prior_plan.get("schema") == SECOND_SCHEMA,
+                     "live_recovery_depth_invalid")
+            generation, plan_schema, confirmation_schema = (
+                "v5", THIRD_SCHEMA, THIRD_CONFIRMATION_SCHEMA)
         _require(root.name.startswith("pilot-retained-" + generation + "-"),
                  "live_generation_name_invalid")
         plan = build_recovery_plan(predecessor_control_root,
@@ -321,10 +326,13 @@ def prepare_recovery_run(run_dir: Path, *, project_root: Path = PROJECT,
             directory = root / "manifests" / case["id"]
             prepare_policy_manifest(case, dataset_root=dataset, out=directory, model=MODEL)
             manifests.append(directory)
+        failure_policy = ({"cell_failure_policy": plan["cell_failure_policy"]}
+                          if "cell_failure_policy" in plan else {})
         batch = prepare_policy_batch(manifests, dataset_root=dataset,
             project_root=project, control_root=root / "control",
             output_root=root / "outputs", seed=41,
-            implementation_version=plan["recovery_version"], recovery_plan=plan)
+            implementation_version=plan["recovery_version"], recovery_plan=plan,
+            **failure_policy)
         confirmation = {"schema": confirmation_schema,
             "granted": True, "approval_ref": approval_ref,
             "plan_sha256": plan["plan_sha256"], "batch_sha256": batch["batch_sha256"],
@@ -363,13 +371,15 @@ def status_run(run_dir: Path, *, private_root: Path | None = None) -> dict:
     except (PolicyBatchError, PolicySpendError) as error:
         raise LiveCliError(error.code) from None
     closed = len(outcomes)
-    halted = sum(item["state"] != "completed" for item in outcomes.values())
+    halted = sum(item["state"].startswith("batch_halted") for item in outcomes.values())
     summary = {"schema": "macr.deepseek.policy.live-progress.v1",
         "batch_sha256": batch["batch_sha256"],
         "planned_cells": len(batch["cells"]), "closed_cells": closed,
         "claimed_unresolved_cells": len(claims) - closed,
         "not_attempted_cells": len(batch["cells"]) - len(claims),
         "halted_cells": halted,
+        "contract_failed_cells": sum(item["state"] == "failed_contract"
+                                     for item in outcomes.values()),
         "semantic_pending_cells": sum(item["status"] == "semantic_pending"
                                       for item in outcomes.values()),
         "verification_rejected_cells": sum(item["status"] == "verification_rejected"
@@ -443,7 +453,7 @@ def execute_prepared(run_dir: Path, *, dataset_root: Path = DATASET,
                     approval=approval, key_reader=lambda: key,
                     scripted_replies=replies)
                 summary = status_run(root, private_root=parent)
-                if completed["outcome"]["state"] != "completed":
+                if completed["outcome"]["state"] not in {"completed", "failed_contract"}:
                     break
                 money = spend_state(control)
                 if (money["state"] != "open" or money["request_count"] >= 84 or

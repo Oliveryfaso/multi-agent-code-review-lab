@@ -1,0 +1,13 @@
+# Known contract failures as cell results
+
+The frozen `record_known_contract_failure_v1` policy ends a failed cell and permits the next unattempted cell. It never retries or repairs the failed answer. `when` remains limited to 300 characters, and all other diagnosis and tool contracts remain unchanged.
+
+Advancement requires trusted usage for every request, received canonical responses with the expected model and a consistent nonempty fingerprint, and an explicitly allowlisted model-output/action error. The live money gate must also show settled usage and no current pending or unknown requests. A failed first response pins its observed identity just as an accepted response does. Accepted output and semantic correctness remain separate judgments.
+
+Authentication, budget, scope, record-integrity, accounting, transport, missing identity and unknown-usage failures still stop the batch. A billing-only parsing failure without a received response identity is not sufficient to advance. The allowlist is defined in `deepseek_policy_batch.py`; a code containing the word `contract` is not automatically eligible.
+
+The new plan and batch both bind this exact policy before execution. Older batches omit it and retain their original stop behavior. The unique known-contract continuation consumes a separate authorization-root slot, binds both prior recovery locks and source evidence, and selects only logical task/repeat/arm identities never claimed in the lineage. It accepts a fully settled, known-identity contract stop from the prior v2 recovery; a new unknown cannot enter this path. Old records, fees and stop states stay unchanged.
+
+For the current lineage the selected subset has 29 cells: A6, B8, C8 and D7, at most 51 requests. It carries cumulative 24 requests, USD 0.021083 conservative known accrual and USD 0.66 historical unknown holds. All generations together retain the original 84-request and USD 3 local gates. These controls are not a supplier-account hard cap or billing reconciliation.
+
+`contract_failed_cells` counts failed cells explicitly. `batch_complete` means every planned cell was processed without a fatal batch stop; it does not mean every answer passed. Reinvoking a completed batch returns before credential input. Format failures, abstentions and unattempted cells remain in their appropriate denominators; different implementation versions are not pooled into an unconditional four-arm score.

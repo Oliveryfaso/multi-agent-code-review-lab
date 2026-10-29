@@ -111,6 +111,12 @@ jobs:
           test_deepseek_policy_observability test_deepseek_policy_live_entry
           test_deepseek_policy_batch test_deepseek_policy_spend
 
+      - name: Frozen continuation proofs without network
+        run: python -I -S -B scripts/run_offline_tests.py test_deepseek_policy_recovery
+
+      - name: Known cell failures and fatal CLI gates without network
+        run: python -I -S -B scripts/run_offline_tests.py test_deepseek_policy_live_cli
+
       - name: Static evidence contracts and CLI without native dispatch
         run: python -I -S -B scripts/run_static_evidence_tests.py
 

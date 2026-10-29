@@ -24,6 +24,15 @@ from macr.investigation.validation import ContractError
 from macr.providers.base import validate_billing_evidence
 
 SCHEMA = "macr.deepseek.policy.batch.v1"
+CELL_FAILURE_POLICY = "record_known_contract_failure_v1"
+_KNOWN_CONTRACT_ERRORS = frozenset({
+    "model_response_invalid", "model_output_incomplete", "model_output_invalid",
+    "diagnosis_json_invalid", "eval_contract_invalid", "eval_citation_invalid",
+    "verification_contract_invalid", "unexpected_model_action", "tool_call_invalid",
+    "terminal_action_missing", "duplicate_tool_call", "third_decision_must_terminate",
+    "mixed_terminal_action", "ask_user_contract_invalid", "finish_contract_invalid",
+    "duplicate_read_tool",
+})
 
 CORE_IMPLEMENTATION_FILES = (
     "src/macr/evals/deepseek_policy_batch.py",
@@ -176,6 +185,8 @@ def _check_recovery_batch(batch: dict, *, control_root=None) -> dict:
         plan = validate_recovery_plan(batch.get("recovery_plan"))
     except RecoveryError as error:
         raise PolicyBatchError(error.code) from None
+    _require(batch.get("cell_failure_policy") == plan.get("cell_failure_policy"),
+             "batch_recovery_policy_mismatch")
     _require(batch["output_root"] == plan["target_output_root"] and
              batch["implementation_version"] == plan["recovery_version"] and
              (control_root is None or str(Path(control_root).absolute()) ==
@@ -231,13 +242,16 @@ def _ticket(batch: dict, cell: dict) -> dict:
 
 def prepare_policy_batch(manifest_dirs, *, dataset_root, project_root, control_root,
                          output_root, seed, implementation_version,
-                         fingerprint_policy="pin_first", recovery_plan=None):
+                         fingerprint_policy="pin_first", recovery_plan=None,
+                         cell_failure_policy=None):
     """Freeze a control-only batch; keep gold/rubric bytes out of cell tickets."""
     _require(type(seed) is int and 0 <= seed < 2**63, "batch_seed_invalid")
     _require(type(implementation_version) is str and
              _VERSION.fullmatch(implementation_version) is not None,
              "batch_implementation_version_invalid")
     _require(fingerprint_policy == "pin_first", "batch_fingerprint_policy_invalid")
+    _require(cell_failure_policy is None or type(cell_failure_policy) is str and
+             cell_failure_policy == CELL_FAILURE_POLICY, "batch_cell_failure_policy_invalid")
     dataset = _directory(dataset_root)
     project = _directory(project_root)
     outputs = _directory(output_root)
@@ -328,6 +342,8 @@ def prepare_policy_batch(manifest_dirs, *, dataset_root, project_root, control_r
              "model": model, "response_model_allowlist": [model["model_id"]],
              "fingerprint_policy": fingerprint_policy, "prompt_version": prompt_version,
              "budget": budget, "seed": seed, "manifests": manifests, "cells": cells}
+    if cell_failure_policy is not None:
+        batch["cell_failure_policy"] = cell_failure_policy
     if recovery_plan is not None:
         batch["recovery_plan"] = recovery_plan
         _check_recovery_batch(batch, control_root=control)
@@ -393,8 +409,10 @@ def record_policy_cell(control_root, ticket):
         _check_drift(batch)
         evidence = _inspect_result(batch, ticket)
         pinned = next((row["fingerprint"] for row in outcomes.values()
-                       if row.get("state") == "completed"), None)
-        state = _state_from_evidence(evidence, pinned)
+                       if row.get("state") in {"completed", "failed_contract"}
+                       and row.get("fingerprint") is not None), None)
+        state = _state_from_evidence(evidence, pinned,
+            cell_failure_policy=batch.get("cell_failure_policy"))
         outcome = {"schema": SCHEMA + ".outcome", "cell_id": cell_id,
                    "status": evidence["status"], "state": state,
                    "model": evidence["model"], "fingerprint": evidence["fingerprint"],
@@ -414,6 +432,9 @@ def _load_batch(control_root: Path) -> tuple[Path, dict]:
     _require(_digest(bound) == batch["batch_sha256"], "batch_control_drift")
     _require(type(batch.get("cells")) is list and 1 <= len(batch["cells"]) <= MAX_CELLS,
              "batch_control_invalid")
+    _require("cell_failure_policy" not in batch or
+             type(batch["cell_failure_policy"]) is str and
+             batch["cell_failure_policy"] == CELL_FAILURE_POLICY, "batch_control_invalid")
     return root, batch
 
 
@@ -576,21 +597,29 @@ def _inspect_result(batch: dict, ticket: dict) -> dict:
         type(fingerprint) is not str or not fingerprint.strip()
         for fingerprint in fingerprints) or len({fingerprint for fingerprint in fingerprints
                                                  if type(fingerprint) is str}) > 1
-    return {"status": status, "model": models[0] if models else None,
+    return {"status": status, "error_code": result.get("error_code"),
+            "model": models[0] if models else None,
             "fingerprint": fingerprints[0] if fingerprints else None,
             "identity_bad": identity_bad, "all_completed": all_completed,
             "all_billing_known": all_billing_known,
+            "all_identity_known": count > 0 and len(models) == count and not identity_bad,
             "request_count": count, "result_sha256": sha256(raw_result).hexdigest(),
             "response_receipts": receipt_hashes}
 
 
-def _state_from_evidence(evidence: dict, pinned_fingerprint: str | None) -> str:
+def _state_from_evidence(evidence: dict, pinned_fingerprint: str | None, *,
+                         cell_failure_policy=None) -> str:
     if evidence["identity_bad"] or (pinned_fingerprint is not None and
                                     evidence["fingerprint"] not in (None, pinned_fingerprint)):
         return "batch_halted_model_drift"
     if not evidence["all_completed"] or evidence["status"] not in {
             "semantic_pending", "ask_user_terminated", "verification_rejected"}:
         if evidence.get("all_billing_known"):
+            if (cell_failure_policy == CELL_FAILURE_POLICY and evidence["status"] == "failed"
+                    and evidence.get("all_identity_known") is True
+                    and type(evidence.get("error_code")) is str
+                    and evidence["error_code"] in _KNOWN_CONTRACT_ERRORS):
+                return "failed_contract"
             return "batch_halted_contract"
         return "batch_halted_unknown"
     return "completed"
@@ -634,7 +663,7 @@ def _registry(root: Path, batch: dict) -> tuple[dict, dict]:
                                       "result_sha256", "response_receipts"} and
                      outcome["schema"] == SCHEMA + ".outcome" and
                      outcome["cell_id"] == cell_id and
-                     outcome["state"] in {"completed", "batch_halted_unknown",
+                     outcome["state"] in {"completed", "failed_contract", "batch_halted_unknown",
                                           "batch_halted_contract",
                                           "batch_halted_model_drift"} and
                      type(outcome["request_count"]) is int and
@@ -651,11 +680,12 @@ def _registry(root: Path, batch: dict) -> tuple[dict, dict]:
             _require((outcome["status"], outcome["state"], outcome["model"],
                       outcome["fingerprint"], outcome["request_count"],
                       outcome["result_sha256"], outcome["response_receipts"]) ==
-                     (evidence["status"], _state_from_evidence(evidence, pinned),
+                     (evidence["status"], _state_from_evidence(evidence, pinned,
+                         cell_failure_policy=batch.get("cell_failure_policy")),
                       evidence["model"], evidence["fingerprint"],
                       evidence["request_count"], evidence["result_sha256"],
                       evidence["response_receipts"]), "batch_registry_invalid")
-            if outcome["state"] == "completed":
+            if outcome["state"] in {"completed", "failed_contract"} and outcome["fingerprint"] is not None:
                 pinned = outcome["fingerprint"]
             outcomes[cell_id] = outcome
     ordered = [cell["cell_id"] for cell in batch["cells"]]

@@ -90,11 +90,11 @@ class PolicyBatchTests(unittest.TestCase):
         self.outputs.mkdir()
         self.control = self.root / "control"
 
-    def prepare(self, *, control=None, outputs=None, seed=17):
+    def prepare(self, *, control=None, outputs=None, seed=17, **options):
         return prepare_policy_batch(self.manifests, dataset_root=self.dataset,
             project_root=self.project, control_root=control or self.control,
             output_root=outputs or self.outputs, seed=seed,
-            implementation_version="offline-candidate-v1")
+            implementation_version="offline-candidate-v1", **options)
 
     @staticmethod
     def identity(cell):
@@ -202,6 +202,116 @@ class PolicyBatchTests(unittest.TestCase):
         with self.assertRaises(PolicyBatchError) as halted:
             self.claim(second)
         self.assertEqual(halted.exception.code, "batch_halted")
+
+    def test_explicit_failure_policy_records_multiple_known_failures_and_advances(self):
+        batch = self.prepare(cell_failure_policy="record_known_contract_failure_v1")
+        self.assertEqual(batch["cell_failure_policy"], "record_known_contract_failure_v1")
+        for cell in batch["cells"][:2]:
+            ticket = self.claim(cell)
+            invalid = reply("{}")
+            result = self.run_ticket(ticket, responses=[invalid])
+            self.assertEqual((result["status"], result["review_status"]), ("failed", "not_ready"))
+            self.assertIsNone(result["answer"])
+            self.assertEqual(result["tool_reads"], 0)
+            self.assertEqual(record_policy_cell(self.control, ticket)["state"], "failed_contract")
+        ticket = self.claim(batch["cells"][2])
+        self.assertEqual(self.run_ticket(ticket)["status"], "semantic_pending")
+        self.assertEqual(record_policy_cell(self.control, ticket)["state"], "completed")
+        self.claim(batch["cells"][3])
+
+    def test_failure_policy_is_explicit_and_default_records_cannot_be_forged_to_continue(self):
+        batch = self.prepare()
+        self.assertNotIn("cell_failure_policy", batch)
+        ticket = self.claim(batch["cells"][0])
+        invalid = reply("invalid role")
+        invalid["choices"][0]["message"]["role"] = "tool"
+        self.run_ticket(ticket, responses=[invalid])
+        outcome = record_policy_cell(self.control, ticket)
+        self.assertEqual(outcome["state"], "batch_halted_contract")
+        path = self.control / "registry" / f'{ticket["cell_id"]}.outcome.json'
+        outcome["state"] = "failed_contract"
+        path.write_text(json.dumps(outcome))
+        with self.assertRaises(PolicyBatchError) as rejected:
+            self.claim(batch["cells"][1])
+        self.assertEqual(rejected.exception.code, "batch_registry_invalid")
+
+    def test_unrecognized_failure_policy_is_rejected_before_creating_control(self):
+        for policy in ("continue", True, {}, ""):
+            with self.subTest(policy=policy), self.assertRaises(PolicyBatchError) as rejected:
+                self.prepare(cell_failure_policy=policy)
+            self.assertEqual(rejected.exception.code, "batch_cell_failure_policy_invalid")
+            self.assertFalse(self.control.exists())
+
+    def test_explicit_none_failure_policy_preserves_default_batch_bytes(self):
+        self.prepare()
+        original = (self.control / "batch.json").read_bytes()
+        self.control.rename(self.root / "first-control")
+        self.prepare(cell_failure_policy=None)
+        self.assertEqual((self.control / "batch.json").read_bytes(), original)
+
+    def test_new_failure_policy_preserves_identity_and_unknown_usage_stops(self):
+        for suffix in ("usage", "transport", "model", "fingerprint", "billing-only"):
+            with self.subTest(suffix=suffix):
+                control, outputs = self.root / ("control-" + suffix), self.root / ("outputs-" + suffix)
+                outputs.mkdir()
+                batch = self.prepare(control=control, outputs=outputs,
+                    cell_failure_policy="record_known_contract_failure_v1")
+                ticket = self.claim(batch["cells"][0], control=control)
+                if suffix == "transport":
+                    responses = [TimeoutError()]
+                else:
+                    response = reply("invalid", model="deepseek-other" if suffix == "model" else "deepseek-flash",
+                                     fingerprint=None if suffix == "fingerprint" else "fp-one")
+                    if suffix in {"usage", "billing-only"}:
+                        response["choices"][0]["message"]["role"] = "tool"
+                    if suffix == "usage":
+                        response["usage"] = None
+                    responses = [response]
+                self.run_ticket(ticket, responses=responses)
+                expected = ("batch_halted_model_drift" if suffix in {"model", "fingerprint"}
+                            else "batch_halted_contract" if suffix == "billing-only"
+                            else "batch_halted_unknown")
+                self.assertEqual(record_policy_cell(control, ticket)["state"], expected)
+                with self.assertRaises(PolicyBatchError) as halted:
+                    self.claim(batch["cells"][1], control=control)
+                self.assertEqual(halted.exception.code, "batch_halted")
+
+    def test_received_failed_fingerprint_remains_pinned_across_other_known_failure(self):
+        batch = self.prepare(cell_failure_policy="record_known_contract_failure_v1")
+        ticket = self.claim(batch["cells"][0])
+        incomplete = reply("partial", fingerprint="fp-one")
+        incomplete["choices"][0]["finish_reason"] = "length"
+        self.run_ticket(ticket, responses=[incomplete])
+        self.assertEqual(record_policy_cell(self.control, ticket)["state"], "failed_contract")
+        ticket = self.claim(batch["cells"][1])
+        invalid = reply("{}", fingerprint="fp-one")
+        self.run_ticket(ticket, responses=[invalid])
+        outcome = record_policy_cell(self.control, ticket)
+        self.assertEqual((outcome["state"], outcome["fingerprint"]), ("failed_contract", "fp-one"))
+        ticket = self.claim(batch["cells"][2])
+        self.run_ticket(ticket, fingerprint="fp-two")
+        self.assertEqual(record_policy_cell(self.control, ticket)["state"], "batch_halted_model_drift")
+        with self.assertRaises(PolicyBatchError) as halted:
+            self.claim(batch["cells"][3])
+        self.assertEqual(halted.exception.code, "batch_halted")
+
+    def test_known_fatal_errors_remain_halted_under_new_failure_policy(self):
+        from macr.evals.deepseek_policy_batch import _state_from_evidence
+        evidence = {"identity_bad": False, "fingerprint": "fp-one", "status": "failed",
+                    "all_completed": False, "all_billing_known": True, "all_identity_known": True}
+        fatal = ("model_http_error", "model_timeout", "model_request_invalid", "provider_contract",
+                 "provider_billing_evidence_invalid", "model_token_accounting_unavailable",
+                 "measured_budget_overrun", "read_tool_invalid", "read_tool_limit_or_forbidden",
+                 "read_tool_budget_exhausted", "run_record_limit", "system_fingerprint_drift")
+        for code in fatal:
+            with self.subTest(code=code):
+                self.assertEqual(_state_from_evidence(dict(evidence, error_code=code), None,
+                    cell_failure_policy="record_known_contract_failure_v1"), "batch_halted_contract")
+        for status in ("remote_outcome_unknown", "record_limit_exceeded"):
+            with self.subTest(status=status):
+                self.assertEqual(_state_from_evidence(dict(evidence, status=status,
+                    error_code="model_response_invalid"), None,
+                    cell_failure_policy="record_known_contract_failure_v1"), "batch_halted_contract")
 
     def test_received_incomplete_usage_is_known_but_failure_still_halts(self):
         batch = self.prepare()
@@ -582,6 +692,12 @@ class RetainedRecoveryBatchTests(unittest.TestCase):
             repeat=1, arm=first["arm"], out=first["out"])
         self.assertNotIn("recovery_plan", ticket)
         self.assertNotIn("opening", ticket)
+
+    def test_recovery_plan_without_policy_cannot_enable_known_failure_continuation(self):
+        with self.assertRaises(PolicyBatchError) as rejected:
+            self.prepare(cell_failure_policy="record_known_contract_failure_v1")
+        self.assertEqual(rejected.exception.code, "batch_recovery_policy_mismatch")
+        self.assertFalse((self.target / "control").exists())
 
     def test_plan_cannot_be_used_in_another_output_or_implementation_version(self):
         for changes in ({"implementation_version": "another-version"},

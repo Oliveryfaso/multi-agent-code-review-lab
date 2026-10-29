@@ -22,6 +22,8 @@ SCHEMA = "macr.deepseek.policy.recovery.v1"
 CONFIRMATION_SCHEMA = "macr.deepseek.policy.recovery.confirmation.v1"
 SECOND_SCHEMA = "macr.deepseek.policy.recovery.v2"
 SECOND_CONFIRMATION_SCHEMA = "macr.deepseek.policy.recovery.confirmation.v2"
+THIRD_SCHEMA = "macr.deepseek.policy.recovery.v3"
+THIRD_CONFIRMATION_SCHEMA = "macr.deepseek.policy.recovery.confirmation.v3"
 ACTION = "retain_unknown_and_continue_unattempted"
 _VERSION = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}\Z")
 _SHA = re.compile(r"[0-9a-f]{64}\Z")
@@ -162,22 +164,24 @@ def _source(predecessor_control_root, predecessor_batch_sha256):
         raise RecoveryError("recovery_source_invalid") from None
 
 
-def _source_recovery(predecessor_control_root, predecessor_batch_sha256):
-    """Audit exactly one stopped v1 recovery; a v2 source cannot recover again."""
+def _source_recovery(predecessor_control_root, predecessor_batch_sha256, *, known_contract=False):
+    """Audit bounded history; the final continuation requires settled, known identity."""
     from macr.evals.deepseek_policy_spend import (PolicySpendError, _policy,
         _records, _summary, _usage_evidence, _usd)
-    from macr.evals.deepseek_policy_batch import _request_billing_usage
+    from macr.evals.deepseek_policy_batch import (CELL_FAILURE_POLICY,
+        _inspect_result, _request_billing_usage, _state_from_evidence)
     from macr.evals.deepseek_policy_runner import BILLING_CONTRACT_VERSION
 
     try:
         root, batch = _load_batch(predecessor_control_root)
         prior = batch.get('recovery_plan')
         _require(batch['batch_sha256'] == predecessor_batch_sha256 and
-                 type(prior) is dict and prior.get('schema') == SCHEMA,
+                 type(prior) is dict and prior.get('schema') ==
+                 (SECOND_SCHEMA if known_contract else SCHEMA),
                  'recovery_source_invalid')
         # Reject deeper chains before _policy can recurse through predecessor proofs.
-        authorization, original, _ = _source(prior['predecessor_control_root'],
-                                             prior['predecessor_batch_sha256'])
+        authorization, original, _ = (_source_recovery if known_contract else _source)(
+            prior['predecessor_control_root'], prior['predecessor_batch_sha256'])
         outputs = _path(batch['output_root'])
         _require(root == outputs.parent / 'control' and
                  outputs.parent.parent == authorization and
@@ -194,10 +198,15 @@ def _source_recovery(predecessor_control_root, predecessor_batch_sha256):
             state = _summary(batch, policy, reservations, outcomes)
             expected = {(cell_id, n) for cell_id, row in closed.items()
                         for n in range(1, row['request_count'] + 1)}
-            _require(state['state'] == 'halted_unknown' and claims and
-                     set(claims) == set(closed) and expected and
-                     set(reservations) == set(outcomes) == expected and
-                     any(row['state'] == 'batch_halted_unknown' for row in closed.values()),
+            source_stopped = (state['state'] == 'halted_unknown' and
+                any(row['state'] == 'batch_halted_unknown' for row in closed.values()))
+            if known_contract:
+                source_stopped = (state['state'] == 'open' and
+                    all(row['state'] == 'settled' for row in outcomes.values()) and
+                    all(row['state'] in {'completed', 'batch_halted_contract'} for row in closed.values()) and
+                    any(row['state'] == 'batch_halted_contract' for row in closed.values()))
+            _require(source_stopped and claims and set(claims) == set(closed) and expected and
+                     set(reservations) == set(outcomes) == expected,
                      'recovery_source_not_stopped')
             proof = {'prior_plan_sha256': prior['plan_sha256'],
                      'prior_evidence_sha256': prior['evidence_sha256']}
@@ -207,6 +216,8 @@ def _source_recovery(predecessor_control_root, predecessor_batch_sha256):
                 proof[str(directory / relative)] = sha256(data).hexdigest()
 
             bind(authorization, 'cumulative-recovery-lock.json', MAX_RECOVERY_BYTES)
+            if known_contract:
+                bind(authorization, 'cumulative-recovery-2-lock.json', MAX_RECOVERY_BYTES)
             bind(root, 'batch.json', 256 * 1024)
             bind(root, 'spend/policy.json', MAX_RECOVERY_BYTES)
             for row in batch['manifests']:
@@ -221,6 +232,11 @@ def _source_recovery(predecessor_control_root, predecessor_batch_sha256):
             for name in _scan_names(root / 'registry', 288):
                 bind(root, 'registry/' + name, 4096)
             for cell_id, ticket in claims.items():
+                if known_contract and closed[cell_id]['state'] == 'batch_halted_contract':
+                    observed = _inspect_result(batch, ticket)
+                    _require(_state_from_evidence(observed, None,
+                        cell_failure_policy=CELL_FAILURE_POLICY) == 'failed_contract',
+                        'recovery_source_failure_not_continuable')
                 output = Path(ticket['out'])
                 result = _read_json(output, 'result.json', batch['budget']['max_record_bytes'],
                                     'recovery_source_invalid')
@@ -233,6 +249,12 @@ def _source_recovery(predecessor_control_root, predecessor_batch_sha256):
                     if settled['state'] == 'settled':
                         response = _read_json(output, prefix + '.response.json',
                             batch['budget']['max_record_bytes'], 'recovery_source_invalid')
+                        if known_contract:
+                            _require(response.get('state') == 'received' and
+                                     response.get('model') == batch['model']['model_id'] and
+                                     type(response.get('system_fingerprint')) is str and
+                                     bool(response['system_fingerprint'].strip()),
+                                     'recovery_source_identity_unknown')
                         raw_usage = response.get('raw_usage') if response.get('state') == 'received' else None
                         if result.get('billing_contract_version') == BILLING_CONTRACT_VERSION:
                             _require(response.get('state') != 'received' or
@@ -253,12 +275,16 @@ def _source_recovery(predecessor_control_root, predecessor_batch_sha256):
             attempted = {_identity(row) for row in prior['excluded_cells']}
             attempted.update(_identity(c) for c in batch['cells'] if c['cell_id'] in claims)
             eligible = [_logical(c) for c in batch['cells'] if _identity(c) not in attempted]
+            original_cells = {_identity(c) for c in original['cells']}
+            if known_contract:
+                original_cells.update(_identity(c) for c in original['recovery_plan']['excluded_cells'])
             _require(eligible and {_identity(c) for c in eligible} | attempted ==
-                     {_identity(c) for c in original['cells']}, 'recovery_source_invalid')
-            lineage = [str(root), prior['predecessor_control_root']]
-            if prior['source_predecessor_control_root'] is not None:
+                     original_cells, 'recovery_source_invalid')
+            lineage = ([str(root)] + prior['source_lineage_control_roots'] if known_contract
+                       else [str(root), prior['predecessor_control_root']])
+            if not known_contract and prior['source_predecessor_control_root'] is not None:
                 lineage.append(prior['source_predecessor_control_root'])
-            return authorization, batch, {
+            evidence = {
                 'opening': {'request_count': state['request_count'],
                     'spent_usd': state['spent_usd'], 'retained_unknown_usd': state['reserved_usd']},
                 'eligible_cells': eligible,
@@ -273,6 +299,9 @@ def _source_recovery(predecessor_control_root, predecessor_batch_sha256):
                 'source_lineage_control_roots': lineage,
                 'source_approval_ref': policy['recovery_forward']['confirmation']['approval_ref'],
                 'evidence_sha256': _digest(proof)}
+            if known_contract:
+                evidence['cell_failure_policy'] = CELL_FAILURE_POLICY
+            return authorization, batch, evidence
     except (PolicyBatchError, PolicySpendError, KeyError, TypeError, ValueError) as error:
         if isinstance(error, RecoveryError):
             raise
@@ -293,8 +322,14 @@ def build_recovery_plan(predecessor_control_root, *, predecessor_batch_sha256,
     except PolicyBatchError:
         raise RecoveryError('recovery_source_invalid') from None
     second = 'recovery_plan' in predecessor
-    authorization_root, batch, proof = (_source_recovery if second else _source)(
-        source, predecessor_batch_sha256)
+    known = type(predecessor.get('recovery_plan')) is dict and \
+        predecessor['recovery_plan'].get('schema') == SECOND_SCHEMA
+    if known:
+        authorization_root, batch, proof = _source_recovery(
+            source, predecessor_batch_sha256, known_contract=True)
+    else:
+        authorization_root, batch, proof = (_source_recovery if second else _source)(
+            source, predecessor_batch_sha256)
     control, outputs = _path(target_control_root), _path(target_output_root)
     _require(control.name == "control" and outputs.name != "control" and
              control.parent == outputs.parent and control.parent.parent == authorization_root and
@@ -307,7 +342,8 @@ def build_recovery_plan(predecessor_control_root, *, predecessor_batch_sha256,
     if second:
         _require(all(control.parent != Path(path).parent
                      for path in proof['source_lineage_control_roots']), 'recovery_layout_invalid')
-    plan = {"schema": SECOND_SCHEMA if second else SCHEMA, "predecessor_control_root": str(source),
+    plan = {"schema": THIRD_SCHEMA if known else SECOND_SCHEMA if second else SCHEMA,
+            "predecessor_control_root": str(source),
             "predecessor_batch_sha256": predecessor_batch_sha256,
             "target_control_root": str(control), "target_output_root": str(outputs),
             "recovery_version": recovery_version, **proof}
@@ -334,8 +370,8 @@ def validate_recovery_confirmation(plan, confirmation, *, batch_sha256=None):
     _require(type(confirmation) is dict and set(confirmation) == {
         "schema", "granted", "approval_ref", "plan_sha256", "batch_sha256",
         "action", "max_requests", "max_usd"}, "recovery_confirmation_missing")
-    expected_schema = (SECOND_CONFIRMATION_SCHEMA if plan['schema'] == SECOND_SCHEMA
-                       else CONFIRMATION_SCHEMA)
+    expected_schema = {SCHEMA: CONFIRMATION_SCHEMA, SECOND_SCHEMA: SECOND_CONFIRMATION_SCHEMA,
+                       THIRD_SCHEMA: THIRD_CONFIRMATION_SCHEMA}.get(plan['schema'])
     _require(confirmation["schema"] == expected_schema and
              confirmation["granted"] is True and
              type(confirmation["approval_ref"]) is str and
@@ -347,7 +383,7 @@ def validate_recovery_confirmation(plan, confirmation, *, batch_sha256=None):
              confirmation["action"] == ACTION and type(confirmation["max_requests"]) is int and
              confirmation["max_requests"] == 84 and confirmation["max_usd"] == "3.000000",
              "recovery_confirmation_invalid")
-    _require(plan['schema'] != SECOND_SCHEMA or
+    _require(plan['schema'] == SCHEMA or
              confirmation['approval_ref'] != plan['source_approval_ref'],
              'recovery_confirmation_invalid')
     return dict(confirmation)
@@ -365,8 +401,9 @@ def _bound_recovery(root, batch, plan, confirmation):
     record = {"schema": actual['schema'] + ".lock", "plan_sha256": actual["plan_sha256"],
               "control_root": str(root), "batch_sha256": batch["batch_sha256"],
               "confirmation": confirmation}
-    filename = ('cumulative-recovery-2-lock.json' if actual['schema'] == SECOND_SCHEMA
-                else 'cumulative-recovery-lock.json')
+    filename = {SCHEMA: 'cumulative-recovery-lock.json',
+                SECOND_SCHEMA: 'cumulative-recovery-2-lock.json',
+                THIRD_SCHEMA: 'cumulative-known-contract-lock.json'}[actual['schema']]
     path = Path(actual["predecessor_control_root"]).parent.parent / filename
     return path, record
 

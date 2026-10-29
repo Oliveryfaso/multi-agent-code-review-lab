@@ -38,6 +38,97 @@ class SyntheticTTY(io.StringIO):
 
 
 class LiveCliTests(unittest.TestCase):
+    def prepare_known_continuation(self):
+        _, _, stopped = self.prepare_second_recovery()
+        prior_dir = self.run_dir
+        first = stopped['cells'][0]
+        summary = execute_prepared(prior_dir, dataset_root=DATASET,
+            private_root=self.private, key_reader=lambda: 'DUMMY', cell_limit=1,
+            scripted_by_cell={first['cell_id']: (reply('{}'),)})
+        self.assertEqual((summary['halted_cells'], summary['spend_state'],
+                          summary['reserved_request_count'], summary['reserved_usd']),
+                         (1, 'open', 7, '0.660000'))
+        old_lock = (self.private / 'cumulative-recovery-2-lock.json').read_bytes()
+        self.run_dir = self.private / 'pilot-retained-v5-fixture'
+        batch = live_cli.prepare_recovery_run(self.run_dir,
+            project_root=self.project, dataset_root=DATASET, private_root=self.private,
+            approval_ref='known-failure-continuation-confirmation', retain_unknown=True,
+            predecessor_control_root=prior_dir / 'control',
+            predecessor_batch_sha256=stopped['batch_sha256'])
+        self.assertEqual((self.private / 'cumulative-recovery-2-lock.json').read_bytes(), old_lock)
+        return prior_dir, stopped, batch
+
+    @staticmethod
+    def valid_replies(cell):
+        if cell['arm'] == 'C':
+            return (reply(json.dumps(UNKNOWN)), reply(json.dumps({
+                'status': 'accept', 'coverage': 'complete', 'reason': 'Fixture'})))
+        if cell['arm'] == 'D':
+            return (reply(None, calls=[call('finish-1', 'finish', {'diagnosis': UNKNOWN})]),)
+        return (reply(json.dumps(UNKNOWN)),)
+
+    def test_known_contract_failures_advance_without_retry_and_completed_status_counts_failures(self):
+        prior_dir, _, batch = self.prepare_known_continuation()
+        self.assertEqual((len(batch['cells']), batch['implementation_version'],
+                          batch['cell_failure_policy']),
+                         (43, 'live-policy-retained-v5', 'record_known_contract_failure_v1'))
+        self.assertEqual(batch['recovery_plan']['schema'], 'macr.deepseek.policy.recovery.v3')
+        confirmation = json.loads((self.run_dir / 'recovery-confirmation.json').read_text())
+        self.assertEqual(confirmation['schema'], 'macr.deepseek.policy.recovery.confirmation.v3')
+        scripted = {cell['cell_id']: ((reply('{}'),) if index in (0, 2)
+                    else self.valid_replies(cell)) for index, cell in enumerate(batch['cells'][:3])}
+        reader = Mock(return_value='DUMMY_SYNTHETIC_NOT_A_CREDENTIAL')
+        summary = execute_prepared(self.run_dir, dataset_root=DATASET,
+            private_root=self.private, key_reader=reader, cell_limit=3,
+            scripted_by_cell=scripted)
+        self.assertEqual((summary['planned_cells'], summary['closed_cells'],
+                          summary['contract_failed_cells'], summary['halted_cells'],
+                          summary['not_attempted_cells'], summary['batch_complete']),
+                         (43, 3, 2, 0, 40, False))
+        self.assertEqual(summary['semantic_pending_cells'], 1)
+        self.assertEqual(summary['reserved_request_count'],
+                         7 + sum(len(answers) for answers in scripted.values()))
+        self.assertEqual((summary['reserved_usd'], summary['retained_unknown_usd']),
+                         ('0.660000', '0.660000'))
+        reader.assert_called_once()
+        # Derive the complete-status boundary from these three actual durable
+        # outcomes, without running an unnecessary 43-cell fixture batch.
+        control = self.run_dir / 'control'
+        with live_cli._locked(control):
+            claims, outcomes = live_cli._registry(control, batch)
+        closed_batch = batch | {'cells': batch['cells'][:3]}
+        with patch.object(live_cli, '_check_one_batch'), patch.object(
+                live_cli, '_load_batch', return_value=(control, closed_batch)), patch.object(
+                live_cli, '_registry', return_value=(claims, outcomes)):
+            complete = status_run(self.run_dir)
+        self.assertEqual((complete['batch_complete'], complete['closed_cells'],
+                          complete['contract_failed_cells'], complete['semantic_pending_cells']),
+                         (True, 3, 2, 1))
+        with patch.object(live_cli, 'status_run', return_value=complete):
+            again = execute_prepared(self.run_dir, dataset_root=DATASET,
+                private_root=self.private, key_reader=reader)
+        self.assertEqual(again, complete)
+        reader.assert_called_once()
+        self.assertEqual(status_run(prior_dir)['halted_cells'], 1)
+
+    def test_known_continuation_untrusted_usage_still_stops_before_another_key_read(self):
+        _, _, batch = self.prepare_known_continuation()
+        first = batch['cells'][0]
+        bad = reply('{}')
+        bad['usage'] = None
+        reader = Mock(return_value='DUMMY')
+        summary = execute_prepared(self.run_dir, dataset_root=DATASET,
+            private_root=self.private, key_reader=reader,
+            scripted_by_cell={first['cell_id']: (bad,)})
+        self.assertEqual((summary['closed_cells'], summary['contract_failed_cells'],
+                          summary['halted_cells'], summary['not_attempted_cells'],
+                          summary['spend_state'], summary['reserved_usd']),
+                         (1, 0, 1, 42, 'halted_unknown', '0.990000'))
+        with self.assertRaises(LiveCliError):
+            execute_prepared(self.run_dir, dataset_root=DATASET,
+                private_root=self.private, key_reader=reader)
+        reader.assert_called_once()
+
     def stopped_first_recovery(self):
         source, stopped = self.prepare_recovery()
         prior_dir = self.run_dir
@@ -130,21 +221,20 @@ class LiveCliTests(unittest.TestCase):
         self.assertFalse(target.exists())
         self.assertEqual((self.private / 'cumulative-recovery-lock.json').read_bytes(), old_lock)
 
-    def test_third_recovery_is_not_enabled_by_second_recovery_support(self):
+    def test_known_continuation_cannot_recover_a_second_recovery_unknown(self):
         _, _, second = self.prepare_second_recovery()
         prior_dir = self.run_dir
         first = second['cells'][0]
         execute_prepared(prior_dir, dataset_root=DATASET,
             private_root=self.private, key_reader=lambda: 'DUMMY', cell_limit=1,
             scripted_by_cell={first['cell_id']: (TimeoutError(),)})
-        target = self.private / 'pilot-retained-v4-third'
+        target = self.private / 'pilot-retained-v5-third'
         with self.assertRaises(LiveCliError) as blocked:
             live_cli.prepare_recovery_run(target,
                 project_root=self.project, dataset_root=DATASET, private_root=self.private,
                 approval_ref='unapproved-third-confirmation', retain_unknown=True,
                 predecessor_control_root=prior_dir / 'control',
                 predecessor_batch_sha256=second['batch_sha256'])
-        self.assertEqual(blocked.exception.code, 'live_recovery_depth_invalid')
         self.assertFalse(target.exists())
 
     def prepare_recovery(self):

@@ -70,7 +70,7 @@ All attempts shared an authorization of at most 84 requests and a $3 local budge
 
 These figures are derived from trusted response usage at the frozen peak-price method, rounded conservatively per request, plus retained reservations. They are not a supplier bill or a verified actual debit. Supplier charges for the two unknown responses have not been established. Nominal request headroom is 60, but all existing batches remain halted and cannot dispatch again.
 
-The first approved recovery selected 45 cells and stopped after one; its distinct second continuation selected the 44 remaining cells and stopped after 15. Twenty-nine cells remain unattempted, requiring at most 51 requests under the existing arm ceilings. This arithmetic does not reopen the halted batch. Both recovery confirmations are consumed, and the bounded contract rejects a third recovery source. Any further execution needs a separately reviewed decision. See the [recovery checklist](deepseek-policy-pilot-checklist-v1.md#explicit-retained-unknown-recovery).
+The first approved recovery selected 45 cells and stopped after one; its distinct second continuation selected the 44 remaining cells and stopped after 15. At that stop, 29 cells remained unattempted, requiring at most 51 requests under the existing arm ceilings. Both confirmations remain consumed, and arithmetic does not reopen either halted batch. A separately versioned [known-contract cell-failure policy](deepseek-policy-cell-failures-v1.md) can select that exact remainder while preserving failed results and cumulative accounting; old runs retain their original stop rules. See the [recovery checklist](deepseek-policy-pilot-checklist-v1.md#explicit-retained-unknown-recovery).
 
 ## Offline validation and publication boundary
 
