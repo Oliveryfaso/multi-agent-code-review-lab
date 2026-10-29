@@ -111,6 +111,11 @@ jobs:
           test_deepseek_policy_observability test_deepseek_policy_live_entry
           test_deepseek_policy_batch test_deepseek_policy_spend
 
+      - name: Serialized policy output contracts and boundaries without network
+        run: >-
+          python -I -S -B scripts/run_offline_tests.py
+          test_deepseek_policy_runner test_deepseek_policy_manifest test_deepseek_policy_tools
+
       - name: Frozen continuation proofs without network
         run: python -I -S -B scripts/run_offline_tests.py test_deepseek_policy_recovery
 
