@@ -14,7 +14,8 @@ from macr.investigation.source_text import SourceText
 from macr.investigation.validation import ContractError
 
 SCHEMA = 'macr.deepseek.policy.manifest.v1'
-PROMPT_VERSION = 'deepseek-policy-refs-v2'
+PROMPT_VERSION = 'deepseek-policy-contracts-v3'
+READABLE_PROMPT_VERSIONS = frozenset({'deepseek-policy-refs-v2', PROMPT_VERSION})
 ARMS = ['A', 'B', 'C', 'D']
 MAX_FILES = 24
 MAX_FILE_BYTES = 64 * 1024
@@ -180,7 +181,8 @@ def _validate(manifest):
     _task(manifest['task'])
     _snapshot(manifest['snapshot'], manifest['task'])
     _model(manifest['model'])
-    _require(manifest['prompt_version'] == PROMPT_VERSION, 'policy_prompt_version_invalid')
+    _require(type(manifest['prompt_version']) is str and
+             manifest['prompt_version'] in READABLE_PROMPT_VERSIONS, 'policy_prompt_version_invalid')
     _require(type(manifest['arms']) is list and manifest['arms'] == ARMS, 'policy_arms_invalid')
     _budget(manifest['budget'])
     _require(type(manifest['repeat']) is int and 1 <= manifest['repeat'] <= 1000,

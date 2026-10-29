@@ -50,6 +50,142 @@ class FakeTransport:
 
 
 class PolicyRunnerTests(unittest.TestCase):
+    def test_verifier_serialized_request_declares_and_preserves_reason_boundaries(self):
+        cases = [('r' * 256, 'semantic_pending'), ('r' * 257, 'failed'),
+                 ('界' * 256, 'semantic_pending'), ('界' * 257, 'failed'),
+                 (' ' + 'r' * 256 + ' ', 'semantic_pending')]
+        for number, (reason, expected) in enumerate(cases):
+            with self.subTest(number=number):
+                transport = FakeTransport(reply(json.dumps(UNKNOWN)), reply(json.dumps({
+                    'status': 'accept', 'coverage': 'complete', 'reason': reason})))
+                result = self.run_arm('C', transport, name='verifier-boundary-' + str(number))
+                wire = json.loads(transport.raw_bodies[1])
+                prompt = wire['messages'][0]['content']
+                marker = 'Verification JSON Schema:\n'
+                self.assertIn(marker, prompt)
+                schema, _ = json.JSONDecoder().raw_decode(prompt.split(marker, 1)[1])
+                self.assertEqual(schema['required'], ['status', 'coverage', 'reason'])
+                self.assertFalse(schema['additionalProperties'])
+                self.assertEqual(schema['properties']['reason'],
+                    {'type': 'string', 'minLength': 1, 'maxLength': 256})
+                self.assertEqual(schema['properties']['status']['enum'], ['accept', 'reject'])
+                self.assertEqual(schema['properties']['coverage']['enum'], ['complete', 'incomplete'])
+                self.assertEqual(wire['response_format'], {'type': 'json_object'})
+                self.assertEqual(result['status'], expected)
+                if expected == 'failed':
+                    self.assertEqual(result['error_code'], 'verification_contract_invalid')
+                    self.assertIsNone(result['answer'])
+                else:
+                    self.assertEqual(result['verification']['reason'], reason)
+
+    def test_ask_user_wire_declares_character_limit_without_changing_strip_semantics(self):
+        for number, (gap, expected) in enumerate((('界' * 200, 'ask_user_terminated'),
+                ('界' * 201, 'failed'), (' ' + 'g' * 200 + ' ', 'ask_user_terminated'))):
+            transport = FakeTransport(reply(None, calls=[call('ask-1', 'ask_user', {'gap': gap})]))
+            result = self.run_arm('D', transport, name='ask-boundary-' + str(number))
+            wire = json.loads(transport.raw_bodies[0])
+            ask = next(tool['function'] for tool in wire['tools']
+                       if tool['function']['name'] == 'ask_user')
+            self.assertEqual(ask['parameters']['properties']['gap'],
+                {'type': 'string', 'minLength': 1, 'maxLength': 200})
+            self.assertEqual(result['status'], expected)
+            if expected == 'failed':
+                self.assertEqual(result['error_code'], 'ask_user_contract_invalid')
+            else:
+                self.assertEqual(result['gap'], gap)
+
+    def test_d_read_parameter_wire_communicates_real_byte_and_scope_limits(self):
+        from macr.evals.deepseek_policy_manifest import load_policy_manifest
+        from macr.evals.deepseek_policy_tools import StaticEvidenceTools
+        transport = FakeTransport(reply(None, calls=[call('finish-1', 'finish', {'diagnosis': UNKNOWN})]))
+        self.run_arm('D', transport)
+        wire = json.loads(transport.raw_bodies[0])
+        tools = {tool['function']['name']: tool['function'] for tool in wire['tools']}
+        for name, field in (('search', 'query'), ('read_symbol', 'symbol'), ('read_caller', 'symbol')):
+            parameter = tools[name]['parameters']['properties'][field]
+            self.assertEqual((parameter['minLength'], parameter['maxLength']), (1, 128))
+            self.assertIn('128 UTF-8 bytes', parameter['description'])
+            self.assertIn('nonblank', parameter['description'])
+            if field == 'symbol':
+                self.assertIn('Python identifiers', parameter['description'])
+        self.assertIn('512 UTF-8 bytes', tools['read_symbol']['parameters']['properties']['file']['description'])
+        self.assertIn('authorized', tools['read_symbol']['parameters']['properties']['file']['description'])
+        self.assertIn('8192 UTF-8 bytes', tools['search']['description'])
+        self.assertIn('Never repeat', wire['messages'][0]['content'])
+        self.assertIn('within or across decisions', wire['messages'][0]['content'])
+        self.assertIn('4 read tools in total', wire['messages'][0]['content'])
+        manifest = load_policy_manifest(self.manifest_dir, dataset_root=self.root)
+        reader = StaticEvidenceTools(manifest, self.root)
+        for term in ('x' * 128, '界' * 42 + 'xx'):
+            self.assertEqual(reader.execute('search', {'query': term})['status'], 'ok')
+        for term in ('x' * 129, '界' * 43):
+            self.assertEqual(reader.execute('search', {'query': term})['status'], 'error')
+        limited = self.root / 'limited-manifest'
+        prepare_policy_manifest(self.case, dataset_root=self.root, out=limited,
+            model=MODEL, budget=DEFAULT_BUDGET | {'max_tool_reads': 1})
+        self.manifest_dir = limited
+        limited_wire = FakeTransport(reply(None, calls=[call('finish-2', 'finish', {'diagnosis': UNKNOWN})]))
+        self.run_arm('D', limited_wire, name='limited-d')
+        self.assertIn('1 read tools in total', json.loads(limited_wire.raw_bodies[0])['messages'][0]['content'])
+
+    def test_object_byte_boundary_is_preserved_without_truncation(self):
+        from macr.evals.deepseek_policy_runner import _object
+        prefix, suffix = '{"value":"', '"}'
+        body = prefix + 'x' * (8192 - len(prefix + suffix)) + suffix
+        self.assertEqual(len(body.encode('utf-8')), 8192)
+        self.assertEqual(len(_object(body)['value']), 8192 - len(prefix + suffix))
+        with self.assertRaisesRegex(PolicyRunError, '^diagnosis_json_invalid$'):
+            _object(body + ' ')
+
+    def test_legacy_prompt_is_readable_but_cannot_dispatch_new_instructions(self):
+        from macr.evals.deepseek_policy_manifest import PolicyManifestError, _digest, load_policy_manifest
+        path = self.manifest_dir / 'manifest.json'
+        manifest = json.loads(path.read_text())
+        self.assertEqual(manifest['prompt_version'], 'deepseek-policy-contracts-v3')
+        manifest['prompt_version'] = 'deepseek-policy-refs-v2'
+        manifest['manifest_sha256'] = _digest({k:v for k,v in manifest.items() if k != 'manifest_sha256'})
+        path.write_text(json.dumps(manifest))
+        self.assertEqual(load_policy_manifest(self.manifest_dir, dataset_root=self.root), manifest)
+        transport = FakeTransport(reply(json.dumps(UNKNOWN)))
+        with self.assertRaisesRegex(PolicyRunError, '^policy_prompt_version_invalid$'):
+            self.run_arm('A', transport)
+        self.assertEqual(transport.posts, [])
+        self.assertFalse((self.root / 'run-A').exists())
+        with self.assertRaises(PolicyManifestError):
+            prepare_policy_manifest(self.case, dataset_root=self.root,
+                out=self.root / 'legacy-preparation', model=MODEL,
+                prompt_version='deepseek-policy-refs-v2')
+        self.assertFalse((self.root / 'legacy-preparation').exists())
+        manifest['prompt_version'] = 'unknown-contracts-v4'
+        manifest['manifest_sha256'] = _digest({k:v for k,v in manifest.items() if k != 'manifest_sha256'})
+        path.write_text(json.dumps(manifest))
+        with self.assertRaises(PolicyManifestError):
+            load_policy_manifest(self.manifest_dir, dataset_root=self.root)
+
+    def test_diagnosis_character_boundaries_remain_strict_in_every_arm(self):
+        definite = {'verdict': 'supported_defect', 'cause': 'c' * 600, 'when': '界' * 300,
+            'refs': [{'file': 'entry.py', 'start': 1, 'end': 4}], 'unknowns': []}
+        cases = [(definite, 'semantic_pending'), (definite | {'when': '界' * 301}, 'failed'),
+                 (definite | {'cause': 'c' * 601}, 'failed'),
+                 (UNKNOWN | {'unknowns': ['界' * 200]}, 'semantic_pending'),
+                 (UNKNOWN | {'unknowns': ['界' * 201]}, 'failed')]
+        for arm in 'ABCD':
+            for number, (answer, expected) in enumerate(cases):
+                with self.subTest(arm=arm, boundary=number):
+                    answers = [reply(json.dumps(answer))]
+                    if arm == 'C':
+                        answers.append(reply('{"status":"accept","coverage":"complete","reason":"Fixture"}'))
+                    elif arm == 'D':
+                        answers = [reply(None, calls=[call('finish-1', 'finish', {'diagnosis': answer})])]
+                    result = self.run_arm(arm, FakeTransport(*answers),
+                        name=f'diagnosis-boundary-{arm}-{number}')
+                    self.assertEqual(result['status'], expected)
+                    if expected == 'failed':
+                        self.assertEqual(result['error_code'], 'eval_contract_invalid')
+                        self.assertIsNone(result['answer'])
+                    else:
+                        self.assertEqual(result['answer'], answer)
+
     def test_tool_argument_json_and_policy_schema_fail_at_their_own_boundaries(self):
         cases = [("{unfinished", "model_response_invalid", "unknown"),
                  (json.dumps({"diagnosis": {"verdict": "bogus"}}),
@@ -129,7 +265,13 @@ class PolicyRunnerTests(unittest.TestCase):
                 self.assertEqual(sent_schema, OUTPUT_SCHEMA)
                 self.assertEqual(sent_schema["properties"]["refs"]["items"], expected_refs)
                 manifest = json.loads((self.manifest_dir / "manifest.json").read_text())
-                self.assertEqual(manifest["prompt_version"], "deepseek-policy-refs-v2")
+                self.assertEqual(manifest["prompt_version"], "deepseek-policy-contracts-v3")
+                properties = sent_schema['properties']
+                self.assertEqual(properties['cause']['maxLength'], 600)
+                self.assertEqual(properties['when']['maxLength'], 300)
+                self.assertEqual(properties['unknowns']['items']['maxLength'], 200)
+                self.assertIn('8192 UTF-8 bytes', prompt)
+                self.assertIn('refs must be unique', prompt)
                 if arm == "D":
                     finish = next(tool["function"] for tool in wire["tools"]
                                   if tool["function"]["name"] == "finish")

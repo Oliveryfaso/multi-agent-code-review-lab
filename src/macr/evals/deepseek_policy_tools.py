@@ -15,6 +15,7 @@ MAX_OUTPUT_BYTES = 96 * 1024
 MAX_RESULTS = 16
 MAX_SNIPPET_LINES = 80
 MAX_TERM_BYTES = 128
+MAX_FILE_PATH_BYTES = 512
 _TOOLS = {'search', 'read_symbol', 'read_caller'}
 _ARGUMENTS = {'search': {'query'}, 'read_symbol': {'file', 'symbol'},
               'read_caller': {'symbol'}}
@@ -123,7 +124,7 @@ class StaticEvidenceTools:
         sources = []
         total = 0
         for file in files:
-            if (file not in self.files or len(file.encode('utf-8')) > 512
+            if (file not in self.files or len(file.encode('utf-8')) > MAX_FILE_PATH_BYTES
                     or PurePosixPath(file).is_absolute() or '\\' in file
                     or any(part in ('', '.', '..') for part in file.split('/'))):
                 raise StaticEvidenceError('file_unauthorized')

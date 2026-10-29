@@ -2,7 +2,7 @@
 
 This research entry is separate from the default static evidence product and the historical `diagnostic_compare` interface. It asks whether a bounded Debugger strategy improves static diagnosis compared with a direct call to the same model, while recording calls, evidence, time and local cost estimates. It never imports or executes the target source. The harness uses the Python standard library and adds no runtime dependency.
 
-The current candidate uses the `deepseek-policy-refs-v2` prompt contract. The development dataset remains `deepseek-policy-dev-v1`. Earlier prompts and their failed results retain their original versions; a repair does not retroactively change a score. See [aggregate results](deepseek-policy-results.md) for what was actually run.
+New preparation and execution use `deepseek-policy-contracts-v3`. The development dataset remains `deepseek-policy-dev-v1`. `deepseek-policy-refs-v2` manifests remain readable for historical audit but cannot dispatch the new instructions. No paid run has used v3; older prompts and failed results retain their versions and scores. See [aggregate results](deepseek-policy-results.md).
 
 ## Four arms
 
@@ -18,6 +18,12 @@ A sees all authorized files. B/C/D start from the same initial files and an AST 
 These arms compare complete strategies. Isolating the contribution of verification or tool feedback requires later comparisons with matched call counts. Evidence found by D after a decision cannot be supplied to A afterward and treated as its original baseline.
 
 D exposes only `search`, `read_symbol`, `read_caller`, `finish` and `ask_user`. Each of its first two decisions may use at most two read tools; the third must terminate. `read_caller` describes static syntax and may be unresolved. `ask_user` records a specific evidence gap and ends the cell without receiving a human answer. Its task remains unresolved and the reasonableness of abstention remains pending review. Illegal or duplicate actions, missing termination and exhausted budgets are failures; the host does not manufacture a correct answer.
+
+## Output-contract communication
+
+Actual system messages carry the diagnosis schema in A/B/C and D, plus the complete verifier schema on C's second request. The provider's `json_object` mode alone does not transmit those field constraints. The verifier's schema defines exact fields, status/coverage enums and a nonblank reason of at most 256 characters; the same schema supplies validation bounds. D's `ask_user.gap` similarly shares its 1–200 character schema with validation. Diagnosis bounds remain cause600/when300/gap200, with unique source-backed references and verdict-dependent required fields/gaps stated explicitly.
+
+Read-tool parameters advertise the existing 128 UTF-8-byte term and 512-byte authorized-file limits, identifier rules and scope. Tool guidance includes the actual task's total read budget, no identical repeated reads and exactly one terminal call. Entire response/argument JSON stays within the existing 8,192-byte bound. These are guidance plus unchanged client validation, not an API guarantee of model compliance. Existing validators still trim surrounding whitespace before character bounds; generation guidance asks for nonblank, unpadded text and applies schema bounds to raw strings. No answer is silently shortened.
 
 ## Inputs and scoring
 
@@ -39,7 +45,7 @@ The explicit live entry requires an operator-approved scope and predecessor evid
 
 The tested pilot profile planned 12 cases × 4 arms × 1 repeat: 48 cells, at most 84 model requests, with per-cell planning limits of 24,000 input and 6,000 output tokens. A/B can output up to 6,000 tokens in one call, C up to 3,000 per call, and D up to 2,000 per call. Equal total output budgets do not imply equal truncation risk. Input planning is not trusted pre-dispatch token metering.
 
-The two historical pilots shared a persistent total of at most 84 requests and a $3 local budget. Verified prior receipts are carried forward; a successor cannot obtain a fresh allowance by changing directories. The local reservation was $0.33 before each request under the frozen model, context and peak-price assumptions. Trusted response usage settles that reservation; absent or inconsistent usage retains it and halts execution. Local timeout does not prove remote billing stopped. These controls do not impose a supplier-side hard spending cap. Recheck the [official model/pricing](https://api-docs.deepseek.com/quick_start/pricing/) and [usage contract](https://api-docs.deepseek.com/api/create-chat-completion/) before any later approved run.
+All historical generations shared a persistent total of at most 84 requests and a $3 local budget. Verified prior receipts are carried forward; a successor cannot obtain a fresh allowance by changing directories. The local reservation was $0.33 before each request under the frozen model, context and peak-price assumptions. Trusted response usage settles that reservation; absent or inconsistent usage retains it and halts execution. Local timeout does not prove remote billing stopped. These controls do not impose a supplier-side hard spending cap. Recheck the [official model/pricing](https://api-docs.deepseek.com/quick_start/pricing/) and [usage contract](https://api-docs.deepseek.com/api/create-chat-completion/) before any later approved run.
 
 ## Failure evidence and current limits
 
@@ -47,4 +53,4 @@ The diagnostic candidate adds a separate, validated failure-evidence record, bou
 
 Diagnostic usage is untrusted observation, not settlement evidence. The runner can retain this metadata while the response remains `unknown`; it cannot turn a malformed response into a valid answer or release a reservation. The upgrade cannot recover an already discarded response. The stopped live D request still lacks sufficient evidence to distinguish JSON decoding from provider-envelope validation.
 
-The earlier failure-observation candidate passed 190 related offline tests with no skips. This integration patch also removes private operating configuration and requires its own final verification; that earlier count is not a claim that the final integration has been validated. No measured tool benefit, complete live four-arm run, unseen generalization, target-code execution or VM acceptance is claimed. See the [run checklist](deepseek-policy-pilot-checklist-v1.md) for the unresolved stop and reconciliation conditions.
+Verification counts and measured execution are recorded separately in the [results](deepseek-policy-results.md). No measured tool benefit, single-version complete live four-arm run, unseen generalization, target-code execution or VM acceptance is claimed. See the [run checklist](deepseek-policy-pilot-checklist-v1.md) for execution and reconciliation limits.
