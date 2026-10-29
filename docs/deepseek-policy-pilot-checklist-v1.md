@@ -64,6 +64,12 @@ Eligibility is derived from logical `(task, repeat, arm)` identities across both
 
 Every dispatch rechecks the bound evidence and cumulative budget before reserving funds. The $0.33 historical hold is never settled or released by a new response. New missing usage, timeout or unknown outcome still stops the recovery batch; this confirmation is not permission to ignore future uncertainty. The local reservation requirement can stop execution before all 45 cells finish, even when the request ceiling has not been reached.
 
+### A second, separately confirmed continuation
+
+The v2 recovery contract accepts only an intact, halted v1 recovery as its source. It binds the prior plan, original lock bytes and durable receipts, then consumes one distinct second lock at the same authorization root. A new v2 confirmation and a different approval reference are required. The original v1 records and lock are unchanged; copying paths or reusing either confirmation cannot create another successor. A v2 recovery cannot be a recovery source.
+
+For the current stopped lineage, the read-only plan selects 44 unattempted logical cells: A 11, B 12, C 11 and D 10, requiring at most 75 new requests. Opening totals are six requests, USD 0.004719 known conservative accrual and USD 0.66 still held. The combined maximum is 81 requests, within the original 84-request ceiling; the USD 3 gate still applies before each request and can stop the plan early. No historical request is replayed or rescored. New uncertainty still halts this continuation, and different implementation versions remain separate experimental denominators.
+
 Supplier reconciliation may later clarify an attributable charge or non-acceptance, but is not required for the explicit conservative-retention choice. Until such evidence exists, the historical disposition remains unknown. A total balance cannot attribute one call, and absent request IDs or response data must not be invented. Adding a billing endpoint, another service, new source files or log upload requires separate scope approval.
 
 Recovery results belong to their own versioned batch. Preserve failures and unattempted cells in the planned denominator, and review semantics independently. Different prompt or implementation versions must not be combined into an unconditional four-arm score. A recovery plan or successful offline test is not evidence of a completed live comparison or a measured tool benefit.

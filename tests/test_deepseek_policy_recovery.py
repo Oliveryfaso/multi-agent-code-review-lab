@@ -12,7 +12,7 @@ from debugger_fixtures import fixture_root
 from macr.evals.deepseek_policy_batch import (_digest, _ticket, _write_new,
     claim_policy_cell, record_policy_cell, prepare_policy_batch)
 from macr.evals.deepseek_policy_recovery import (RecoveryError,
-    build_recovery_plan, claim_recovery, validate_recovery_plan)
+    _identity, build_recovery_plan, claim_recovery, validate_recovery_plan)
 from macr.evals.deepseek_policy_manifest import prepare_policy_manifest
 from macr.evals.deepseek_policy_runner import ARM_REQUESTS, run_policy_arm
 from macr.evals.deepseek_policy_spend import (PolicySpendError,
@@ -307,6 +307,139 @@ class RecoveryTests(unittest.TestCase):
             build_recovery_plan(self.current, predecessor_batch_sha256=self.batch["batch_sha256"],
                 target_control_root=self.target / "control", target_output_root=self.target / "outputs",
                 recovery_version="altered-source")
+
+
+class SecondRecoveryTests(unittest.TestCase):
+    def setUp(self):
+        first = RecoveryTests(methodName='runTest')
+        first.setUp()
+        self.factory = first
+        self.root = first.root
+        self.source, self.source_batch = first.initialized()
+        self.failed = self.source_batch['cells'][0]
+        _run_fixture_cell(self.source, self.source_batch, self.failed,
+                          (TimeoutError(),), unknown=True)
+        self.target = self.root / 'second-recovery'
+
+    def preview(self, target=None):
+        target = target or self.target
+        return build_recovery_plan(self.source,
+            predecessor_batch_sha256=self.source_batch['batch_sha256'],
+            target_control_root=target / 'control', target_output_root=target / 'outputs',
+            recovery_version='synthetic-recovery-v2')
+
+    def confirmation(self, plan, batch):
+        return {'schema': 'macr.deepseek.policy.recovery.confirmation.v2',
+            'granted': True, 'approval_ref': 'second-human-confirmation',
+            'plan_sha256': plan['plan_sha256'], 'batch_sha256': batch['batch_sha256'],
+            'action': 'retain_unknown_and_continue_unattempted',
+            'max_requests': 84, 'max_usd': '3.000000'}
+
+    def prepared(self, target=None):
+        target = target or self.target
+        plan = self.preview(target)
+        target.mkdir(mode=0o700)
+        outputs = target / 'outputs'
+        outputs.mkdir(mode=0o700)
+        batch = prepare_policy_batch(
+            [row['manifest_dir'] for row in self.source_batch['manifests']],
+            dataset_root=self.factory.dataset, project_root=self.factory.project,
+            control_root=target / 'control', output_root=outputs, seed=41,
+            implementation_version=plan['recovery_version'], recovery_plan=plan)
+        return target / 'control', batch, plan
+
+    def initialized(self):
+        control, batch, plan = self.prepared()
+        initialize_spend_ledger(control, batch_sha256=batch['batch_sha256'],
+            recovery_plan=plan, recovery_confirmation=self.confirmation(plan, batch))
+        return control, batch, plan
+
+    def frozen(self):
+        return {str(path): sha256(path.read_bytes()).hexdigest()
+            for base in (self.factory.previous.parent, self.factory.current.parent,
+                         self.source.parent)
+            for path in base.rglob('*.json')} | {
+            'first-lock': sha256((self.root / 'cumulative-recovery-lock.json').read_bytes()).hexdigest()}
+
+    def test_second_preview_preserves_six_requests_two_holds_and_logical_partition(self):
+        before = self.frozen()
+        plan = self.preview()
+        self.assertEqual(plan['schema'], 'macr.deepseek.policy.recovery.v2')
+        self.assertEqual(plan['opening'], {'request_count': 6, 'spent_usd': '0.002089',
+                                         'retained_unknown_usd': '0.660000'})
+        self.assertEqual(len(plan['eligible_cells']), 44)
+        self.assertEqual(len(plan['excluded_cells']), 4)
+        self.assertEqual(plan['max_new_requests'], 78 - ARM_REQUESTS[self.failed['arm']])
+        eligible = {_identity(row) for row in plan['eligible_cells']}
+        excluded = {_identity(row) for row in plan['excluded_cells']}
+        self.assertFalse(eligible & excluded)
+        self.assertEqual(len(eligible | excluded), 48)
+        self.assertEqual(validate_recovery_plan(plan), plan)
+        self.assertEqual(self.frozen(), before)
+
+    def test_old_confirmation_and_duplicate_second_successor_do_not_reset_allowance(self):
+        control, batch, plan = self.prepared()
+        old = self.factory.confirmation(batch['batch_sha256'])
+        old['plan_sha256'] = plan['plan_sha256']
+        for invalid in (old, self.confirmation(plan, batch) |
+                        {'approval_ref': old['approval_ref']}):
+            with self.assertRaises(PolicySpendError):
+                initialize_spend_ledger(control, batch_sha256=batch['batch_sha256'],
+                    recovery_plan=plan, recovery_confirmation=invalid)
+        self.assertFalse((self.root / 'cumulative-recovery-2-lock.json').exists())
+        initialize_spend_ledger(control, batch_sha256=batch['batch_sha256'],
+            recovery_plan=plan, recovery_confirmation=self.confirmation(plan, batch))
+        money = spend_state(control)
+        self.assertEqual((money['request_count'], money['reserved_usd'], money['spent_usd']),
+                         (6, '0.660000', '0.002089'))
+        other, other_batch, other_plan = self.prepared(self.root / 'duplicate-second')
+        with self.assertRaises(PolicySpendError) as blocked:
+            initialize_spend_ledger(other, batch_sha256=other_batch['batch_sha256'],
+                recovery_plan=other_plan,
+                recovery_confirmation=self.confirmation(other_plan, other_batch))
+        self.assertEqual(blocked.exception.code, 'recovery_already_claimed')
+        self.assertFalse((other / 'spend').exists())
+
+    def test_new_unknown_holds_another_reservation_and_third_recovery_is_rejected(self):
+        before = self.frozen()
+        control, batch, plan = self.initialized()
+        _run_fixture_cell(control, batch, batch['cells'][0], (TimeoutError(),), unknown=True)
+        money = spend_state(control)
+        self.assertEqual((money['state'], money['request_count'], money['reserved_usd']),
+                         ('halted_unknown', 7, '0.990000'))
+        with self.assertRaises(RecoveryError):
+            build_recovery_plan(control, predecessor_batch_sha256=batch['batch_sha256'],
+                target_control_root=self.root / 'third' / 'control',
+                target_output_root=self.root / 'third' / 'outputs', recovery_version='third')
+        self.assertEqual(self.frozen(), before)
+
+    def test_crash_consumes_second_confirmation_and_copy_cannot_recover_it(self):
+        control, batch, plan = self.prepared()
+        claim_recovery(control, batch, plan, self.confirmation(plan, batch))
+        with self.assertRaises(PolicySpendError) as blocked:
+            initialize_spend_ledger(control, batch_sha256=batch['batch_sha256'],
+                recovery_plan=plan, recovery_confirmation=self.confirmation(plan, batch))
+        self.assertEqual(blocked.exception.code, 'recovery_already_claimed')
+        self.assertFalse((control / 'spend').exists())
+        copied = self.root / 'copy' / 'control'
+        shutil.copytree(self.source, copied)
+        with self.assertRaises(RecoveryError):
+            build_recovery_plan(copied,
+                predecessor_batch_sha256=self.source_batch['batch_sha256'],
+                target_control_root=self.root / 'elsewhere' / 'control',
+                target_output_root=self.root / 'elsewhere' / 'outputs', recovery_version='copy')
+
+    def test_first_lock_byte_drift_and_logical_replay_are_rejected(self):
+        plan = self.preview()
+        changed = deepcopy(plan)
+        changed['eligible_cells'].append(changed['excluded_cells'][0])
+        changed['plan_sha256'] = _digest({k:v for k,v in changed.items() if k != 'plan_sha256'})
+        with self.assertRaises(RecoveryError):
+            validate_recovery_plan(changed)
+        first_lock = self.root / 'cumulative-recovery-lock.json'
+        first_lock.write_bytes(first_lock.read_bytes() + b' ')
+        with self.assertRaises(RecoveryError):
+            validate_recovery_plan(plan)
 
 
 if __name__ == "__main__":

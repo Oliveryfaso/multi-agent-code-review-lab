@@ -107,7 +107,7 @@ def _lock_record(run_dir: Path, approval_ref: str,
 
 
 def _check_one_batch(run_dir: Path, private_root: Path) -> dict:
-    if run_dir.name.startswith("pilot-retained-v3-"):
+    if run_dir.name.startswith(("pilot-retained-v3-", "pilot-retained-v4-")):
         return _check_recovery_batch(run_dir, private_root)
     try:
         _private_root(private_root, create=False)
@@ -283,16 +283,29 @@ def prepare_recovery_run(run_dir: Path, *, project_root: Path = PROJECT,
              _SHA256.fullmatch(predecessor_batch_sha256) is not None,
              "live_predecessor_scope_invalid")
     root, parent = _run_path(run_dir, private_root)
-    _require(root.name.startswith("pilot-retained-v3-"), "live_generation_name_invalid")
     project, dataset = Path(project_root).absolute(), Path(dataset_root).absolute()
     _require(not parent.is_relative_to(project) and not parent.is_relative_to(dataset),
              "live_private_root_overlap")
-    from macr.evals.deepseek_policy_recovery import build_recovery_plan
+    from macr.evals.deepseek_policy_recovery import (CONFIRMATION_SCHEMA, SCHEMA,
+        SECOND_CONFIRMATION_SCHEMA, SECOND_SCHEMA, build_recovery_plan)
     try:
+        _, predecessor = _load_batch(predecessor_control_root)
+        prior_plan = predecessor.get("recovery_plan")
+        if prior_plan is None:
+            generation, plan_schema, confirmation_schema = (
+                "v3", SCHEMA, CONFIRMATION_SCHEMA)
+        else:
+            _require(type(prior_plan) is dict and prior_plan.get("schema") == SCHEMA,
+                     "live_recovery_depth_invalid")
+            generation, plan_schema, confirmation_schema = (
+                "v4", SECOND_SCHEMA, SECOND_CONFIRMATION_SCHEMA)
+        _require(root.name.startswith("pilot-retained-" + generation + "-"),
+                 "live_generation_name_invalid")
         plan = build_recovery_plan(predecessor_control_root,
             predecessor_batch_sha256=predecessor_batch_sha256,
             target_control_root=root / "control", target_output_root=root / "outputs",
-            recovery_version="live-policy-retained-v3")
+            recovery_version="live-policy-retained-" + generation)
+        _require(plan["schema"] == plan_schema, "live_recovery_schema_invalid")
         _private_root(parent, create=False)
         _require(not root.exists() and not root.is_symlink(), "live_run_exists")
         cases = _cases(dataset)
@@ -312,7 +325,7 @@ def prepare_recovery_run(run_dir: Path, *, project_root: Path = PROJECT,
             project_root=project, control_root=root / "control",
             output_root=root / "outputs", seed=41,
             implementation_version=plan["recovery_version"], recovery_plan=plan)
-        confirmation = {"schema": "macr.deepseek.policy.recovery.confirmation.v1",
+        confirmation = {"schema": confirmation_schema,
             "granted": True, "approval_ref": approval_ref,
             "plan_sha256": plan["plan_sha256"], "batch_sha256": batch["batch_sha256"],
             "action": "retain_unknown_and_continue_unattempted",

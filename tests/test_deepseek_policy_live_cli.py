@@ -38,6 +38,115 @@ class SyntheticTTY(io.StringIO):
 
 
 class LiveCliTests(unittest.TestCase):
+    def stopped_first_recovery(self):
+        source, stopped = self.prepare_recovery()
+        prior_dir = self.run_dir
+        first = stopped['cells'][0]
+        summary = execute_prepared(prior_dir, dataset_root=DATASET,
+            private_root=self.private, key_reader=lambda: 'DUMMY', cell_limit=1,
+            scripted_by_cell={first['cell_id']: (TimeoutError(),)})
+        self.assertEqual((summary['reserved_request_count'], summary['reserved_usd']),
+                         (6, '0.660000'))
+        old_lock = (self.private / 'cumulative-recovery-lock.json').read_bytes()
+        return prior_dir, stopped, old_lock
+
+    def prepare_second_recovery(self):
+        prior_dir, stopped, old_lock = self.stopped_first_recovery()
+        self.run_dir = self.private / 'pilot-retained-v4-fixture'
+        batch = live_cli.prepare_recovery_run(self.run_dir,
+            project_root=self.project, dataset_root=DATASET, private_root=self.private,
+            approval_ref='second-recovery-confirmation', retain_unknown=True,
+            predecessor_control_root=prior_dir / 'control',
+            predecessor_batch_sha256=stopped['batch_sha256'])
+        self.assertEqual((self.private / 'cumulative-recovery-lock.json').read_bytes(), old_lock)
+        return prior_dir, stopped, batch
+
+    def test_second_recovery_has_new_confirmation_and_preserves_both_unknown_holds(self):
+        prior_dir, stopped, batch = self.prepare_second_recovery()
+        summary = status_run(self.run_dir)
+        self.assertEqual((summary['planned_cells'], summary['not_attempted_cells'],
+                          summary['reserved_request_count'], summary['spent_usd'],
+                          summary['retained_unknown_usd'], summary['spend_state']),
+                         (44, 44, 6, '0.002089', '0.660000', 'open'))
+        self.assertEqual(batch['implementation_version'], 'live-policy-retained-v4')
+        self.assertEqual(batch['recovery_plan']['schema'], 'macr.deepseek.policy.recovery.v2')
+        confirmation = json.loads((self.run_dir / 'recovery-confirmation.json').read_text())
+        self.assertEqual(confirmation['schema'], 'macr.deepseek.policy.recovery.confirmation.v2')
+        first = batch['cells'][0]
+        if first['arm'] == 'C':
+            answers = (reply(json.dumps(UNKNOWN)), reply(json.dumps({
+                'status': 'accept', 'coverage': 'complete', 'reason': 'Fixture'})))
+        elif first['arm'] == 'D':
+            answers = (reply(None, calls=[call('finish-1', 'finish', {'diagnosis': UNKNOWN})]),)
+        else:
+            answers = (reply(json.dumps(UNKNOWN)),)
+        reader = Mock(return_value='DUMMY_SYNTHETIC_NOT_A_CREDENTIAL')
+        state = execute_prepared(self.run_dir, dataset_root=DATASET,
+            private_root=self.private, key_reader=reader, cell_limit=1,
+            scripted_by_cell={first['cell_id']: answers})
+        self.assertEqual((state['closed_cells'], state['reserved_request_count'],
+                          state['retained_unknown_usd'], state['reserved_usd']),
+                         (1, 6 + len(answers), '0.660000', '0.660000'))
+        second = batch['cells'][1]
+        state = execute_prepared(self.run_dir, dataset_root=DATASET,
+            private_root=self.private, key_reader=reader, cell_limit=1,
+            scripted_by_cell={second['cell_id']: (TimeoutError(),)})
+        self.assertEqual((state['closed_cells'], state['halted_cells'],
+                          state['reserved_usd'], state['retained_unknown_usd'],
+                          state['spend_state']),
+                         (2, 1, '0.990000', '0.660000', 'halted_unknown'))
+        before = reader.call_count
+        with self.assertRaises(LiveCliError):
+            execute_prepared(self.run_dir, dataset_root=DATASET,
+                private_root=self.private, key_reader=reader)
+        self.assertEqual(reader.call_count, before)
+        previous = status_run(prior_dir)
+        self.assertEqual((previous['reserved_request_count'], previous['reserved_usd'],
+                          previous['spend_state']), (6, '0.660000', 'halted_unknown'))
+
+    def test_first_recovery_confirmation_schema_cannot_enable_second_recovery(self):
+        self.prepare_second_recovery()
+        path = self.run_dir / 'recovery-confirmation.json'
+        row = json.loads(path.read_text())
+        row['schema'] = 'macr.deepseek.policy.recovery.confirmation.v1'
+        path.write_text(json.dumps(row))
+        reader = Mock(return_value='DUMMY')
+        with self.assertRaises(LiveCliError):
+            execute_prepared(self.run_dir, dataset_root=DATASET,
+                private_root=self.private, key_reader=reader)
+        reader.assert_not_called()
+        self.assertFalse(list((self.run_dir / 'control' / 'spend' / 'entries').iterdir()))
+
+    def test_second_recovery_rejects_old_generation_name_before_mutation(self):
+        prior_dir, stopped, old_lock = self.stopped_first_recovery()
+        target = self.private / 'pilot-retained-v3-second'
+        with self.assertRaises(LiveCliError) as blocked:
+            live_cli.prepare_recovery_run(target,
+                project_root=self.project, dataset_root=DATASET, private_root=self.private,
+                approval_ref='second-recovery-confirmation', retain_unknown=True,
+                predecessor_control_root=prior_dir / 'control',
+                predecessor_batch_sha256=stopped['batch_sha256'])
+        self.assertEqual(blocked.exception.code, 'live_generation_name_invalid')
+        self.assertFalse(target.exists())
+        self.assertEqual((self.private / 'cumulative-recovery-lock.json').read_bytes(), old_lock)
+
+    def test_third_recovery_is_not_enabled_by_second_recovery_support(self):
+        _, _, second = self.prepare_second_recovery()
+        prior_dir = self.run_dir
+        first = second['cells'][0]
+        execute_prepared(prior_dir, dataset_root=DATASET,
+            private_root=self.private, key_reader=lambda: 'DUMMY', cell_limit=1,
+            scripted_by_cell={first['cell_id']: (TimeoutError(),)})
+        target = self.private / 'pilot-retained-v4-third'
+        with self.assertRaises(LiveCliError) as blocked:
+            live_cli.prepare_recovery_run(target,
+                project_root=self.project, dataset_root=DATASET, private_root=self.private,
+                approval_ref='unapproved-third-confirmation', retain_unknown=True,
+                predecessor_control_root=prior_dir / 'control',
+                predecessor_batch_sha256=second['batch_sha256'])
+        self.assertEqual(blocked.exception.code, 'live_recovery_depth_invalid')
+        self.assertFalse(target.exists())
+
     def prepare_recovery(self):
         from test_deepseek_policy_recovery import make_recovery_source
         self.private.mkdir(mode=0o700)
