@@ -39,7 +39,7 @@ def source_fixture():
             files.append(name)
 
     write('study.json', study)
-    states = [('failed','model_output_incomplete'), ('semantic_pending',None),
+    states = [('semantic_pending',None), ('failed','model_output_incomplete'),
               ('failed','system_fingerprint_unknown')]
     rows, number = [], 0
     for index, cell in enumerate(study['cells']):
@@ -47,7 +47,7 @@ def source_fixture():
             rows.append(cell | {'status':'not_attempted'})
             continue
         requests, costs = [], []
-        for decision in range(1, (1 if index == 0 else 3) + 1):
+        for decision in range(1, (1 if index == 1 else 3) + 1):
             number += 1
             usage = {'prompt_tokens':1000, 'completion_tokens':800 if number < 7 else 283,
                 'prompt_cache_hit_tokens':0, 'prompt_cache_miss_tokens':1000,
@@ -118,6 +118,17 @@ class StudyContinuationTests(unittest.TestCase):
 
     def test_separate_continuation_entry_exists(self):
         self.continuation()
+
+    def test_pinned_terminal_shape_is_three_then_one_then_three_requests(self):
+        module, source, old, freeze, out, plan = self.prepare()
+        verified=module._source(source)
+        observed=[(result['status'],result['error_code'],result['requests_attempted'])
+                  for result in verified['results'].values()]
+        self.assertEqual(observed,[('semantic_pending',None,3),
+            ('failed','model_output_incomplete',1),('failed','system_fingerprint_unknown',3)])
+        self.assertEqual(sum(result['requests_attempted'] for result in verified['results'].values()),7)
+        self.assertEqual(sum(_normalized_charge(read_json(source,
+            f'ledger/{number:03d}.outcome.json')['usage'],2000) for number in range(1,8)),8200)
 
     def prepare(self):
         module = self.continuation()

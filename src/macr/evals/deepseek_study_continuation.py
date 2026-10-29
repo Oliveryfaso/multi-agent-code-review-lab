@@ -96,7 +96,7 @@ def _source(source_control):
     rows = summary.get('rows')
     require(type(rows) is list and len(rows)==36,'continuation_source_rows_invalid')
     results, requests = {}, []
-    expected = (('failed','model_output_incomplete',1), ('semantic_pending',None,3),
+    expected = (('semantic_pending',None,3), ('failed','model_output_incomplete',1),
                 ('failed','system_fingerprint_unknown',3))
     for index, (cell,row) in enumerate(zip(study['cells'],rows)):
         require(type(row) is dict and all(row.get(k)==v for k,v in cell.items()),
