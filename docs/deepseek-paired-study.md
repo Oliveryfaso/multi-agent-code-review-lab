@@ -66,6 +66,10 @@ the historical authorization/ledger or its unresolved reservations.
 
 ## Neutral package for an independent author
 
+The [neutral package and custodian handoff](deepseek-study-neutral-handoff.md)
+documents the exact validator fields and limits, delivery responsibilities and
+remaining access risks. The execution side receives no gold or concrete rubric.
+
 An execution package contains **only** `pack.json` and the exact authorized
 Python files under `snapshots/`. Extra files (including gold, labels, tests,
 repairs, credentials or symlinks) are rejected by name before source reads.
@@ -129,6 +133,18 @@ unnecessary/arm-evidence abstentions, partial answers, conditional reviewable
 quality and pairwise D–F/D–A-I outcomes with costs and latency. Invalid tasks
 retain the original denominator and reason; do not replace them after results.
 Three projects cannot support general significance or broad generalization.
+
+Planned-denominator zero completion is distinct from an observed paired tie.
+Unattempted, unknown and infrastructure-failed pairs are `not_comparable`;
+unreviewed answers remain `pending`. Comparisons require two reviewed outcomes
+or known contract failures. `pair_counts` keeps all planned pairs and splits
+complete/incomplete pairs, independently reviewed quality pairs and known
+contract-failure disposition pairs. The latter are operational comparisons.
+Final false-positive flags must match a healthy task answered
+`supported_defect`; false-release flags must match a defect task answered
+`no_defect_supported`. Contradictory or omitted flags are rejected, including
+definite error flags on abstentions. Matching a verdict never grants a complete
+semantic solution without independent mechanism, domain and citation review.
 
 Before a future live run, a separate reviewed interface and user approval must
 name the exact neutral/source file hashes, A-FULL's complete-source scope,

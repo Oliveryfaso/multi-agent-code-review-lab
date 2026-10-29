@@ -133,6 +133,10 @@ def _review_inputs(tasks, cells, results, reviews, adjudications):
         answer = results[cell_id].get('answer')
         verdict = answer.get('verdict') if type(answer) is dict else None
         abstained = results[cell_id].get('status') == 'ask_user_terminated' or verdict == 'unknown'
+        _require(flags['false_positive'] == (not abstained and category == 'healthy'
+                    and verdict == 'supported_defect') and
+                 flags['false_release'] == (not abstained and category == 'defect'
+                    and verdict == 'no_defect_supported'), 'adjudication_answer_conflict')
         _require(not (flags['full_solution'] and verdict not in
                        {'supported_defect', 'no_defect_supported'}) and
                  not (flags['full_solution'] and verdict !=
@@ -318,21 +322,36 @@ def build_study_report(study: dict, results: dict, *, reviews: dict | None = Non
             left, right = by_pair[task_id, 'adaptive_read_3'], by_pair[task_id, baseline]
             category = qualifications.get(task_id, {}).get('category')
             outcome = 'pending'
+            basis = None
             if left['invalid']:
                 outcome = 'invalid'
-            elif category is not None and left['state'] != 'review_pending' and right['state'] != 'review_pending':
+            elif any(row['state'] in {'not_attempted', 'unknown', 'failed'} for row in (left, right)):
+                outcome = 'not_comparable'
+            elif category is not None and all(row['state'] in {'reviewed', 'contract_failed'}
+                                               for row in (left, right)):
                 criterion = 'reasonable_abstention' if category == 'external_gap' else 'full_solution'
                 difference = int(left['judgment'].get(criterion, False)) - int(right['judgment'].get(criterion, False))
                 outcome = 'win' if difference > 0 else 'loss' if difference < 0 else 'tie'
+                basis = ('known_contract_failure_disposition' if any(row['state'] == 'contract_failed'
+                    for row in (left, right)) else 'independently_reviewed')
             cost_left, cost_right = _usd(left['actual']['known_accrued_usd']), _usd(right['actual']['known_accrued_usd'])
             comparisons.append({'task_id': task_id, 'project_id': tasks[task_id]['project_id'],
                 'category': category, 'stratum': qualifications.get(task_id, {}).get('stratum'),
-                'outcome': outcome, 'adaptive_state': left['state'], 'baseline_state': right['state'],
+                'outcome': outcome, 'comparison_eligible': basis is not None,
+                'comparison_basis': basis, 'adaptive_state': left['state'], 'baseline_state': right['state'],
                 'adaptive_error': left['error_code'], 'baseline_error': right['error_code'],
                 'known_accrued_usd_delta': None if cost_left is None or cost_right is None else
                     str((Decimal(cost_left) - Decimal(cost_right)) / 1_000_000),
                 'elapsed_seconds_delta': left['actual']['elapsed_seconds'] - right['actual']['elapsed_seconds']})
         pairs[label] = comparisons
+    pair_counts = {label: {
+        'planned_pairs': len(comparisons),
+        'complete_pairs': sum(row['comparison_eligible'] for row in comparisons),
+        'incomplete_pairs': sum(not row['comparison_eligible'] for row in comparisons),
+        'complete_quality_pairs': sum(row['comparison_basis'] == 'independently_reviewed'
+                                      for row in comparisons),
+        'complete_operational_pairs': sum(row['comparison_basis'] == 'known_contract_failure_disposition'
+                                          for row in comparisons)} for label, comparisons in pairs.items()}
     strategies = {strategy: _summarize([row for row in rows if row['strategy'] == strategy], qualifications)
                   for strategy in STRATEGIES}
     groups = {'project': {}, 'stratum': {}}
@@ -352,7 +371,7 @@ def build_study_report(study: dict, results: dict, *, reviews: dict | None = Non
         'caps': {'max_requests_per_cell': 3, 'max_output_tokens_per_request': 2000,
                  'max_output_tokens_per_cell': 6000, 'planned_input_tokens_per_cell': 24000,
                  'input_tokens_are_planning_limits': True},
-        'cells': rows, 'strategies': strategies, 'pairs': pairs, 'groups': groups,
+        'cells': rows, 'strategies': strategies, 'pairs': pairs, 'pair_counts': pair_counts, 'groups': groups,
         'interpretation': 'Descriptive paired observations from three project units; no significance or generalization claim.'}
 
 

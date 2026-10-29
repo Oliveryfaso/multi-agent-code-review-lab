@@ -69,6 +69,23 @@ def adjudicate(study, results):
     return reviews, adjudications
 
 
+def safety_fixture(task_id, verdict, judgment, *, ask_user=False):
+    study = fixture()
+    cell_id = task_id + ':adaptive_read_3'
+    cell = next(cell for cell in study['cells'] if cell['cell_id'] == cell_id)
+    results = {cell_id: answer(cell)}
+    reviews, adjudications = adjudicate(study, results)
+    result = results[cell_id]
+    if ask_user:
+        result.update(status='ask_user_terminated', answer=None, gap='Synthetic external value.')
+    else:
+        result['answer']['verdict'] = verdict
+    reviews[cell_id].update(result_sha256=report.result_digest(result), flags=judgment)
+    adjudications['cells'][cell_id].update(result_sha256=report.result_digest(result),
+        review_sha256=report.result_digest(reviews[cell_id]), flags=judgment)
+    return study, results, reviews, adjudications
+
+
 class StudyReportTests(unittest.TestCase):
     def setUp(self):
         self.assertIsNotNone(report, 'The independent study reporting adapter is not implemented.')
@@ -104,6 +121,89 @@ class StudyReportTests(unittest.TestCase):
         self.assertEqual(len(actual['pairs']['adaptive_vs_fixed']), 9)
         self.assertTrue(all(row['outcome'] == 'tie' for row in actual['pairs']['adaptive_vs_fixed']))
 
+    def test_unattempted_unknown_and_unreviewed_pairs_are_not_observed_ties(self):
+        for state in ('both_unattempted', 'one_unattempted', 'unknown', 'review_pending'):
+            with self.subTest(state=state):
+                study = fixture()
+                results = {cell['cell_id']: answer(cell) for cell in study['cells']}
+                reviews, adjudications = adjudicate(study, results)
+                left, right = 't0:adaptive_read_3', 't0:fixed_read_3'
+                removed = [left, right] if state == 'both_unattempted' else [right]
+                for cell_id in removed:
+                    reviews.pop(cell_id)
+                    adjudications['cells'].pop(cell_id)
+                if state == 'both_unattempted':
+                    results.pop(left)
+                    results.pop(right)
+                elif state == 'one_unattempted':
+                    results.pop(right)
+                elif state == 'unknown':
+                    results[right].update(status='remote_outcome_unknown', answer=None,
+                        error_code='remote_outcome_unknown', unknown_reserved_usd='0.330000')
+                actual = report.build_study_report(study, results, reviews=reviews,
+                                                   adjudications=adjudications)
+                pair = actual['pairs']['adaptive_vs_fixed'][0]
+                self.assertEqual(pair['outcome'], 'pending' if state == 'review_pending' else 'not_comparable')
+                self.assertFalse(pair['comparison_eligible'])
+                self.assertIsNone(pair['comparison_basis'])
+                counts = actual['pair_counts']['adaptive_vs_fixed']
+                self.assertEqual(counts['planned_pairs'], 9)
+                self.assertEqual(counts['complete_pairs'], 8)
+                self.assertEqual(counts['incomplete_pairs'], 1)
+                self.assertEqual(len(actual['cells']), 36)
+                self.assertEqual(actual['strategies']['fixed_read_3']['metrics']['complete_solvable']['denominator'], 6)
+
+    def test_known_contract_failure_pair_is_explicit_operational_comparison(self):
+        study = fixture()
+        results = {cell['cell_id']: answer(cell) for cell in study['cells']}
+        reviews, adjudications = adjudicate(study, results)
+        cell_id = 't0:fixed_read_3'
+        results[cell_id].update(status='failed', error_code='diagnosis_json_invalid', answer=None)
+        reviews.pop(cell_id)
+        adjudications['cells'].pop(cell_id)
+        actual = report.build_study_report(study, results, reviews=reviews, adjudications=adjudications)
+        pair = actual['pairs']['adaptive_vs_fixed'][0]
+        self.assertEqual(pair['outcome'], 'win')
+        self.assertTrue(pair['comparison_eligible'])
+        self.assertEqual(pair['comparison_basis'], 'known_contract_failure_disposition')
+        self.assertEqual(actual['pair_counts']['adaptive_vs_fixed'], {
+            'planned_pairs': 9, 'complete_pairs': 9, 'incomplete_pairs': 0,
+            'complete_quality_pairs': 8, 'complete_operational_pairs': 1})
+
+    def test_safety_flags_reject_correct_verdict_marked_wrong_and_wrong_verdict_unmarked(self):
+        cases = [('t3', 'no_defect_supported', flags(false_positive=True)),
+                 ('t0', 'supported_defect', flags(false_release=True)),
+                 ('t3', 'supported_defect', flags()),
+                 ('t0', 'no_defect_supported', flags())]
+        for task_id, verdict, judgment in cases:
+            with self.subTest(task_id=task_id, verdict=verdict, flags=judgment):
+                study, results, reviews, adjudications = safety_fixture(task_id, verdict, judgment)
+                with self.assertRaisesRegex(ValueError, 'adjudication_answer_conflict'):
+                    report.build_study_report(study, results, reviews=reviews, adjudications=adjudications)
+
+    def test_abstentions_cannot_be_marked_as_definite_false_positive_or_release(self):
+        for task_id, judgment in [('t3', flags(false_positive=True)), ('t0', flags(false_release=True))]:
+            for ask_user in (False, True):
+                with self.subTest(task_id=task_id, ask_user=ask_user):
+                    study, results, reviews, adjudications = safety_fixture(task_id, 'unknown', judgment,
+                                                                          ask_user=ask_user)
+                    with self.assertRaisesRegex(ValueError, 'adjudication_answer_conflict'):
+                        report.build_study_report(study, results, reviews=reviews, adjudications=adjudications)
+
+    def test_consistent_safety_flags_are_accepted_without_automatic_semantic_pass(self):
+        cases = [('t3', 'supported_defect', flags(false_positive=True), 'false_positive', 1),
+                 ('t0', 'no_defect_supported', flags(false_release=True), 'false_release', 1),
+                 ('t3', 'no_defect_supported', flags(), 'false_positive', 0),
+                 ('t0', 'supported_defect', flags(), 'false_release', 0),
+                 ('t3', 'unknown', flags(), 'false_positive', 0)]
+        for task_id, verdict, judgment, metric, count in cases:
+            with self.subTest(task_id=task_id, verdict=verdict):
+                study, results, reviews, adjudications = safety_fixture(task_id, verdict, judgment)
+                actual = report.build_study_report(study, results, reviews=reviews, adjudications=adjudications)
+                metrics = actual['strategies']['adaptive_read_3']['metrics']
+                self.assertEqual(metrics[metric]['numerator'], count)
+                self.assertEqual(metrics['complete_solvable']['numerator'], 0)
+
     def test_failures_unknown_unattempted_stay_in_main_and_pair_denominators(self):
         study = fixture()
         results = {cell['cell_id']: answer(cell) for cell in study['cells']}
@@ -126,7 +226,7 @@ class StudyReportTests(unittest.TestCase):
         self.assertEqual(fixed['metrics']['conditional_reviewed_disposition']['denominator'], 7)
         self.assertEqual(len(actual['pairs']['adaptive_vs_fixed']), 9)
         self.assertEqual(actual['pairs']['adaptive_vs_fixed'][0]['outcome'], 'win')
-        self.assertEqual(actual['pairs']['adaptive_vs_fixed'][1]['outcome'], 'win')
+        self.assertEqual(actual['pairs']['adaptive_vs_fixed'][1]['outcome'], 'not_comparable')
 
     def test_review_must_bind_exact_result_and_merged_review(self):
         study = fixture()
