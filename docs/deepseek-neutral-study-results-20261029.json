@@ -476,7 +476,8 @@
     "Ceilings match; actual calls, evidence, output, tool reads, costs and timings differ.",
     "Review blindness is partial; evidence quantity and answer form can reveal strategy, and the custodian held frozen gold and delivery-level totals.",
     "Reasoning tokens are included in output tokens; summed local elapsed/provider times are not supplier server latency or experiment wall time.",
-    "No raw source, answer, reasoning, per-cell score, category map, private path or credential is exported."
+    "No raw source, answer, reasoning, per-cell score, category map, private path or credential is exported.",
+    "D's 0/3 gap-task credit comprises one reviewed non-credit output, one contract failure and one identity failure; it does not mean three semantically scored wrong answers."
   ],
   "model": {
     "model_id": "deepseek-flash",
@@ -662,6 +663,7 @@
   },
   "provenance": {
     "completion_sha256": "6c72b6d518fc3be2142ff91e0dacffdcc7cdb6c6e630816722e970f505440a28",
+    "external_gap_summary_sha256": "33ba126599c33c81117be866e5b06dd0a89acb9d6d1c46cd292dad61bf119e60",
     "native_reviews_only_import_audit_sha256": "5a6ec66852a73549cb10029172d0b93a3684e923f08690227405801025689ffe",
     "original_terminal_files_sha256": "5dbf600125df7c6f319a2cb073d837fd08a23ffe6328ffa91838b5af15cfc9bb",
     "second_terminal_files_sha256": "c5fd7d1dd94f3b6d5c077a155209b8ece7a23b9cc530574a27d684dcae8391fd",

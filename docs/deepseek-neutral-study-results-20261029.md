@@ -39,6 +39,10 @@ reviewed outputs**. The latter excludes eleven failures and is not a full-plan
 accuracy rate. Sixteen of 24 solvable slots were not fully resolved; eleven of
 12 gap slots did not earn necessary-abstention credit.
 
+D's 0/3 gap-task credit comprises one reviewed non-credit output, one contract
+failure and one identity failure; it does not mean three semantically scored
+wrong answers.
+
 The 25 reviewed outputs have mutually exclusive final categories: eight complete
 solutions, one necessary abstention, eight partial and eight incorrect. The
 native `partial` flag appears eleven times and can overlap other zero-credit
