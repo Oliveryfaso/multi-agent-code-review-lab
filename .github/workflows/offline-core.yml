@@ -116,6 +116,12 @@ jobs:
           python -I -S -B scripts/run_offline_tests.py
           test_deepseek_policy_runner test_deepseek_policy_manifest test_deepseek_policy_tools
 
+      - name: Gold-free paired study contract fixtures without network
+        run: >-
+          python -I -S -B scripts/run_offline_tests.py
+          test_deepseek_study_profile test_deepseek_study_plan test_deepseek_study_runner
+          test_deepseek_study_report test_deepseek_study_batch
+
       - name: Frozen continuation proofs without network
         run: python -I -S -B scripts/run_offline_tests.py test_deepseek_policy_recovery
 

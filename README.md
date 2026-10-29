@@ -73,6 +73,10 @@ Local reports contain source/input and must stay private; never expose the workb
 
 A separate research harness compares four bounded diagnostic strategies over twelve author-known synthetic development cases. The final 29-cell remainder was fully processed: 21 contract-accepted outputs and eight recorded failures. All versions together used 67 requests; historical unknown cost reservations remain held. Post-hoc audits and real evidence retrieval do not establish general accuracy or a causal benefit from tools. Frozen runs are not repaired or rescored. See the [experiment protocol](docs/deepseek-policy-experiment-v1.md), [aggregate results and limits](docs/deepseek-policy-results.md), [provider contract](docs/deepseek-provider-compatibility.md), and [live-run checklist](docs/deepseek-policy-pilot-checklist-v1.md).
 
+The [proposed paired study](docs/deepseek-paired-study.md) adds an offline-only
+four-strategy fixture runner and full-denominator reporting. No live run,
+unseen benchmark result or retrieval gain is claimed for this new protocol.
+
 ## Documentation
 
 - [CLI, Python API, profiles and report semantics](docs/static-evidence.md)
