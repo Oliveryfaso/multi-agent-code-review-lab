@@ -71,7 +71,7 @@ Local reports contain source/input and must stay private; never expose the workb
 
 ## DeepSeek policy research
 
-A separate research harness compares four bounded diagnostic strategies over twelve author-known synthetic development cases. The live pilots and recovery attempt stopped after six requests in total; the results do not establish diagnostic accuracy or a benefit from tools. Explicitly approved recovery retains unknown cost reservations and the original cumulative limits. Response compatibility and independently validated billing evidence do not complete or rescore stopped runs. See the [experiment protocol](docs/deepseek-policy-experiment-v1.md), [aggregate results and limits](docs/deepseek-policy-results.md), [provider contract](docs/deepseek-provider-compatibility.md), and [live-run checklist](docs/deepseek-policy-pilot-checklist-v1.md).
+A separate research harness compares four bounded diagnostic strategies over twelve author-known synthetic development cases. The latest continuation attempted 15 of 44 cells before a diagnosis-length contract failure stopped it; 29 remain unattempted. All versions together used 24 requests. Partial post-hoc audits do not establish diagnostic accuracy or a benefit from tools. Unknown cost reservations remain held, and frozen runs are not rescored. See the [experiment protocol](docs/deepseek-policy-experiment-v1.md), [aggregate results and limits](docs/deepseek-policy-results.md), [provider contract](docs/deepseek-provider-compatibility.md), and [live-run checklist](docs/deepseek-policy-pilot-checklist-v1.md).
 
 ## Documentation
 
