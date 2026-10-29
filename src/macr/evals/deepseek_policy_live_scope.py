@@ -14,7 +14,7 @@ from pathlib import Path
 import re
 import stat
 
-from macr.evals.deepseek_policy_batch import _digest
+from macr.evals.deepseek_policy_batch import PolicyBatchError, _check_recovery_batch, _digest
 from macr.evals.deepseek_policy_manifest import PolicyManifestError, load_policy_manifest
 from macr.investigation.scope import open_directory, validate_workspace_path
 from macr.investigation.validation import ContractError
@@ -46,6 +46,7 @@ class LiveApproval:
     log_root: Path
     retention_days: int = 14
     predecessor_batch_sha256: str | None = None
+    recovery_plan_sha256: str | None = None
 
 
 @dataclass(frozen=True)
@@ -62,6 +63,7 @@ class ValidatedLiveScope:
     log_root: Path
     retention_days: int
     predecessor_batch_sha256: str | None = None
+    recovery_plan_sha256: str | None = None
 
 
 LOG_CONTENTS = ("source", "model_output", "reasoning_content", "usage", "receipts")
@@ -129,13 +131,19 @@ def validate_live_scope(approval: LiveApproval, batch: dict, *, dataset_root: Pa
     _require(predecessor is None or (type(predecessor) is str and
              _DIGEST.fullmatch(predecessor) is not None and
              predecessor != approval.batch_sha256), "live_predecessor_invalid")
+    recovery_sha = approval.recovery_plan_sha256
+    _require(recovery_sha is None or (type(recovery_sha) is str and
+             _DIGEST.fullmatch(recovery_sha) is not None), "live_recovery_invalid")
+    recovering = "recovery_plan" in batch
+    _require(recovering or recovery_sha is None, "live_recovery_scope_mismatch")
 
     dataset = Path(dataset_root).absolute()
     _require(str(dataset) == batch.get("dataset_root"), "live_dataset_mismatch")
     manifests = batch.get("manifests")
     cells = batch.get("cells")
     _require(type(manifests) is list and len(manifests) == 12 and
-             type(cells) is list and len(cells) == 48, "live_grid_invalid")
+             type(cells) is list and (1 <= len(cells) < 48 if recovering
+                                      else len(cells) == 48), "live_grid_invalid")
     expected_sources: list[str] = []
     task_ids: set[str] = set()
     for row in manifests:
@@ -165,7 +173,18 @@ def validate_live_scope(approval: LiveApproval, batch: dict, *, dataset_root: Pa
                  "live_grid_invalid")
         grid.add(identity)
         cell_ids.add(cell["cell_id"])
-    _require(len(grid) == 48, "live_grid_invalid")
+    if recovering:
+        try:
+            plan = _check_recovery_batch(batch)
+        except PolicyBatchError as error:
+            raise LiveScopeError(error.code) from None
+        except (KeyError, TypeError, ValueError):
+            raise LiveScopeError("live_recovery_invalid") from None
+        _require(recovery_sha == plan["plan_sha256"] and
+                 predecessor == plan["predecessor_batch_sha256"],
+                 "live_recovery_scope_mismatch")
+    else:
+        _require(len(grid) == 48, "live_grid_invalid")
     _require(type(approval.approved_sources) is tuple and
              len(approval.approved_sources) == len(expected_sources) and
              len(set(approval.approved_sources)) == len(expected_sources) and
@@ -184,7 +203,7 @@ def validate_live_scope(approval: LiveApproval, batch: dict, *, dataset_root: Pa
         price_checked_on=approval.price_checked_on,
         approved_sources=tuple(sorted(expected_sources)), log_root=log_root,
         retention_days=approval.retention_days,
-        predecessor_batch_sha256=predecessor)
+        predecessor_batch_sha256=predecessor, recovery_plan_sha256=recovery_sha)
 
 
 def acquire_runtime_inputs(approval: LiveApproval, batch: dict, *, dataset_root: Path,
@@ -218,6 +237,8 @@ def write_log_policy(scope: ValidatedLiveScope) -> Path:
               "retention_days": scope.retention_days,
               "auto_delete": False, "upload": False,
               "purge_requires_user_approval": True}
+    if scope.recovery_plan_sha256 is not None:
+        record["recovery_plan_sha256"] = scope.recovery_plan_sha256
     payload = json.dumps(record, sort_keys=True, ensure_ascii=False,
                          allow_nan=False, separators=(",", ":")).encode("utf-8") + b"\n"
     _require(len(payload) <= 4096, "live_log_policy_limit")

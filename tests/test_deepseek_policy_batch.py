@@ -2,6 +2,7 @@
 from hashlib import sha256
 import json
 from pathlib import Path
+import shutil
 import unittest
 
 from debugger_fixtures import fixture_root
@@ -448,6 +449,105 @@ class PolicyBatchTests(unittest.TestCase):
         with self.assertRaises(PolicyBatchError) as unresolved:
             self.claim(second)
         self.assertEqual(unresolved.exception.code, "batch_unresolved_claim")
+
+
+class RetainedRecoveryBatchTests(unittest.TestCase):
+    def setUp(self):
+        from test_deepseek_policy_recovery import make_recovery_source
+        from macr.evals.deepseek_policy_recovery import build_recovery_plan
+        source = make_recovery_source(fixture_root())
+        self.__dict__.update(source.__dict__)
+        self.target = self.root / "recovered"
+        self.plan = build_recovery_plan(self.current,
+            predecessor_batch_sha256=self.batch["batch_sha256"],
+            target_control_root=self.target / "control",
+            target_output_root=self.target / "outputs", recovery_version="recovery-test-v1")
+        self.target.mkdir(mode=0o700)
+        self.outputs = self.target / "outputs"
+        self.outputs.mkdir(mode=0o700)
+
+    def prepare(self, **changes):
+        arguments = dict(dataset_root=self.dataset, project_root=self.project,
+            control_root=self.target / "control", output_root=self.outputs, seed=0,
+            implementation_version="recovery-test-v1", recovery_plan=self.plan)
+        arguments.update(changes)
+        directories = arguments.pop("manifest_dirs", [row["manifest_dir"]
+                                                       for row in self.batch["manifests"]])
+        return prepare_policy_batch(directories, **arguments)
+
+    def test_only_unattempted_logical_cells_get_new_execution_identities(self):
+        recovered = self.prepare()
+        self.assertEqual(len(recovered["cells"]), 45)
+        identities = {(row["task_id"], row["repeat"], row["arm"])
+                      for row in recovered["cells"]}
+        attempted = {(row["task_id"], row["repeat"], row["arm"])
+                     for row in self.batch["cells"][:3]}
+        self.assertEqual(len(identities), 45)
+        self.assertFalse(identities.intersection(attempted))
+        self.assertFalse({row["cell_id"] for row in recovered["cells"]}.intersection(
+            row["cell_id"] for row in self.batch["cells"]))
+        self.assertEqual(recovered["recovery_plan"], self.plan)
+        blocked = self.batch["cells"][2]
+        with self.assertRaises(PolicyBatchError) as replay:
+            claim_policy_cell(self.target / "control", task_id=blocked["task_id"],
+                repeat=1, arm=blocked["arm"], out=self.outputs / blocked["cell_id"])
+        self.assertEqual(replay.exception.code, "batch_cell_unknown")
+        first = recovered["cells"][0]
+        ticket = claim_policy_cell(self.target / "control", task_id=first["task_id"],
+            repeat=1, arm=first["arm"], out=first["out"])
+        self.assertNotIn("recovery_plan", ticket)
+        self.assertNotIn("opening", ticket)
+
+    def test_plan_cannot_be_used_in_another_output_or_implementation_version(self):
+        for changes in ({"implementation_version": "another-version"},
+                        {"output_root": self.root / "other-outputs"}):
+            with self.subTest(changes=changes):
+                if "output_root" in changes:
+                    changes["output_root"].mkdir(mode=0o700)
+                with self.assertRaises(PolicyBatchError):
+                    self.prepare(**changes)
+                self.assertFalse((self.target / "control").exists())
+
+    def test_recovery_does_not_change_reference_answers_or_authorized_snapshots(self):
+        other = self.root / "other-dataset"
+        shutil.copytree(self.dataset, other)
+        (other / "gold.json").write_text('{"changed":"reference"}', encoding="utf-8")
+        with self.assertRaises(PolicyBatchError):
+            self.prepare(dataset_root=other)
+        self.assertFalse((self.target / "control").exists())
+
+    def test_same_source_bytes_do_not_allow_changed_question_or_assumptions(self):
+        from macr.evals.deepseek_policy_manifest import load_policy_manifest
+        directories = []
+        for row in self.batch["manifests"]:
+            manifest = load_policy_manifest(row["manifest_dir"], dataset_root=self.dataset)
+            task = dict(manifest["task"])
+            if row["task_id"] == "p01":
+                task["question"] = "Changed question that was never approved."
+                task["assumptions"] = ["Added assumption."]
+            directory = self.root / "changed-manifests" / row["task_id"]
+            directory.parent.mkdir(exist_ok=True)
+            prepare_policy_manifest(task, dataset_root=self.dataset, out=directory, model=MODEL)
+            directories.append(directory)
+        with self.assertRaises(PolicyBatchError):
+            self.prepare(manifest_dirs=directories)
+        self.assertFalse((self.target / "control").exists())
+
+    def test_rehashed_source_manifest_cannot_redefine_the_original_task(self):
+        from macr.evals.deepseek_policy_batch import _digest
+        from macr.evals.deepseek_policy_recovery import RecoveryError, build_recovery_plan
+        path = Path(self.batch["manifests"][0]["manifest_dir"]) / "manifest.json"
+        changed = json.loads(path.read_text())
+        changed["task"]["question"] = "Changed original question."
+        changed["manifest_sha256"] = _digest({key: value for key, value in changed.items()
+                                             if key != "manifest_sha256"})
+        path.write_text(json.dumps(changed), encoding="utf-8")
+        with self.assertRaises((RecoveryError, PolicyBatchError)):
+            self.plan = build_recovery_plan(self.current,
+                predecessor_batch_sha256=self.batch["batch_sha256"],
+                target_control_root=self.target / "control",
+                target_output_root=self.outputs, recovery_version="recovery-test-v1")
+            self.prepare()
 
 
 if __name__ == "__main__":

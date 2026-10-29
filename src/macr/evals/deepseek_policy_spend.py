@@ -38,6 +38,7 @@ _CELL = re.compile(r"[0-9a-f]{32}\Z")
 _MONEY = re.compile(r"(?:0|[1-9][0-9]{0,5})(?:\.[0-9]{1,6})?\Z")
 _ENTRY = re.compile(r"([0-9a-f]{32})-(0[1-3])\.(reservation|outcome)\.json\Z")
 _MAX_RECORD = 4096
+_MAX_POLICY = 64 * 1024
 _MAX_RECORDS = 2 * 84
 
 
@@ -80,7 +81,7 @@ def _batch(control_root, batch_sha256=None):
 
 def _policy(root: Path, batch: dict, *, allow_carry=True) -> dict:
     try:
-        policy = _read_json(root, "spend/policy.json", _MAX_RECORD,
+        policy = _read_json(root, "spend/policy.json", _MAX_POLICY,
                             "spend_policy_invalid")
     except PolicyBatchError:
         raise PolicySpendError("spend_policy_invalid") from None
@@ -88,6 +89,10 @@ def _policy(root: Path, batch: dict, *, allow_carry=True) -> dict:
     if "carry_forward" in policy:
         _require(allow_carry, "spend_predecessor_chain")
         expected.add("carry_forward")
+    if "recovery_forward" in policy:
+        _require(allow_carry and "carry_forward" not in policy,
+                 "spend_predecessor_chain")
+        expected.add("recovery_forward")
     _require(set(policy) == expected and
              policy["schema"] == SCHEMA and
              policy["batch_sha256"] == batch["batch_sha256"] and
@@ -106,6 +111,18 @@ def _policy(root: Path, batch: dict, *, allow_carry=True) -> dict:
         actual = _derive_carry(root, batch, carry["control_root"], carry["batch_sha256"])
         _require(actual == carry, "spend_predecessor_drift")
         _check_successor(root, batch, actual)
+    _require(("recovery_forward" in policy) == ("recovery_plan" in batch),
+             "spend_recovery_missing")
+    if "recovery_forward" in policy:
+        from macr.evals.deepseek_policy_recovery import RecoveryError, check_recovery
+        forward = policy["recovery_forward"]
+        _require(type(forward) is dict and set(forward) == {"plan", "confirmation"} and
+                 policy["max_requests"] == 84 and policy["max_usd"] == "3.000000",
+                 "spend_recovery_invalid")
+        try:
+            check_recovery(root, batch, forward["plan"], forward["confirmation"])
+        except RecoveryError as error:
+            raise PolicySpendError(error.code) from None
     return policy
 
 
@@ -273,12 +290,21 @@ def _summary(batch: dict, policy: dict, reservations: dict, outcomes: dict) -> d
     batch_spent = sum(_parse_usd(row["charged_usd"], code="spend_entries_invalid")
                 for row in outcomes.values() if row["state"] == "settled")
     carry = policy.get("carry_forward", {})
+    recovery = policy.get("recovery_forward")
+    retained_unknown = 0
+    if recovery is not None:
+        plan = recovery["plan"]
+        carry = {"request_count": plan["opening"]["request_count"],
+                 "spent_usd": plan["opening"]["spent_usd"],
+                 "batch_sha256": plan["predecessor_batch_sha256"]}
+        retained_unknown = _parse_usd(plan["opening"]["retained_unknown_usd"],
+                                     code="spend_recovery_invalid")
     carried_count = carry.get("request_count", 0)
     carried_spent = _parse_usd(carry.get("spent_usd", "0.000000"),
                              code="spend_predecessor_invalid")
     spent = batch_spent + carried_spent
     count = carried_count + len(reservations)
-    held = _RESERVATION * sum(key not in outcomes or
+    held = retained_unknown + _RESERVATION * sum(key not in outcomes or
                               outcomes[key]["state"] != "settled"
                               for key in reservations)
     unknown = any(row["state"] != "settled" for row in outcomes.values())
@@ -295,12 +321,15 @@ def _summary(batch: dict, policy: dict, reservations: dict, outcomes: dict) -> d
             "batch_request_count": len(reservations), "batch_spent_usd": _usd(batch_spent),
             "carried_request_count": carried_count, "carried_spent_usd": _usd(carried_spent),
             "carried_batch_sha256": carry.get("batch_sha256"),
-            "reserved_usd": _usd(held), "price_snapshot": policy["price_snapshot"]}
+            "reserved_usd": _usd(held), "retained_unknown_usd": _usd(retained_unknown),
+            "recovery_plan_sha256": recovery["plan"]["plan_sha256"] if recovery else None,
+            "price_snapshot": policy["price_snapshot"]}
 
 
 def initialize_spend_ledger(control_root, *, batch_sha256, max_usd="3.00",
                             max_requests=84, price_snapshot=PRICE_SNAPSHOT,
-                            predecessor_control_root=None, predecessor_batch_sha256=None):
+                            predecessor_control_root=None, predecessor_batch_sha256=None,
+                            recovery_plan=None, recovery_confirmation=None):
     """Freeze approval price and local limits in a new control-plane directory."""
     root, batch = _batch(control_root, batch_sha256)
     _require(type(price_snapshot) is dict and price_snapshot == PRICE_SNAPSHOT,
@@ -316,6 +345,21 @@ def initialize_spend_ledger(control_root, *, batch_sha256, max_usd="3.00",
               "price_snapshot": dict(PRICE_SNAPSHOT)}
     _require((predecessor_control_root is None) == (predecessor_batch_sha256 is None),
              "spend_predecessor_invalid")
+    _require(("recovery_plan" in batch) == (recovery_plan is not None) and
+             (recovery_plan is None) == (recovery_confirmation is None),
+             "spend_recovery_missing")
+    if recovery_plan is not None:
+        from macr.evals.deepseek_policy_recovery import (RecoveryError,
+            validate_recovery_plan, validate_recovery_confirmation)
+        _require(predecessor_control_root is None and max_requests == 84 and
+                 amount == 3 * _MICRO, "spend_recovery_invalid")
+        try:
+            plan = validate_recovery_plan(recovery_plan)
+            confirmation = validate_recovery_confirmation(plan, recovery_confirmation,
+                batch_sha256=batch_sha256)
+        except RecoveryError as error:
+            raise PolicySpendError(error.code) from None
+        policy["recovery_forward"] = {"plan": plan, "confirmation": confirmation}
     if predecessor_control_root is not None:
         carry = _derive_carry(root, batch, predecessor_control_root,
                               predecessor_batch_sha256)
@@ -331,12 +375,19 @@ def initialize_spend_ledger(control_root, *, batch_sha256, max_usd="3.00",
                 carry = policy["carry_forward"]
                 _write_new(_successor_path(carry), _successor_record(root, batch, carry),
                     _MAX_RECORD)
+            if "recovery_forward" in policy:
+                from macr.evals.deepseek_policy_recovery import RecoveryError, claim_recovery
+                forward = policy["recovery_forward"]
+                try:
+                    claim_recovery(root, batch, forward["plan"], forward["confirmation"])
+                except RecoveryError as error:
+                    raise PolicySpendError(error.code) from None
             os.mkdir("spend", 0o700, dir_fd=root_fd)
             os.fsync(root_fd)
             with open_directory(root / "spend") as spend_fd:
                 os.mkdir("entries", 0o700, dir_fd=spend_fd)
                 os.fsync(spend_fd)
-            _write_new(root / "spend" / "policy.json", policy, _MAX_RECORD)
+            _write_new(root / "spend" / "policy.json", policy, _MAX_POLICY)
     except (OSError, ContractError, PolicyBatchError):
         raise PolicySpendError("spend_initialize_invalid") from None
     return policy

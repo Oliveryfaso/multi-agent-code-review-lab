@@ -37,7 +37,7 @@ OFFLINE_MODULES = frozenset({
     'test_deepseek_policy_dataset', 'test_deepseek_policy_runner',
     'test_deepseek_policy_batch', 'test_deepseek_policy_observability',
     'test_deepseek_policy_batch_entry', 'test_deepseek_policy_dryrun_batch',
-    'test_deepseek_policy_spend', 'test_deepseek_policy_live_scope',
+    'test_deepseek_policy_spend', 'test_deepseek_policy_recovery', 'test_deepseek_policy_live_scope',
     'test_deepseek_policy_live_entry', 'test_deepseek_policy_live_cli',
     'test_investigation_budget', 'test_investigation_queue',
     'test_investigation_memory', 'test_run_store', 'test_run_recovery', 'test_sqlite_run_store',

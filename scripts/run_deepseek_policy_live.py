@@ -30,9 +30,10 @@ from macr.evals.deepseek_policy_live_entry import (LiveEntryError,
     PRICE_SNAPSHOT_ID, prepare_approved_policy_batch,
     run_next_approved_policy_cell)
 from macr.evals.deepseek_policy_live_scope import (ENDPOINT, MODEL_ID,
-    LiveApproval, LiveScopeError, validate_live_scope)
+    LiveApproval, LiveScopeError, validate_live_scope, write_log_policy)
 from macr.evals.deepseek_policy_manifest import (PolicyManifestError,
     prepare_policy_manifest)
+from macr.evals.deepseek_policy_recovery import RecoveryError
 from macr.evals.deepseek_policy_spend import (PRICE_SNAPSHOT, PolicySpendError,
     spend_state)
 from macr.investigation.evidence_budget import BudgetExceeded
@@ -106,6 +107,8 @@ def _lock_record(run_dir: Path, approval_ref: str,
 
 
 def _check_one_batch(run_dir: Path, private_root: Path) -> dict:
+    if run_dir.name.startswith("pilot-retained-v3-"):
+        return _check_recovery_batch(run_dir, private_root)
     try:
         _private_root(private_root, create=False)
         stored = _read_json(private_root, LOCK_FILENAME, 4096,
@@ -147,7 +150,7 @@ def _cases(dataset_root: Path) -> list[dict]:
 
 def _approval_record(batch: dict, run_dir: Path, approval_ref: str,
                      predecessor_batch_sha256: str | None) -> dict:
-    return {"schema": APPROVAL_SCHEMA, "granted": True,
+    record = {"schema": APPROVAL_SCHEMA, "granted": True,
             "approval_ref": approval_ref,
             "batch_sha256": batch["batch_sha256"], "model_id": MODEL_ID,
             "endpoint": ENDPOINT, "max_requests": 84, "max_usd": "3.00",
@@ -157,6 +160,10 @@ def _approval_record(batch: dict, run_dir: Path, approval_ref: str,
             "price_checked_on": PRICE_SNAPSHOT["checked_date"],
             "approved_sources": list(APPROVED_SOURCES),
             "log_root": str(run_dir / "outputs"), "retention_days": 14}
+    if "recovery_plan" in batch:
+        record["budget_scope"] = "cumulative_retained_unknown"
+        record["recovery_plan_sha256"] = batch["recovery_plan"]["plan_sha256"]
+    return record
 
 
 def _approval(record: dict) -> LiveApproval:
@@ -167,7 +174,35 @@ def _approval(record: dict) -> LiveApproval:
         price_checked_on=PRICE_SNAPSHOT["checked_date"],
         approved_sources=APPROVED_SOURCES,
         log_root=Path(record["log_root"]), retention_days=14,
-        predecessor_batch_sha256=record["predecessor_batch_sha256"])
+        predecessor_batch_sha256=record["predecessor_batch_sha256"],
+        recovery_plan_sha256=record.get("recovery_plan_sha256"))
+
+
+def _check_recovery_batch(run_dir: Path, private_root: Path) -> dict:
+    """The ledger rechecks the original-root, exclusive recovery lock."""
+    from macr.evals.deepseek_policy_recovery import validate_recovery_confirmation
+    _private_root(private_root, create=False)
+    try:
+        _, batch = _load_batch(run_dir / "control")
+        plan = batch.get("recovery_plan")
+        _require(type(plan) is dict and plan.get("target_control_root") == str(run_dir / "control")
+                 and plan.get("target_output_root") == str(run_dir / "outputs"),
+                 "live_recovery_path_mismatch")
+        confirmation = _read_json(run_dir, "recovery-confirmation.json", 4096,
+                                  "live_recovery_confirmation_invalid")
+        validate_recovery_confirmation(plan, confirmation,
+                                        batch_sha256=batch["batch_sha256"])
+        money = spend_state(run_dir / "control")
+        policy = _read_json(run_dir / "control", "spend/policy.json", 64 * 1024,
+                            "live_recovery_spend_mismatch")
+        _require(policy.get("recovery_forward", {}).get("confirmation") == confirmation,
+                 "live_recovery_confirmation_mismatch")
+        _require(money.get("carried_batch_sha256") == plan["predecessor_batch_sha256"],
+                 "live_recovery_spend_mismatch")
+        return {"approval_ref": confirmation["approval_ref"],
+                "predecessor_batch_sha256": plan["predecessor_batch_sha256"]}
+    except (PolicyBatchError, PolicySpendError, RecoveryError) as error:
+        raise LiveCliError(error.code) from None
 
 
 def _load_approval(run_dir: Path, batch: dict) -> LiveApproval:
@@ -236,6 +271,63 @@ def prepare_run(run_dir: Path, *, project_root: Path = PROJECT,
         raise LiveCliError(getattr(error, "code", "live_prepare_incomplete")) from None
 
 
+def prepare_recovery_run(run_dir: Path, *, project_root: Path = PROJECT,
+                         dataset_root: Path = DATASET, private_root: Path = PRIVATE_ROOT,
+                         approval_ref: str, retain_unknown: bool,
+                         predecessor_control_root, predecessor_batch_sha256) -> dict:
+    """Prepare one explicitly confirmed subset; never alter a halted predecessor."""
+    _require(retain_unknown is True and type(approval_ref) is str and
+             _APPROVAL_REF.fullmatch(approval_ref) is not None,
+             "live_recovery_confirmation_missing")
+    _require(type(predecessor_batch_sha256) is str and
+             _SHA256.fullmatch(predecessor_batch_sha256) is not None,
+             "live_predecessor_scope_invalid")
+    root, parent = _run_path(run_dir, private_root)
+    _require(root.name.startswith("pilot-retained-v3-"), "live_generation_name_invalid")
+    project, dataset = Path(project_root).absolute(), Path(dataset_root).absolute()
+    _require(not parent.is_relative_to(project) and not parent.is_relative_to(dataset),
+             "live_private_root_overlap")
+    from macr.evals.deepseek_policy_recovery import build_recovery_plan
+    try:
+        plan = build_recovery_plan(predecessor_control_root,
+            predecessor_batch_sha256=predecessor_batch_sha256,
+            target_control_root=root / "control", target_output_root=root / "outputs",
+            recovery_version="live-policy-retained-v3")
+        _private_root(parent, create=False)
+        _require(not root.exists() and not root.is_symlink(), "live_run_exists")
+        cases = _cases(dataset)
+        with open_directory(parent) as parent_fd:
+            os.mkdir(root.name, 0o700, dir_fd=parent_fd)
+            os.fsync(parent_fd)
+        with open_directory(root) as root_fd:
+            for name in ("manifests", "outputs"):
+                os.mkdir(name, 0o700, dir_fd=root_fd)
+            os.fsync(root_fd)
+        manifests = []
+        for case in cases:
+            directory = root / "manifests" / case["id"]
+            prepare_policy_manifest(case, dataset_root=dataset, out=directory, model=MODEL)
+            manifests.append(directory)
+        batch = prepare_policy_batch(manifests, dataset_root=dataset,
+            project_root=project, control_root=root / "control",
+            output_root=root / "outputs", seed=41,
+            implementation_version=plan["recovery_version"], recovery_plan=plan)
+        confirmation = {"schema": "macr.deepseek.policy.recovery.confirmation.v1",
+            "granted": True, "approval_ref": approval_ref,
+            "plan_sha256": plan["plan_sha256"], "batch_sha256": batch["batch_sha256"],
+            "action": "retain_unknown_and_continue_unattempted",
+            "max_requests": 84, "max_usd": "3.000000"}
+        record = _approval_record(batch, root, approval_ref, predecessor_batch_sha256)
+        _write_new(root / "recovery-confirmation.json", confirmation, 4096)
+        prepare_approved_policy_batch(root / "control", dataset_root=dataset,
+            approval=_approval(record), recovery_confirmation=confirmation)
+        _write_new(root / "approval.json", record, 4096)
+        return batch
+    except (OSError, ContractError, PolicyBatchError, PolicyManifestError,
+            PolicySpendError, LiveEntryError, RecoveryError) as error:
+        raise LiveCliError(getattr(error, "code", "live_prepare_incomplete")) from None
+
+
 def status_run(run_dir: Path, *, private_root: Path | None = None) -> dict:
     """Derive progress from durable claims, results and USD receipts only."""
     root, parent = _run_path(run_dir, private_root or Path(run_dir).absolute().parent)
@@ -279,6 +371,7 @@ def status_run(run_dir: Path, *, private_root: Path | None = None) -> dict:
         "batch_spent_usd": money.get("batch_spent_usd", money["spent_usd"]),
         "spent_usd": money["spent_usd"],
         "reserved_usd": money["reserved_usd"],
+        "retained_unknown_usd": money.get("retained_unknown_usd", "0.000000"),
         "spend_state": money["state"],
         "batch_complete": closed == len(batch["cells"]) and halted == 0}
     return summary
@@ -297,7 +390,7 @@ def execute_prepared(run_dir: Path, *, dataset_root: Path = DATASET,
     try:
         control, batch = _load_batch(root / "control")
         approval = _load_approval(root, batch)
-        validate_live_scope(approval, batch, dataset_root=dataset_root)
+        scope = validate_live_scope(approval, batch, dataset_root=dataset_root)
         _check_drift(batch)
         money = spend_state(control)
         _require(money["batch_sha256"] == batch["batch_sha256"] and
@@ -321,6 +414,7 @@ def execute_prepared(run_dir: Path, *, dataset_root: Path = DATASET,
                  money["request_count"] < 84, "live_budget_exhausted")
         if scripted_by_cell is not None:
             _require(type(scripted_by_cell) is dict, "live_script_invalid")
+        write_log_policy(scope)
         key = key_reader()
         try:
             for cell in batch["cells"][summary["closed_cells"]:][:cell_limit]:
@@ -367,17 +461,32 @@ def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     actions = parser.add_mutually_exclusive_group(required=True)
     actions.add_argument("--prepare", action="store_true")
+    actions.add_argument("--prepare-recovery", action="store_true")
     actions.add_argument("--status", action="store_true")
     actions.add_argument("--execute", action="store_true")
     parser.add_argument("--run-dir", type=Path, required=True)
     parser.add_argument("--approval-ref")
+    parser.add_argument("--retain-unknown", action="store_true")
     parser.add_argument("--predecessor-control", type=Path)
     parser.add_argument("--predecessor-sha256")
     parser.add_argument("--cell-limit", type=int, default=48)
     args = parser.parse_args(argv)
     try:
         root, _ = _run_path(args.run_dir, PRIVATE_ROOT)
+        if args.prepare_recovery:
+            _require(args.retain_unknown and args.cell_limit == 48,
+                     "live_recovery_confirmation_missing")
+            _require(args.predecessor_control is not None,
+                     "live_predecessor_scope_invalid")
+            batch = prepare_recovery_run(root, approval_ref=args.approval_ref,
+                retain_unknown=True, predecessor_control_root=args.predecessor_control,
+                predecessor_batch_sha256=args.predecessor_sha256)
+            print(json.dumps({"batch_sha256": batch["batch_sha256"],
+                "recovery_plan_sha256": batch["recovery_plan"]["plan_sha256"],
+                "status": status_run(root, private_root=PRIVATE_ROOT)}, ensure_ascii=False))
+            return 0
         if args.prepare:
+            _require(not args.retain_unknown, "live_recovery_confirmation_unexpected")
             _require(args.cell_limit == 48, "live_cell_limit_invalid")
             _require(root.name.startswith("pilot-refs-v2-"), "live_generation_name_invalid")
             _require(type(args.approval_ref) is str and
@@ -395,7 +504,7 @@ def main(argv=None) -> int:
                 "status": status_run(root, private_root=PRIVATE_ROOT)},
                 ensure_ascii=False))
             return 0
-        _require(args.approval_ref is None and args.predecessor_control is None and
+        _require(not args.retain_unknown and args.approval_ref is None and args.predecessor_control is None and
                  args.predecessor_sha256 is None, "live_approval_ref_unexpected")
         if args.status:
             _require(args.cell_limit == 48, "live_cell_limit_invalid")

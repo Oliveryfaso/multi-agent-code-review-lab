@@ -243,7 +243,7 @@ class CarryForwardTests(unittest.TestCase):
         claim_policy_cell(self.current, task_id=self.cell["task_id"],
             repeat=self.cell["repeat"], arm=self.cell["arm"], out=self.cell["out"])
 
-    def make_batch(self, name, count=1):
+    def make_batch(self, name, count=1, seed=0):
         base = self.root / name
         dataset, project = base / "dataset", base / "project"
         dataset.mkdir(parents=True)
@@ -273,7 +273,7 @@ class CarryForwardTests(unittest.TestCase):
         outputs.mkdir(mode=0o700)
         control = base / "control"
         batch = prepare_policy_batch(directories, dataset_root=dataset, project_root=project,
-            control_root=control, output_root=outputs, seed=0, implementation_version="carry-test")
+            control_root=control, output_root=outputs, seed=seed, implementation_version="carry-test")
         return control, batch
 
     def old_files(self):

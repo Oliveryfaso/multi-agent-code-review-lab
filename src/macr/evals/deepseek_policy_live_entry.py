@@ -17,6 +17,7 @@ from macr.evals.deepseek_policy_live_scope import (LiveApproval, LiveScopeError,
     ValidatedLiveScope, acquire_runtime_inputs, validate_live_scope,
     write_log_policy)
 from macr.evals.deepseek_policy_manifest import DEFAULT_BUDGET
+from macr.evals.deepseek_policy_recovery import RecoveryError
 from macr.evals.deepseek_policy_runner import ARM_REQUESTS, _run_policy_arm_core
 from macr.evals.deepseek_policy_spend import (PRICE_SNAPSHOT, PolicySpendError,
     initialize_spend_ledger, mark_spend_unknown, reserve_spend, settle_spend,
@@ -53,13 +54,24 @@ def _scope(control_root, approval: LiveApproval, dataset_root) -> tuple[dict, Va
 
 def prepare_approved_policy_batch(control_root, *, dataset_root, approval: LiveApproval,
                                   predecessor_control_root=None,
-                                  predecessor_batch_sha256=None) -> dict:
+                                  predecessor_batch_sha256=None,
+                                  recovery_confirmation=None) -> dict:
     """Freeze the approved 12×4×1 pilot's local policy before any Key ingress."""
     try:
         batch, scope = _scope(control_root, approval, dataset_root)
-        _require(scope.predecessor_batch_sha256 == predecessor_batch_sha256 and
-                 (predecessor_control_root is None) ==
-                 (predecessor_batch_sha256 is None), "live_predecessor_scope_mismatch")
+        recovery = batch.get("recovery_plan")
+        if recovery is None:
+            _require(recovery_confirmation is None and
+                     scope.predecessor_batch_sha256 == predecessor_batch_sha256 and
+                     (predecessor_control_root is None) ==
+                     (predecessor_batch_sha256 is None), "live_predecessor_scope_mismatch")
+        else:
+            _require(recovery_confirmation is not None and
+                     predecessor_control_root is None and predecessor_batch_sha256 is None,
+                     "live_recovery_confirmation_missing")
+            from macr.evals.deepseek_policy_recovery import validate_recovery_confirmation
+            validate_recovery_confirmation(recovery, recovery_confirmation,
+                                            batch_sha256=scope.batch_sha256)
         root = Path(control_root).absolute()
         with _locked(root):
             claims, outcomes = _registry(root, batch)
@@ -70,8 +82,9 @@ def prepare_approved_policy_batch(control_root, *, dataset_root, approval: LiveA
             max_usd=scope.max_usd, max_requests=scope.max_requests,
             price_snapshot=PRICE_SNAPSHOT,
             predecessor_control_root=predecessor_control_root,
-            predecessor_batch_sha256=predecessor_batch_sha256)
-    except (PolicyBatchError, PolicySpendError, LiveScopeError) as error:
+            predecessor_batch_sha256=predecessor_batch_sha256,
+            recovery_plan=recovery, recovery_confirmation=recovery_confirmation)
+    except (PolicyBatchError, PolicySpendError, LiveScopeError, RecoveryError) as error:
         raise LiveEntryError(error.code) from None
 
 

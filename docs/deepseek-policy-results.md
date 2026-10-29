@@ -35,9 +35,9 @@ These were independent post-hoc audits with task/arm and gold available, not for
 
 The two pilots shared an authorization of at most 84 requests and a $3 local budget. Five requests were attempted in total. Local conservative accrual is **$0.004719**, with a separate **$0.33 unresolved reservation**. The revised pilot contributes $0.002672 of the accrued amount; the first contributes $0.002047. The unknown call is not treated as free and its reservation is not released.
 
-These figures are derived from trusted response usage at the frozen peak-price method, rounded conservatively per request, plus a retained reservation. They are not a supplier bill or a verified actual debit. The supplier charge for the unknown response has not been established. Total nominal request headroom is 79, but the halted state still makes the currently executable count zero.
+These figures describe the two stopped historical pilots. They are derived from trusted response usage at the frozen peak-price method, rounded conservatively per request, plus a retained reservation. They are not a supplier bill or a verified actual debit. The supplier charge for the unknown response has not been established. Total nominal request headroom is 79; the historical batches remain halted and cannot dispatch again.
 
-The revised pilot has 45 unattempted logical cells. Their worst-case request count is `11 + 12 + 2×11 + 3×11 = 78`, which fits the nominal request headroom. This arithmetic does not override the unknown-response stop contract, provide a subset-resume interface, establish sufficient supplier balance or authorize another run. See the [reconciliation checklist](deepseek-policy-pilot-checklist-v1.md).
+The revised pilot has 45 unattempted logical cells. Their worst-case request count is `11 + 12 + 2×11 + 3×11 = 78`, which fits the nominal request headroom. A separately confirmed retained-unknown recovery can freeze those cells as a new subset, carrying all prior requests, known accrual and the unresolved reservation. Arithmetic or a new directory alone cannot enable it. This optional path does not settle the unknown bill, establish supplier balance or prove a completed comparison. See the [recovery checklist](deepseek-policy-pilot-checklist-v1.md#explicit-retained-unknown-recovery).
 
 ## Offline validation and publication boundary
 

@@ -11,7 +11,7 @@ from unittest.mock import Mock, patch
 from debugger_fixtures import fixture_root
 from macr.evals.deepseek_policy_batch import CORE_IMPLEMENTATION_FILES
 from macr.evals.deepseek_policy_live_scope import LiveScopeError
-from test_deepseek_policy_runner import UNKNOWN, reply
+from test_deepseek_policy_runner import UNKNOWN, call, reply
 import run_deepseek_policy_live as live_cli
 from run_deepseek_policy_live import (APPROVED_SOURCES, DATASET, LOCK_FILENAME,
     LiveCliError, execute_prepared, main, prepare_run, status_run)
@@ -38,6 +38,110 @@ class SyntheticTTY(io.StringIO):
 
 
 class LiveCliTests(unittest.TestCase):
+    def prepare_recovery(self):
+        from test_deepseek_policy_recovery import make_recovery_source
+        self.private.mkdir(mode=0o700)
+        source = make_recovery_source(self.private, dataset_root=DATASET,
+                                      project_root=self.project)
+        self.run_dir = self.private / "pilot-retained-v3-fixture"
+        batch = live_cli.prepare_recovery_run(self.run_dir,
+            project_root=self.project, dataset_root=DATASET, private_root=self.private,
+            approval_ref="new-recovery-confirmation", retain_unknown=True,
+            predecessor_control_root=source.current,
+            predecessor_batch_sha256=source.batch["batch_sha256"])
+        return source, batch
+
+    def test_recovery_subset_settles_new_work_but_keeps_old_hold_and_stops_on_new_unknown(self):
+        from macr.evals.deepseek_policy_spend import spend_state
+        source, batch = self.prepare_recovery()
+        state = status_run(self.run_dir)
+        self.assertEqual((state["planned_cells"], state["not_attempted_cells"],
+                          state["reserved_request_count"], state["spent_usd"],
+                          state["retained_unknown_usd"], state["spend_state"]),
+                         (45, 45, 5, "0.002089", "0.330000", "open"))
+        first = batch["cells"][0]
+        if first["arm"] == "C":
+            answers = (reply(json.dumps(UNKNOWN)), reply(json.dumps({
+                "status": "accept", "coverage": "complete", "reason": "Fixture"})))
+        elif first["arm"] == "D":
+            answers = (reply(None, calls=[call("finish-1", "finish", {"diagnosis": UNKNOWN})]),)
+        else:
+            answers = (reply(json.dumps(UNKNOWN)),)
+        key_reader = Mock(return_value="DUMMY_SYNTHETIC_NOT_A_CREDENTIAL")
+        state = execute_prepared(self.run_dir, dataset_root=DATASET,
+            private_root=self.private, key_reader=key_reader, cell_limit=1,
+            scripted_by_cell={first["cell_id"]: answers})
+        self.assertEqual((state["closed_cells"], state["reserved_request_count"],
+                          state["retained_unknown_usd"], state["reserved_usd"]),
+                         (1, 5 + len(answers), "0.330000", "0.330000"))
+        key_reader.assert_called_once()
+        second = batch["cells"][1]
+        state = execute_prepared(self.run_dir, dataset_root=DATASET,
+            private_root=self.private, key_reader=key_reader, cell_limit=1,
+            scripted_by_cell={second["cell_id"]: (TimeoutError(),)})
+        self.assertEqual((state["closed_cells"], state["halted_cells"], state["reserved_usd"],
+                          state["retained_unknown_usd"], state["spend_state"]),
+                         (2, 1, "0.660000", "0.330000", "halted_unknown"))
+        before = key_reader.call_count
+        with self.assertRaises(LiveCliError):
+            execute_prepared(self.run_dir, dataset_root=DATASET,
+                private_root=self.private, key_reader=key_reader)
+        self.assertEqual(key_reader.call_count, before)
+        self.assertEqual(spend_state(source.current)["state"], "halted_unknown")
+
+    def test_recovery_confirmation_drift_blocks_before_key_and_does_not_reset_budget(self):
+        source, batch = self.prepare_recovery()
+        confirmation = self.run_dir / "recovery-confirmation.json"
+        row = json.loads(confirmation.read_text())
+        row["approval_ref"] = "different-confirmation"
+        confirmation.write_text(json.dumps(row))
+        key_reader = Mock(return_value="DUMMY")
+        with self.assertRaises(LiveCliError):
+            execute_prepared(self.run_dir, dataset_root=DATASET,
+                private_root=self.private, key_reader=key_reader)
+        key_reader.assert_not_called()
+        self.assertEqual(len(list((self.run_dir / "control" / "spend" / "entries").iterdir())), 0)
+
+    def test_recovery_log_policy_drift_blocks_before_key(self):
+        self.prepare_recovery()
+        policy = self.run_dir / "outputs" / "retention.json"
+        record = json.loads(policy.read_text())
+        record["auto_delete"] = True
+        policy.write_text(json.dumps(record))
+        key_reader = Mock(return_value="DUMMY")
+        with self.assertRaises(LiveCliError):
+            execute_prepared(self.run_dir, dataset_root=DATASET,
+                private_root=self.private, key_reader=key_reader, scripted_by_cell={})
+        key_reader.assert_not_called()
+
+    def test_recovery_prepare_requires_explicit_retention_before_mutation(self):
+        with patch.object(live_cli, "PRIVATE_ROOT", self.private), patch.object(
+                live_cli, "prepare_recovery_run", create=True) as prepare:
+            result = main(["--prepare-recovery", "--run-dir",
+                str(self.private / "pilot-retained-v3-fixture"),
+                "--approval-ref", "new-recovery-confirmation",
+                "--predecessor-control", str(self.root / "old" / "control"),
+                "--predecessor-sha256", "a" * 64])
+        self.assertEqual(result, 2)
+        prepare.assert_not_called()
+        self.assertFalse(self.private.exists())
+
+    def test_recovery_command_binds_new_confirmation_to_explicit_source(self):
+        previous = self.root / "old" / "control"
+        with patch.object(live_cli, "PRIVATE_ROOT", self.private), patch.object(
+                live_cli, "prepare_recovery_run", create=True,
+                side_effect=LiveCliError("fixture-stop-before-preparation")) as prepare:
+            result = main(["--prepare-recovery", "--retain-unknown", "--run-dir",
+                str(self.private / "pilot-retained-v3-fixture"),
+                "--approval-ref", "new-recovery-confirmation",
+                "--predecessor-control", str(previous),
+                "--predecessor-sha256", "a" * 64])
+        self.assertEqual(result, 2)
+        prepare.assert_called_once_with(self.private / "pilot-retained-v3-fixture",
+            approval_ref="new-recovery-confirmation", retain_unknown=True,
+            predecessor_control_root=previous, predecessor_batch_sha256="a" * 64)
+        self.assertFalse(self.private.exists())
+
     def test_echo_fallback_warning_stops_before_input_dispatch_or_reservation(self):
         self.prepare()
         stdin, stderr = SyntheticTTY("DUMMY_SYNTHETIC_NOT_A_CREDENTIAL\n"), SyntheticTTY()

@@ -1,5 +1,6 @@
 """Offline contracts for explicit approval, ephemeral Key ingress and log retention."""
 from dataclasses import FrozenInstanceError, replace
+from copy import deepcopy
 import json
 import os
 from pathlib import Path
@@ -190,6 +191,81 @@ class LiveScopeTests(unittest.TestCase):
                     acquire_runtime_inputs(self.approval, self.batch,
                         dataset_root=self.dataset, key_reader=reader)
         self.assertTrue((self.outputs / "retention.json").is_file())
+
+
+class RetainedRecoveryScopeTests(unittest.TestCase):
+    def setUp(self):
+        from test_deepseek_policy_recovery import make_recovery_source
+        from macr.evals.deepseek_policy_recovery import build_recovery_plan
+        project = Path(__file__).resolve().parents[1]
+        dataset = project / "evals" / "deepseek-policy-dev-v1"
+        root = fixture_root()
+        frozen_project = root / "frozen-project"
+        for relative in CORE_IMPLEMENTATION_FILES:
+            path = frozen_project / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes((project / relative).read_bytes())
+        source = make_recovery_source(root, dataset_root=dataset,
+                                      project_root=frozen_project)
+        self.__dict__.update(source.__dict__)
+        self.target = self.root / "recovered"
+        self.plan = build_recovery_plan(self.current,
+            predecessor_batch_sha256=self.batch["batch_sha256"],
+            target_control_root=self.target / "control",
+            target_output_root=self.target / "outputs", recovery_version="scope-recovery-v1")
+        self.target.mkdir(mode=0o700)
+        self.outputs = self.target / "outputs"
+        self.outputs.mkdir(mode=0o700)
+        self.batch = prepare_policy_batch([row["manifest_dir"] for row in self.batch["manifests"]],
+            dataset_root=self.dataset, project_root=self.project,
+            control_root=self.target / "control", output_root=self.outputs, seed=0,
+            implementation_version="scope-recovery-v1", recovery_plan=self.plan)
+        from macr.evals.deepseek_policy_manifest import load_policy_manifest
+        sources = []
+        for row in self.batch["manifests"]:
+            task = load_policy_manifest(row["manifest_dir"], dataset_root=self.dataset)["task"]
+            sources.extend(task["snapshot_root"] + "/" + name for name in task["authorized_files"])
+        self.approval = LiveApproval(granted=True, approval_ref="synthetic-recovery-approval",
+            batch_sha256=self.batch["batch_sha256"], model_id="deepseek-flash",
+            endpoint="https://api.deepseek.com/chat/completions", max_requests=84,
+            max_usd="3.00", price_snapshot_id="flash-peak-20261028",
+            price_checked_on="2026-10-28", approved_sources=tuple(sources),
+            log_root=self.outputs, predecessor_batch_sha256=self.plan["predecessor_batch_sha256"],
+            recovery_plan_sha256=self.plan["plan_sha256"])
+
+    def test_exact_subset_requires_approved_plan_and_log_policy_binds_it(self):
+        scope = validate_live_scope(self.approval, self.batch, dataset_root=self.dataset)
+        self.assertEqual(scope.recovery_plan_sha256, self.plan["plan_sha256"])
+        self.assertEqual(len(self.batch["cells"]), 45)
+        policy = json.loads(write_log_policy(scope).read_text())
+        self.assertEqual(policy["recovery_plan_sha256"], self.plan["plan_sha256"])
+        reads = []
+        for changes in ({"recovery_plan_sha256": None},
+                        {"recovery_plan_sha256": "0" * 64},
+                        {"predecessor_batch_sha256": None}):
+            with self.subTest(changes=changes):
+                with self.assertRaises(LiveScopeError):
+                    acquire_runtime_inputs(replace(self.approval, **changes), self.batch,
+                        dataset_root=self.dataset, key_reader=lambda: reads.append(1) or "DUMMY")
+        self.assertEqual(reads, [])
+
+    def test_rehashed_extra_cell_or_reused_identity_cannot_expand_approved_subset(self):
+        from macr.evals.deepseek_policy_batch import _digest
+        for mutation in ("extra", "old_identity"):
+            with self.subTest(mutation=mutation):
+                changed = deepcopy(self.batch)
+                if mutation == "extra":
+                    excluded = self.plan["excluded_cells"][0]
+                    changed["cells"].append(dict(changed["cells"][0],
+                        task_id=excluded["task_id"], arm=excluded["arm"], cell_id="f" * 32))
+                else:
+                    changed["cells"][0]["cell_id"] = "f" * 32
+                    changed["cells"][0]["out"] = str(self.outputs / ("f" * 32))
+                changed["batch_sha256"] = _digest({key: value for key, value in changed.items()
+                                                    if key != "batch_sha256"})
+                with self.assertRaises(LiveScopeError):
+                    validate_live_scope(replace(self.approval,
+                        batch_sha256=changed["batch_sha256"]), changed, dataset_root=self.dataset)
 
 
 if __name__ == "__main__":

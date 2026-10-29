@@ -29,6 +29,7 @@ CORE_IMPLEMENTATION_FILES = (
     "src/macr/evals/deepseek_policy_live_entry.py",
     "src/macr/evals/deepseek_policy_live_scope.py",
     "src/macr/evals/deepseek_policy_manifest.py",
+    "src/macr/evals/deepseek_policy_recovery.py",
     "src/macr/evals/deepseek_policy_runner.py",
     "src/macr/evals/deepseek_policy_spend.py",
     "src/macr/evals/deepseek_policy_tools.py",
@@ -165,6 +166,57 @@ def _cell_id(task_id: str, repeat: int, arm: str, prompt_version: str) -> str:
                     "prompt_version": prompt_version})[:32]
 
 
+def _check_recovery_batch(batch: dict, *, control_root=None) -> dict:
+    """Recheck the permitted subset without exposing its history to generation."""
+    from macr.evals.deepseek_policy_recovery import RecoveryError, validate_recovery_plan
+    try:
+        plan = validate_recovery_plan(batch.get("recovery_plan"))
+    except RecoveryError as error:
+        raise PolicyBatchError(error.code) from None
+    _require(batch["output_root"] == plan["target_output_root"] and
+             batch["implementation_version"] == plan["recovery_version"] and
+             (control_root is None or str(Path(control_root).absolute()) ==
+              plan["target_control_root"]), "batch_recovery_target_mismatch")
+    _require(batch["model"] == plan["source_model"] and
+             batch["gold_sha256"] == plan["source_gold_sha256"] and
+             batch["rubric_sha256"] == plan["source_rubric_sha256"] and
+             [{key: row[key] for key in ("task_id", "repeat", "snapshot_sha256")}
+              for row in batch["manifests"]] == plan["source_manifests"],
+             "batch_recovery_source_mismatch")
+    _, previous = _load_batch(plan["predecessor_control_root"])
+    old_manifests = {(row["task_id"], row["repeat"]): row for row in previous["manifests"]}
+    manifests = {(row["task_id"], row["repeat"]): row for row in batch["manifests"]}
+    try:
+        for key, row in manifests.items():
+            current = load_policy_manifest(row["manifest_dir"], dataset_root=batch["dataset_root"])
+            original = load_policy_manifest(old_manifests[key]["manifest_dir"],
+                                            dataset_root=previous["dataset_root"])
+            _require(original["manifest_sha256"] == old_manifests[key]["manifest_sha256"] and
+                     current["manifest_sha256"] == row["manifest_sha256"] and
+                     all(current[field] == original[field] for field in
+                         ("task", "snapshot", "model", "budget", "repeat", "arms")),
+                     "batch_recovery_task_mismatch")
+    except (PolicyManifestError, KeyError):
+        raise PolicyBatchError("batch_recovery_task_mismatch") from None
+    eligible = {(cell["task_id"], cell["repeat"], cell["arm"])
+                for cell in plan["eligible_cells"]}
+    cells = batch["cells"]
+    _require(len(cells) == len(eligible) and
+             {(cell["task_id"], cell["repeat"], cell["arm"]) for cell in cells} == eligible,
+             "batch_recovery_subset_mismatch")
+    for cell in cells:
+        expected_id = _digest({"cell_id": _cell_id(cell["task_id"], cell["repeat"],
+            cell["arm"], batch["prompt_version"]),
+            "recovery_plan_sha256": plan["plan_sha256"]})[:32]
+        source = manifests[(cell["task_id"], cell["repeat"])]
+        _require(cell["cell_id"] == expected_id and
+                 cell["out"] == str(Path(plan["target_output_root"]) / expected_id) and
+                 cell["manifest_dir"] == source["manifest_dir"] and
+                 cell["manifest_sha256"] == source["manifest_sha256"],
+                 "batch_recovery_identity_mismatch")
+    return plan
+
+
 def _ticket(batch: dict, cell: dict) -> dict:
     return {"schema": SCHEMA + ".ticket", "batch_sha256": batch["batch_sha256"],
             "cell_id": cell["cell_id"], "task_id": cell["task_id"],
@@ -176,7 +228,7 @@ def _ticket(batch: dict, cell: dict) -> dict:
 
 def prepare_policy_batch(manifest_dirs, *, dataset_root, project_root, control_root,
                          output_root, seed, implementation_version,
-                         fingerprint_policy="pin_first"):
+                         fingerprint_policy="pin_first", recovery_plan=None):
     """Freeze a control-only batch; keep gold/rubric bytes out of cell tickets."""
     _require(type(seed) is int and 0 <= seed < 2**63, "batch_seed_invalid")
     _require(type(implementation_version) is str and
@@ -247,6 +299,19 @@ def prepare_policy_batch(manifest_dirs, *, dataset_root, project_root, control_r
                               "manifest_dir": source["manifest_dir"],
                               "manifest_sha256": source["manifest_sha256"],
                               "out": str(outputs / cell_id)})
+    if recovery_plan is not None:
+        from macr.evals.deepseek_policy_recovery import RecoveryError, validate_recovery_plan
+        try:
+            recovery_plan = validate_recovery_plan(recovery_plan)
+        except RecoveryError as error:
+            raise PolicyBatchError(error.code) from None
+        eligible = {(row["task_id"], row["repeat"], row["arm"])
+                    for row in recovery_plan["eligible_cells"]}
+        cells = [row for row in cells if (row["task_id"], row["repeat"], row["arm"]) in eligible]
+        for cell in cells:
+            cell["cell_id"] = _digest({"cell_id": cell["cell_id"],
+                "recovery_plan_sha256": recovery_plan["plan_sha256"]})[:32]
+            cell["out"] = str(outputs / cell["cell_id"])
     _require(len(cells) <= MAX_CELLS and len({cell["cell_id"] for cell in cells})
              == len(cells), "batch_cell_grid_invalid")
     code_files = _implementation(project)
@@ -260,6 +325,9 @@ def prepare_policy_batch(manifest_dirs, *, dataset_root, project_root, control_r
              "model": model, "response_model_allowlist": [model["model_id"]],
              "fingerprint_policy": fingerprint_policy, "prompt_version": prompt_version,
              "budget": budget, "seed": seed, "manifests": manifests, "cells": cells}
+    if recovery_plan is not None:
+        batch["recovery_plan"] = recovery_plan
+        _check_recovery_batch(batch, control_root=control)
     batch["batch_sha256"] = _digest(batch)
     _require(len(_encoded(batch)) + 1 <= MAX_BATCH_BYTES, "batch_record_limit")
     try:
@@ -347,6 +415,8 @@ def _load_batch(control_root: Path) -> tuple[Path, dict]:
 
 
 def _check_drift(batch: dict) -> None:
+    if "recovery_plan" in batch:
+        _check_recovery_batch(batch)
     dataset = _directory(batch["dataset_root"])
     project = _directory(batch["project_root"])
     _require(sha256(_read(dataset, "gold.json", MAX_CONTROL_FILE_BYTES,

@@ -1,6 +1,6 @@
 # DeepSeek live-run checklist
 
-This is a review checklist, not authorization to run. The historical pilots are stopped; the unknown request must not be retried, its $0.33 reservation must not be released, and frozen results must not be rewritten. A new name or directory is not a continuation mechanism.
+This is a review checklist, not authorization to run. The historical pilots remain stopped: the unknown request must not be retried, its $0.33 reservation must not be released, and frozen results must not be rewritten. Continuing requires a separately confirmed recovery plan for unattempted cells; a new name or directory alone cannot enable it.
 
 ## Scope to approve and freeze
 
@@ -19,7 +19,7 @@ The tested profile used `deepseek-flash` at `https://api.deepseek.com/chat/compl
 
 The launcher rejects `GetPassWarning` before ordinary-input fallback can consume input. Terminal input failures return a fixed error and do not dispatch; a TTY check alone is not treated as proof that echo was disabled.
 
-Public preparation requires explicit `--approval-ref`, `--predecessor-control` and `--predecessor-sha256` inputs; it has no personal approval or prior-run defaults. The expected predecessor digest becomes part of the approved scope and must match verified, settled carry evidence before live input is accepted. These parameters do not provide reconciliation or resume, and they cannot make the historical unknown request eligible for carry.
+Ordinary preparation requires explicit `--approval-ref`, `--predecessor-control` and `--predecessor-sha256` inputs; it has no personal approval or prior-run defaults. The expected predecessor digest becomes part of the approved scope and must match verified, settled carry evidence before live input is accepted. This ordinary path still rejects an unknown predecessor. The separate retained-unknown recovery path below requires its own explicit confirmation and does not make an old request eligible for replay.
 
 Only these eighteen original synthetic source paths are generation candidates, relative to `evals/deepseek-policy-dev-v1/`:
 
@@ -48,17 +48,25 @@ Their combined source length is 1,867 UTF-8 bytes. Generation messages also cont
 
 ## Budget and stop conditions
 
-The historical authorization was **84 requests and $3 across both pilots together**, not that amount for each batch. The durable ledger carries prior verified receipts forward and binds one successor. Each request reserves locally before dispatch. It settles only from a validated provider response with trusted usage, never from diagnostic counters or model text.
+The historical authorization was **84 requests and $3 in total**. Those same cumulative limits apply across the historical pilots and any approved recovery; a new batch does not receive a new allowance. The durable ledger carries prior verified receipts forward and binds one successor. Each request reserves locally before dispatch. It settles only from a validated provider response with trusted usage, never from diagnostic counters or model text.
 
 The historical $0.33 reservation assumed the frozen official context/output contract and peak prices. It and the $3 local threshold are conservative local controls, not a supplier-account hard cap or a guarantee that every planned cell can run. Missing or inconsistent usage, timeout, interruption or unknown outcome retains the reservation and halts the batch. Consult the [current official pricing](https://api-docs.deepseek.com/quick_start/pricing/); do not turn a character/token estimate into a claimed hard limit.
 
-The unresolved state is **5 total requests, $0.004719 locally accrued and $0.33 still reserved**. The provider's actual charges have not been reconciled. There is no supported resume or 45-cell subset-execution interface. A full new batch with a cell limit would start from the beginning and is not a safe substitute. Do not mark earlier cells complete, edit old registries or release the unknown amount to make it run.
+The historical unresolved state is **5 total requests, $0.004719 locally accrued and $0.33 still reserved**. The provider's actual charges have not been reconciled. An approved recovery carries all three values forward: the unknown reservation remains separately visible and occupied for this authorization, rather than becoming a claimed bill or a settled charge. Before any new reservation, $0.334719 is therefore already occupied and at most $2.665281 remains available.
 
-## Minimum reconciliation before considering continuation
+## Explicit retained-unknown recovery
 
-The operator must use official billing/usage records or supplier support to establish an attributable disposition: verified non-acceptance/no charge, or the charge and available usage, amount and currency. Keep credentials private. The retained local window and model/destination can help a private investigation, but no request ID or raw response survived; do not invent them. A total balance alone cannot attribute one call, particularly when other activity or currencies are involved.
+Recovery defaults to denied. After the implementation passes offline tests and independent review, `--prepare-recovery` requires `--retain-unknown`, a new `--approval-ref`, and the exact `--predecessor-control` and `--predecessor-sha256`. The confirmation must explicitly allow retaining the unresolved reservation and continuing only unattempted tests. Recording an approval reference is an audit aid, not proof that permission was obtained.
 
-External reconciliation does not itself unlock the implementation. A reviewed transition record and an explicit new execution plan would still be needed to preserve the original unknown evidence, account for its disposition, select only eligible unexecuted logical cells and give them new execution identities. Those mechanisms are not implemented by this patch. New billable work requires a separate execution decision within the authorized scope; adding a billing endpoint, another service, new source files or log upload requires explicit scope approval.
+The frozen recovery plan and one-time confirmation bind the predecessor evidence, cumulative request count and occupied funds, the new batch's manifests, prompt and implementation digests, model and source scope, and its unique output directory. A separate durable recovery lock permits one target batch. A copied directory, reused confirmation or changed plan cannot reset the allowance; a partially completed preparation remains locked rather than silently starting over. The original successor lock, registries, unknown receipts and stopped states remain unchanged.
+
+Eligibility is derived from logical `(task, repeat, arm)` identities across both historical pilots, not prompt-dependent cell IDs. All previously claimed cells are excluded, including failed or unknown cells. The current eligible subset has **45 cells**, with at most **78 new requests**: 11 A, 12 B, 11 C at two requests each and 11 D at three each. Each receives a new execution identity. Together with the previous five requests, this plan can use at most 83 requests; the unused request allowance does not authorize replay. A normal full-batch launch with a cell limit is not a substitute for this subset plan.
+
+Every dispatch rechecks the bound evidence and cumulative budget before reserving funds. The $0.33 historical hold is never settled or released by a new response. New missing usage, timeout or unknown outcome still stops the recovery batch; this confirmation is not permission to ignore future uncertainty. The local reservation requirement can stop execution before all 45 cells finish, even when the request ceiling has not been reached.
+
+Supplier reconciliation may later clarify an attributable charge or non-acceptance, but is not required for the explicit conservative-retention choice. Until such evidence exists, the historical disposition remains unknown. A total balance cannot attribute one call, and absent request IDs or response data must not be invented. Adding a billing endpoint, another service, new source files or log upload requires separate scope approval.
+
+Recovery results belong to their own versioned batch. Preserve failures and unattempted cells in the planned denominator, and review semantics independently. Different prompt or implementation versions must not be combined into an unconditional four-arm score. A recovery plan or successful offline test is not evidence of a completed live comparison or a measured tool benefit.
 
 ## Logs and review
 
