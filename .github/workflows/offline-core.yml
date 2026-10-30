@@ -145,6 +145,11 @@ jobs:
       - name: Frozen continuation proofs without network
         run: python -I -S -B scripts/run_offline_tests.py test_deepseek_policy_recovery
 
+      - name: Two fixed developer protocol checks without network
+        run: >-
+          python -I -S -B scripts/run_offline_tests.py
+          test_deepseek_tool_name_probe test_deepseek_tool_name_probe_cli
+
       - name: Known cell failures and fatal CLI gates without network
         run: python -I -S -B scripts/run_offline_tests.py test_deepseek_policy_live_cli
 

@@ -31,6 +31,24 @@ class FixtureTransport:
 
 
 class DeepSeekNameFailureReasonTests(unittest.TestCase):
+    def test_undeclared_names_record_only_the_fixed_static_read_family(self):
+        from macr.evals.deepseek_policy_runner import READ_TOOLS
+        for name in (*sorted(READ_TOOLS), 'PRIVATE_UNKNOWN_NAME_SENTINEL'):
+            with self.subTest(static_read=name in READ_TOOLS):
+                wire = FixtureTransport(name)
+                request = ConversationRequest(messages=[{'role': 'user', 'content': 'fixture'}],
+                    tools=[{'type': 'function', 'function': {'name': value,
+                        'parameters': {'type': 'object'}}} for value in ('finish', 'ask_user')])
+                with self.assertRaises(ProviderError) as caught:
+                    DeepSeekProvider(model='deepseek-flash', transport=wire).converse(request)
+                diagnostic = caught.exception.diagnostic
+                self.assertEqual(diagnostic['tool_name_reason'], 'not_declared')
+                self.assertEqual(diagnostic.get('tool_name_family'),
+                    'static_read' if name in READ_TOOLS else 'other')
+                self.assertNotIn(name, json.dumps(diagnostic))
+                self.assertIsNotNone(caught.exception.billing_evidence)
+                self.assertIsNotNone(caught.exception.identity_evidence)
+
     def test_rejection_code_stays_compatible_but_reason_distinguishes_three_predicates(self):
         for name, reason in ((None, 'type'), (False, 'type'), ([], 'type'),
                 (' finish', 'format'), ('functions.finish', 'format'),

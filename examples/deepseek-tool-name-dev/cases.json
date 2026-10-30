@@ -1,0 +1,20 @@
+[
+  {
+    "assumptions": [
+      "x is an integer."
+    ],
+    "id": "dev-finish",
+    "question": "This is a developer protocol check, not a quality benchmark. On decision 1 use search with query double; on decision 2 use read_symbol for helper.py symbol double. On decision 3 use exactly one terminal function and no read tool. Determine whether run(x) returns twice x for every integer x. Use finish with the five-field diagnosis.",
+    "scenario": "Self-authored arithmetic development fixture.",
+    "terminal": "finish"
+  },
+  {
+    "assumptions": [
+      "The supplied files are the only authorized source evidence."
+    ],
+    "id": "dev-ask",
+    "question": "This is a developer protocol check, not a quality benchmark. On decision 1 use search with query double; on decision 2 use read_symbol for helper.py symbol double. On decision 3 use exactly one terminal function and no read tool. Determine whether the current deployment invoked run(7) today. Use ask_user for the necessary current invocation evidence missing from the source.",
+    "scenario": "No runtime invocation evidence is supplied in this development check.",
+    "terminal": "ask_user"
+  }
+]

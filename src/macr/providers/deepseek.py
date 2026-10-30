@@ -281,6 +281,7 @@ class DeepSeekProvider:
                 diagnostic=make_failure_diagnostic(stage, data=data,
                     metadata=_transport_metadata(transport), validation_error=error.code,
                     tool_name_reason=error.tool_name_reason,
+                    tool_name_family=error.tool_name_family,
                     declared_tool_set=declared_tool_set)) from None
         except (KeyError, IndexError, TypeError, ValueError, AttributeError):
             raise ProviderError('model_response_invalid', billing_evidence=billing, identity_evidence=identity,
