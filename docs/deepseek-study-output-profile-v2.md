@@ -1,5 +1,9 @@
 # Explicit offline output profile v2
 
+The original study entry stays offline. A separate, default-disabled
+[two-stage pilot candidate](deepseek-comparison-pilot.md) can propose exact
+R/U use of this profile; choosing it alone does not grant live access.
+
 `study-8192-v2` is a new, explicitly selected **offline** contract. It changes
 neither the default 2000-token study nor frozen runs, reviews or scores. The
 legacy live proposal/entry rejects this profile before credential input; this

@@ -1,5 +1,10 @@
 # Evidence-decision contract, version 1
 
+The original study entry stays offline. The separate
+[two-stage pilot candidate](deepseek-comparison-pilot.md) requires exact phase
+approval and, for real U, a qualified real R receipt; no live access follows
+from selecting this profile.
+
 `study-evidence-v1` / `deepseek-study-evidence-v1` is an explicitly selected,
 **offline-only** decision-criteria version. It extends the existing v2 criteria
 entry; it does not replace the default or `study-8192-v2`. Compared with
