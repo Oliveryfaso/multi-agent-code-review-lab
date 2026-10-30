@@ -164,3 +164,9 @@ new request and money authorization, historical unknown responsibility, and
 private log location/access/retention. Exclude gold, private projects/config,
 credentials, old logs and third-party review/search services. This document,
 the neutral package and dummy commitments do not authorize that run.
+
+## Evidence-decision criteria
+
+The explicit offline [evidence-decision version](deepseek-evidence-decision.md)
+adds a versioned decisiveness rule, development pairs and independent-review
+guidance while retaining the old profiles and budgets.

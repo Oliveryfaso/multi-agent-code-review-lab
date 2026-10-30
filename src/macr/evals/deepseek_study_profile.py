@@ -12,7 +12,7 @@ from macr.evals.deepseek_policy_manifest import (DEFAULT_BUDGET, PROMPT_VERSION,
     _task, _read, _root, _relative, prepare_policy_manifest, load_policy_manifest)
 from macr.evals.deepseek_policy_runner import _json_bytes, _write_exclusive
 from macr.evals.deepseek_study_plan import build_fixed_plan
-from macr.evals.deepseek_study_generation import V2_PROFILE, get_generation
+from macr.evals.deepseek_study_generation import V2_PROFILE, EVIDENCE_PROFILE, get_generation
 from macr.investigation.scope import validate_workspace_path
 
 PACK_SCHEMA = 'macr.deepseek.study.pack.v1'
@@ -278,7 +278,7 @@ def load_study(out):
     validate_budget(value['budget'])
     generation, cell_budget, price, limits = _execution_settings(value.get('execution_profile'))
     if 'execution_profile' in value:
-        require(value['execution_profile']==V2_PROFILE,
+        require(value['execution_profile'] in (V2_PROFILE,EVIDENCE_PROFILE),
             'study_generation_contract_drift')
     require(value['prompt_version']==generation['prompt_version']
         and value['cell_limits']==limits and value['price_snapshot']==price,

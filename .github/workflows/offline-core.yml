@@ -130,6 +130,7 @@ jobs:
           python -I -S -B scripts/run_offline_tests.py
           test_deepseek_study_generation test_deepseek_study_v2_profile
           test_deepseek_study_v2_runner test_deepseek_study_v2_evidence
+          test_deepseek_evidence_decision
 
       - name: Frozen continuation proofs without network
         run: python -I -S -B scripts/run_offline_tests.py test_deepseek_policy_recovery

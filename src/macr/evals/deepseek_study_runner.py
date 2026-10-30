@@ -12,7 +12,8 @@ from pathlib import Path
 from time import monotonic
 
 from macr.evals.deepseek_policy_manifest import PROMPT_VERSION, load_policy_manifest
-from macr.evals.deepseek_study_generation import V2_PROFILE, V2_PROMPT_VERSION, get_generation
+from macr.evals.deepseek_study_generation import (V2_PROFILE, V2_PROMPT_VERSION,
+    EVIDENCE_PROFILE, EVIDENCE_PROMPT_VERSION, get_generation)
 from macr.evals.deepseek_policy_runner import (
     ASK_USER_GAP_SCHEMA, DIAGNOSIS_CRITERIA, DIRECT_INSTRUCTIONS, OUTPUT_SCHEMA,
     READ_TOOLS, TERMINAL_TOOLS, TOOL_INSTRUCTIONS, TOOL_SCHEMAS, PolicyRunError,
@@ -39,6 +40,23 @@ EXTERNAL_EVIDENCE_CRITERIA = (
     'Missing authorized source is not automatically a genuine external gap; describe that access limitation accurately. '
     'A possible failure scenario is not proof of the current outcome; avoid demands for unrelated data. '
     'Use existing unknowns or gap fields and citations within their schema limits; do not add fields or headings.')
+EVIDENCE_DECISION_CRITERIA = (
+    'First identify whether the question concerns a code property or a current external outcome. '
+    'Separate code-proven behavior from explicitly supplied facts; code citations are not external observations. '
+    'Accept explicitly supplied facts as task assumptions without demanding production proof. '
+    'A gap is decisive only if two states compatible with the supplied facts change the requested conclusion; '
+    'briefly state the distinguishing condition and outcomes, not a full reasoning transcript. '
+    'Otherwise do not withhold a code-proven conclusion or ask for irrelevant logs; a static counterexample '
+    'can prove a code defect without proving a current incident. Nondecisive unknowns may remain in a definite answer. '
+    'If your arm permits reads, obtain decisive missing authorized source within the remaining tool budget; '
+    'do not exhaust reads unnecessarily. If access fails or the arm cannot read, name that access gap, '
+    'not an unsupported claim that the whole snapshot lacks evidence. '
+    'For a decisive external gap, ask for the smallest sufficient set of facts, including applicable environment '
+    'or conflict resolution when needed, and explain how it changes the conclusion. Multiple jointly necessary '
+    'facts are allowed; do not ask for unrelated material or assume an external state. '
+    'Use existing unknowns or ask_user gap limits; if a short question cannot hold the explanation, '
+    'use finish with unknown, null cause/when and bounded unknowns. Neither terminal action solves the task '
+    'by itself. Do not add fields, mandatory headings or evidence to an arm that has not received it.')
 
 
 def initial_evidence(manifest: dict, tools: StaticEvidenceTools) -> dict:
@@ -91,7 +109,8 @@ def _run_study_cell_core(manifest_dir: Path, *, dataset_root: Path, strategy: st
     if strategy not in STRATEGIES:
         raise PolicyRunError('study_strategy_invalid')
     manifest = load_policy_manifest(manifest_dir, dataset_root=dataset_root)
-    generation = get_generation(V2_PROFILE if manifest['prompt_version']==V2_PROMPT_VERSION else None)
+    generation = get_generation({V2_PROMPT_VERSION:V2_PROFILE,
+        EVIDENCE_PROMPT_VERSION:EVIDENCE_PROFILE}.get(manifest['prompt_version']))
     if manifest['prompt_version'] != generation['prompt_version']:
         raise PolicyRunError('policy_prompt_version_invalid')
     if provider.model != manifest['model']['model_id']:
@@ -137,6 +156,8 @@ def _run_study_cell_core(manifest_dir: Path, *, dataset_root: Path, strategy: st
         {'role':'user', 'content':_json_bytes(e0).decode('utf-8')}]
     if generation['name'] is not None:
         messages[0]['content'] += ' ' + EXTERNAL_EVIDENCE_CRITERIA
+    if generation['name'] == EVIDENCE_PROFILE:
+        messages[0]['content'] += ' ' + EVIDENCE_DECISION_CRITERIA
     if strategy == 'direct_full_3':
         additional = tools.source([name for name in sorted(manifest['task']['authorized_files'])
                                    if name not in manifest['task']['initial_evidence_files']])
