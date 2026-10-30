@@ -18,8 +18,10 @@ PROMPT_VERSION = 'deepseek-policy-contracts-v3'
 STUDY_V2_PROMPT_VERSION = 'deepseek-study-8192-v2'
 STUDY_EVIDENCE_PROMPT_VERSION = 'deepseek-study-evidence-v1'
 STUDY_GAP_PROMPT_VERSION = 'deepseek-study-gap-budget-v1'
+STUDY_VALUE_PROMPT_VERSION = 'deepseek-study-value-v1'
 READABLE_PROMPT_VERSIONS = frozenset({'deepseek-policy-refs-v2', PROMPT_VERSION,
-    STUDY_V2_PROMPT_VERSION, STUDY_EVIDENCE_PROMPT_VERSION, STUDY_GAP_PROMPT_VERSION})
+    STUDY_V2_PROMPT_VERSION, STUDY_EVIDENCE_PROMPT_VERSION, STUDY_GAP_PROMPT_VERSION,
+    STUDY_VALUE_PROMPT_VERSION})
 ARMS = ['A', 'B', 'C', 'D']
 MAX_FILES = 24
 MAX_FILE_BYTES = 64 * 1024
@@ -239,7 +241,8 @@ def prepare_policy_manifest(case: dict, *, dataset_root: Path, out: Path, model:
     _budget(DEFAULT_BUDGET if budget is None else budget)
     _require(type(repeat) is int and 1 <= repeat <= 1000, 'policy_repeat_invalid')
     _require(prompt_version in (PROMPT_VERSION, STUDY_V2_PROMPT_VERSION,
-        STUDY_EVIDENCE_PROMPT_VERSION, STUDY_GAP_PROMPT_VERSION), 'policy_prompt_version_invalid')
+        STUDY_EVIDENCE_PROMPT_VERSION, STUDY_GAP_PROMPT_VERSION,
+        STUDY_VALUE_PROMPT_VERSION), 'policy_prompt_version_invalid')
     root = _root(dataset_root)
     output = Path(out).absolute()
     try:

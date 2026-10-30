@@ -14,7 +14,8 @@ from time import monotonic
 from macr.evals.deepseek_policy_manifest import (
     PROMPT_VERSION, STUDY_GAP_PROMPT_VERSION, load_policy_manifest)
 from macr.evals.deepseek_study_generation import (V2_PROFILE, V2_PROMPT_VERSION,
-    EVIDENCE_PROFILE, EVIDENCE_PROMPT_VERSION, get_generation)
+    EVIDENCE_PROFILE, EVIDENCE_PROMPT_VERSION, VALUE_PROFILE, VALUE_PROMPT_VERSION,
+    get_generation)
 from macr.evals.deepseek_policy_runner import (
     ASK_USER_GAP_SCHEMA, DIAGNOSIS_CRITERIA, DIRECT_INSTRUCTIONS, OUTPUT_SCHEMA,
     READ_TOOLS, TERMINAL_TOOLS, TOOL_INSTRUCTIONS, TOOL_SCHEMAS, PolicyRunError,
@@ -67,13 +68,15 @@ ASK_USER_CONCISE_INSTRUCTIONS = (
     'keep the same gap key and all existing evidence and terminal rules.')
 
 
-def initial_evidence(manifest: dict, tools: StaticEvidenceTools) -> dict:
+def initial_evidence(manifest: dict, tools: StaticEvidenceTools, *, include_static=True) -> dict:
     source = tools.source(manifest['task']['initial_evidence_files'])
     task = manifest['task']
-    return {'question': task['question'], 'scenario': task['scenario'],
+    value = {'question': task['question'], 'scenario': task['scenario'],
         'assumptions': task['assumptions'], 'source': source,
-        'static_evidence': _initial_static_evidence(source),
         'authorized_files': sorted(task['authorized_files'])}
+    if include_static:
+        value['static_evidence'] = _initial_static_evidence(source)
+    return value
 
 
 def _fixed_plan(manifest: dict, dataset_root: Path, supplied: dict) -> dict:
@@ -119,12 +122,17 @@ def _run_study_cell_core(manifest_dir: Path, *, dataset_root: Path, strategy: st
     manifest = load_policy_manifest(manifest_dir, dataset_root=dataset_root)
     generation = get_generation({V2_PROMPT_VERSION:V2_PROFILE,
         EVIDENCE_PROMPT_VERSION:EVIDENCE_PROFILE,
+        VALUE_PROMPT_VERSION:VALUE_PROFILE,
         STUDY_GAP_PROMPT_VERSION:EVIDENCE_PROFILE}.get(manifest['prompt_version']))
     gap_candidate = manifest['prompt_version'] == STUDY_GAP_PROMPT_VERSION
     if manifest['prompt_version'] != (STUDY_GAP_PROMPT_VERSION if gap_candidate else generation['prompt_version']):
         raise PolicyRunError('policy_prompt_version_invalid')
     if gap_candidate and strategy != 'adaptive_read_3':
         raise PolicyRunError('gap_prompt_strategy_invalid')
+    if generation['name'] == VALUE_PROFILE and (strategy not in
+            {'direct_initial_3', 'adaptive_read_3'} or
+            set(manifest['task']['initial_evidence_files']) != set(manifest['task']['authorized_files'])):
+        raise PolicyRunError('value_input_or_strategy_invalid')
     if provider.model != manifest['model']['model_id']:
         raise PolicyRunError('model_identity_drift')
     if (manifest['model'].get('model_id') != 'deepseek-flash'
@@ -150,7 +158,7 @@ def _run_study_cell_core(manifest_dir: Path, *, dataset_root: Path, strategy: st
     except ContractError:
         raise PolicyRunError('run_output_not_exclusive') from None
     tools = StaticEvidenceTools(manifest, dataset_root)
-    e0 = initial_evidence(manifest, tools)
+    e0 = initial_evidence(manifest, tools, include_static=generation['name'] != VALUE_PROFILE)
     visible = list(e0['source'])
     plan = _fixed_plan(manifest, dataset_root, fixed_plan) if strategy == 'fixed_read_3' else None
     ledger = _ReservationLedger(budget, 'D')  # Three requests; the frozen budget derives each cap.
@@ -168,9 +176,9 @@ def _run_study_cell_core(manifest_dir: Path, *, dataset_root: Path, strategy: st
         {'role':'user', 'content':_json_bytes(e0).decode('utf-8')}]
     if generation['name'] is not None:
         messages[0]['content'] += ' ' + EXTERNAL_EVIDENCE_CRITERIA
-    if generation['name'] == EVIDENCE_PROFILE:
+    if generation['name'] in (EVIDENCE_PROFILE, VALUE_PROFILE):
         messages[0]['content'] += ' ' + EVIDENCE_DECISION_CRITERIA
-    if gap_candidate:
+    if gap_candidate or (generation['name'] == VALUE_PROFILE and strategy == 'adaptive_read_3'):
         messages[0]['content'] += ' ' + ASK_USER_CONCISE_INSTRUCTIONS
     if strategy == 'direct_full_3':
         additional = tools.source([name for name in sorted(manifest['task']['authorized_files'])

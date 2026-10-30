@@ -88,6 +88,10 @@ The [two developer protocol checks](docs/deepseek-tool-name-probe.md) provide a
 separate, disabled-by-default diagnostic entry. They do not resume U or measure
 model quality.
 
+The proposed [bounded value stage](docs/deepseek-value-stage.md) pairs direct API
+and tool strategies on identical full-source inputs, with a developer gate and
+a preset decision to retain or simplify. It has no live authorization or results.
+
 ## Documentation
 
 - [CLI, Python API, profiles and report semantics](docs/static-evidence.md)

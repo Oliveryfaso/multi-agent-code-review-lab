@@ -12,7 +12,8 @@ from macr.evals.deepseek_policy_manifest import (DEFAULT_BUDGET, PROMPT_VERSION,
     _task, _read, _root, _relative, prepare_policy_manifest, load_policy_manifest)
 from macr.evals.deepseek_policy_runner import _json_bytes, _write_exclusive
 from macr.evals.deepseek_study_plan import build_fixed_plan
-from macr.evals.deepseek_study_generation import V2_PROFILE, EVIDENCE_PROFILE, get_generation
+from macr.evals.deepseek_study_generation import (
+    V2_PROFILE, EVIDENCE_PROFILE, VALUE_PROFILE, get_generation)
 from macr.investigation.scope import validate_workspace_path
 
 PACK_SCHEMA = 'macr.deepseek.study.pack.v1'
@@ -226,6 +227,9 @@ def prepare_study(pack_root, *, custodian, out, project_root, budget=None, seed=
     """
     generation, cell_budget, price, limits = _execution_settings(execution_profile)
     pack = load_neutral_pack(pack_root)
+    if execution_profile == VALUE_PROFILE:
+        require(all(set(task['initial_evidence_files']) == set(task['authorized_files'])
+            for task in pack['tasks']), 'value_full_initial_source_required')
     require(type(regression_custody) is bool and
         (not regression_custody or execution_profile==V2_PROFILE),'study_custody_mode_invalid')
     _custodian(custodian,regression=regression_custody)
@@ -258,7 +262,13 @@ def prepare_study(pack_root, *, custodian, out, project_root, budget=None, seed=
     randomizer.shuffle(base)
     cells = []
     for index, task in enumerate(order):
-        for strategy in base[index % 4:] + base[:index % 4]:
+        strategies = base[index % 4:] + base[:index % 4]
+        if execution_profile == VALUE_PROFILE:
+            pair = ['direct_initial_3', 'adaptive_read_3']
+            if (base.index(pair[0]) > base.index(pair[1])) != bool(index % 2):
+                pair.reverse()
+            strategies = pair + ['fixed_read_3', 'direct_full_3']
+        for strategy in strategies:
             cells.append({'task_id':task['id'], 'project_id':task['project_id'], 'strategy':strategy,
                 'cell_id':digest({'pack':digest(pack), 'task':task['id'], 'strategy':strategy,
                     'prompt':generation['prompt_version'], 'code':code, 'seed':seed})[:32]})
@@ -294,13 +304,16 @@ def load_study(out):
     _custodian(value.get('custodian'),regression=regression)
     generation, cell_budget, price, limits = _execution_settings(value.get('execution_profile'))
     if 'execution_profile' in value:
-        require(value['execution_profile'] in (V2_PROFILE,EVIDENCE_PROFILE),
+        require(value['execution_profile'] in (V2_PROFILE,EVIDENCE_PROFILE,VALUE_PROFILE),
             'study_generation_contract_drift')
     require(value['prompt_version']==generation['prompt_version']
         and value['cell_limits']==limits and value['price_snapshot']==price,
         'study_generation_contract_drift')
     require(implementation(value['project_root']) == value['implementation'], 'study_implementation_drift')
     pack = load_neutral_pack(value['pack_root'])
+    if value.get('execution_profile') == VALUE_PROFILE:
+        require(all(set(task['initial_evidence_files']) == set(task['authorized_files'])
+            for task in pack['tasks']), 'value_full_initial_source_required')
     require(digest(pack) == value['pack_sha256'], 'study_pack_drift')
     try:
         for task in value['tasks']:

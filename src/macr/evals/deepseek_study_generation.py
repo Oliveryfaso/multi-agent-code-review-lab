@@ -2,10 +2,12 @@
 from __future__ import annotations
 from macr.evals.deepseek_policy_manifest import (
     PROMPT_VERSION as _LEGACY_PROMPT_VERSION, STUDY_V2_PROMPT_VERSION as V2_PROMPT_VERSION,
-    STUDY_EVIDENCE_PROMPT_VERSION as EVIDENCE_PROMPT_VERSION)
+    STUDY_EVIDENCE_PROMPT_VERSION as EVIDENCE_PROMPT_VERSION,
+    STUDY_VALUE_PROMPT_VERSION as VALUE_PROMPT_VERSION)
 
 V2_PROFILE = 'study-8192-v2'
 EVIDENCE_PROFILE = 'study-evidence-v1'
+VALUE_PROFILE = 'study-value-v1'
 _MAX_OUTPUT_TOKENS = 393216
 _MAX_CONTEXT_INPUT_ENVELOPE = 1048576
 
@@ -31,7 +33,8 @@ def validate_reservation_micro_usd(max_output_tokens, reserved_micro_usd,
 
 def get_generation(profile=None):
     """Return a detached contract for the legacy or explicitly named profiles."""
-    if profile is not None and (type(profile) is not str or profile not in (V2_PROFILE,EVIDENCE_PROFILE)):
+    if profile is not None and (type(profile) is not str or profile not in
+            (V2_PROFILE,EVIDENCE_PROFILE,VALUE_PROFILE)):
         raise ValueError('study_generation_profile_invalid')
     output = 2000 if profile is None else 8192
     context = 1000000 if profile is None else _MAX_CONTEXT_INPUT_ENVELOPE
@@ -39,7 +42,7 @@ def get_generation(profile=None):
     reserved = 330000 if profile is None else ((minimum+9999)//10000)*10000
     return {'name':profile,
         'prompt_version':{None:_LEGACY_PROMPT_VERSION,V2_PROFILE:V2_PROMPT_VERSION,
-            EVIDENCE_PROFILE:EVIDENCE_PROMPT_VERSION}[profile],
+            EVIDENCE_PROFILE:EVIDENCE_PROMPT_VERSION,VALUE_PROFILE:VALUE_PROMPT_VERSION}[profile],
         'max_output_per_request':output,'max_total_output_tokens':3*output,
         'planned_input_per_request':8000,'max_total_input_tokens':24000,
         'context_input_envelope':context,
