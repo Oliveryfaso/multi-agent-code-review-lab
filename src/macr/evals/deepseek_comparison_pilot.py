@@ -5,6 +5,7 @@ Consent records are local operator records, not cryptographic signatures.
 from __future__ import annotations
 
 from collections import Counter
+from hashlib import sha256
 from pathlib import Path
 import os
 import random
@@ -20,7 +21,7 @@ from macr.evals.deepseek_study_live import (
     ENDPOINT, MODEL, LOG_POLICY, _ScriptedWire, _BoundWire, _StudyGate)
 from macr.evals.deepseek_study_profile import (
     STRATEGIES, StudyError, digest, load_neutral_pack, load_study,
-    prepare_study, read_json, require, _custodian)
+    prepare_study, read_json, require, _custodian, _read)
 from macr.evals.deepseek_study_runner import _run_study_cell_core
 from macr.investigation.scope import open_directory, validate_workspace_path
 from macr.providers.deepseek import DeepSeekProvider, _ApprovedTransport
@@ -57,6 +58,20 @@ def _selection(value, tasks):
         pair=(row['task_id'],row['strategy'])
         require(pair not in seen,'pilot_selection_invalid');seen.add(pair)
     return value
+
+
+def _regression_binding(pack_root,pack,selection,custodian):
+    _custodian(custodian,regression=True)
+    sources=[]
+    for task in pack['tasks']:
+        for name in task['authorized_files']:
+            path=task['snapshot_root']+'/'+name;raw=_read(pack_root,path,12289)
+            sources.append({'path':path,'size_bytes':len(raw),'sha256':sha256(raw).hexdigest()})
+    require(custodian['neutral_manifest_sha256']==selection['source_sha256']
+        and custodian['selection_sha256']==digest(selection)
+        and custodian['pack_sha256']==digest(pack)
+        and custodian['source_inventory_sha256']==digest(sorted(sources,key=lambda r:r['path'])),
+        'pilot_regression_commitment_drift')
 
 
 def _regression_receipt(root):
@@ -170,10 +185,22 @@ def _plan(root, studies, phase, selection, prerequisite, seed):
     return value | {'plan_sha256':digest(value)}
 
 
-def prepare_pilot(pack_root, *, custodian, out, phase, project_root,
-                  regression_selection=None, regression_control=None, seed=20261030):
-    """Prepare fresh exact scopes; selection/qualification is supplied by custody."""
-    require(type(phase) is str and phase in BUDGETS,'pilot_phase_invalid')
+def _unseen_descriptor(root,studies):
+    value=_plan(root,studies,'U',None,None,20261030)
+    del value['plan_sha256'];del value['regression_receipt']
+    value.update(schema='macr.deepseek.pilot.unseen-scope.v1',
+        execution_prerequisite={'phase':'R','requires_real':True,'requires_eligible':True})
+    return value | {'scope_sha256':digest(value)}
+
+
+def _bind_unseen_scope(plan,scope):
+    value={key:item for key,item in plan.items() if key!='plan_sha256'}
+    value['unseen_scope_sha256']=scope['scope_sha256']
+    return value | {'plan_sha256':digest(value)}
+
+
+def freeze_unseen_inputs(pack_root, *, custodian, out, project_root, seed=20261030):
+    """Seal U data/config/order now; neither create nor fabricate an R receipt."""
     require(type(seed) is int and seed==20261030,'pilot_seed_invalid')
     pack=load_neutral_pack(pack_root);_custodian(custodian)
     require(len(pack['tasks'])==9 and sorted(Counter(
@@ -181,11 +208,69 @@ def prepare_pilot(pack_root, *, custodian, out, phase, project_root,
     root=Path(out).absolute();validate_workspace_path(root,output=True)
     require(not root.exists() and not root.is_relative_to(Path(pack_root).absolute()),
         'pilot_output_scope_invalid')
+    with open_directory(root.parent) as fd:
+        os.mkdir(root.name,0o700,dir_fd=fd);os.fsync(fd)
+    studies={name:prepare_study(pack_root,custodian=custodian,out=root/name,
+        project_root=project_root,budget=BUDGETS['U'],seed=seed,execution_profile=name)
+        for name in (V2_PROFILE,EVIDENCE_PROFILE)}
+    scope=_unseen_descriptor(root,studies)
+    _write_exclusive(root/'unseen-scope.json',scope,262144)
+    return scope
+
+
+def load_unseen_inputs(control_root):
+    root=Path(control_root).absolute();scope=read_json(root,'unseen-scope.json')
+    require(type(scope) is dict and scope.get('control_root')==str(root), 'pilot_unseen_scope_invalid')
+    studies={name:load_study(root/name) for name in (V2_PROFILE,EVIDENCE_PROFILE)}
+    first=studies[V2_PROFILE]
+    require(len(first['tasks'])==9 and sorted(Counter(
+        task['project_id'] for task in first['tasks']).values())==[3,3,3]
+        and all(study.get('execution_profile')==name and not study.get('regression_custody',False)
+            and study['pack_sha256']==first['pack_sha256']
+            and study['implementation']==first['implementation']
+            and study['custodian']==first['custodian'] and study['budget']==BUDGETS['U']
+            and all(task['manifest']['model']==MODEL for task in study['tasks'])
+            for name,study in studies.items()),'pilot_profile_mismatch')
+    require(scope==_unseen_descriptor(root,studies),'pilot_unseen_scope_drift')
+    return scope
+
+
+def finalize_unseen_pilot(control_root, *, regression_control):
+    """Bind the sealed U scope to a verified real R, without granting execution."""
+    root=Path(control_root).absolute();scope=load_unseen_inputs(root)
+    prior=Path(regression_control).absolute()
+    require(not root.is_relative_to(prior) and not prior.is_relative_to(root),
+        'pilot_output_scope_invalid')
+    receipt=_regression_receipt(prior)
+    require(receipt['provenance']=='approved_live','pilot_regression_live_required')
+    require(receipt['pack_sha256']!=scope['pack_sha256'],'pilot_unseen_pack_reused')
+    studies={name:load_study(root/name) for name in (V2_PROFILE,EVIDENCE_PROFILE)}
+    plan=_bind_unseen_scope(_plan(root,studies,'U',None,receipt,20261030),scope)
+    try:_write_exclusive(root/'pilot.json',plan,262144)
+    except FileExistsError:raise StudyError('pilot_already_finalized') from None
+    return plan
+
+
+def prepare_pilot(pack_root, *, custodian, out, phase, project_root,
+                  regression_selection=None, regression_control=None, seed=20261030):
+    """Prepare fresh exact scopes; selection/qualification is supplied by custody."""
+    require(type(phase) is str and phase in BUDGETS,'pilot_phase_invalid')
+    require(type(seed) is int and seed==20261030,'pilot_seed_invalid')
+    pack=load_neutral_pack(pack_root)
+    root=Path(out).absolute();validate_workspace_path(root,output=True)
+    require(not root.exists() and not root.is_relative_to(Path(pack_root).absolute()),
+        'pilot_output_scope_invalid')
     prerequisite=None
     if phase=='R':
         require(regression_control is None,'pilot_phase_scope_invalid')
         _selection(regression_selection,{task['id'] for task in pack['tasks']})
+        require({task['id'] for task in pack['tasks']}==
+            {row['task_id'] for row in regression_selection['rows']},'pilot_pack_grid_invalid')
+        _regression_binding(pack_root,pack,regression_selection,custodian)
     else:
+        _custodian(custodian)
+        require(len(pack['tasks'])==9 and sorted(Counter(
+            task['project_id'] for task in pack['tasks']).values())==[3,3,3], 'pilot_pack_grid_invalid')
         require(regression_selection is None and regression_control is not None,
             'pilot_regression_required')
         prior=Path(regression_control).absolute()
@@ -197,7 +282,8 @@ def prepare_pilot(pack_root, *, custodian, out, phase, project_root,
         os.mkdir(root.name,0o700,dir_fd=fd);os.fsync(fd)
     names=[V2_PROFILE] if phase=='R' else [V2_PROFILE,EVIDENCE_PROFILE]
     studies={name:prepare_study(pack_root,custodian=custodian,out=root/name,
-        project_root=project_root,budget=BUDGETS[phase],seed=seed,execution_profile=name)
+        project_root=project_root,budget=BUDGETS[phase],seed=seed,execution_profile=name,
+        regression_custody=phase=='R')
         for name in names}
     value=_plan(root,studies,phase,regression_selection,prerequisite,seed)
     _write_exclusive(root/'pilot.json',value,262144)
@@ -213,23 +299,30 @@ def load_pilot(control_root):
     phase=value['phase'];names=[V2_PROFILE] if phase=='R' else [V2_PROFILE,EVIDENCE_PROFILE]
     studies={name:load_study(root/name) for name in names}
     first=studies[V2_PROFILE]
-    require(len(first['tasks'])==9 and sorted(Counter(
-        task['project_id'] for task in first['tasks']).values())==[3,3,3]
-        and all(study.get('execution_profile')==name and study.get('remote_enabled') is False
+    require(all(study.get('execution_profile')==name and study.get('remote_enabled') is False
+        and study.get('regression_custody',False)==(phase=='R')
         and all(task['manifest']['model']==MODEL for task in study['tasks'])
         and study['pack_sha256']==first['pack_sha256']
         and study['implementation']==first['implementation']
         and study['custodian']==first['custodian']
         and study['budget']==BUDGETS[phase] for name,study in studies.items()), 'pilot_profile_mismatch')
     selection=value.get('regression_selection');prerequisite=None
-    if phase=='R':_selection(selection,{task['id'] for task in first['tasks']})
+    if phase=='R':
+        _selection(selection,{task['id'] for task in first['tasks']})
+        require({task['id'] for task in first['tasks']}==
+            {row['task_id'] for row in selection['rows']},'pilot_pack_grid_invalid')
+        _regression_binding(first['pack_root'],load_neutral_pack(first['pack_root']),selection,first['custodian'])
     else:
+        require(len(first['tasks'])==9 and sorted(Counter(
+            task['project_id'] for task in first['tasks']).values())==[3,3,3], 'pilot_pack_grid_invalid')
         require(selection is None,'pilot_phase_scope_invalid')
         receipt=value.get('regression_receipt')
         require(type(receipt) is dict and type(receipt.get('control_root')) is str,
             'pilot_regression_required')
         prerequisite=_regression_receipt(receipt['control_root'])
     expected=_plan(root,studies,phase,selection,prerequisite,20261030)
+    if phase=='U' and ((root/'unseen-scope.json').exists() or 'unseen_scope_sha256' in value):
+        expected=_bind_unseen_scope(expected,load_unseen_inputs(root))
     require(value==expected,'pilot_plan_drift')
     return value
 
@@ -247,6 +340,7 @@ def propose_pilot_approval(control_root):
         'endpoint':ENDPOINT,'model':dict(MODEL),**plan['budget'],
         'price_snapshot':dict(PRICE),'cell_limits':plan['cell_limits'],
         'regression_receipt':plan['regression_receipt'],'concurrent_requests':1,
+        'unseen_scope_sha256':plan.get('unseen_scope_sha256'),
         'automatic_retries':0,'resume':False,'ledger_reset':False,
         'log_root':plan['control_root'],'log_policy':dict(LOG_POLICY)}
 
@@ -261,6 +355,7 @@ def _preflight(control_root, approval, *, simulated):
     if plan['phase']=='U' and not simulated:
         require(plan['regression_receipt']['provenance']=='approved_live',
             'pilot_regression_live_required')
+        require(type(plan.get('unseen_scope_sha256')) is str,'pilot_unseen_scope_required')
     if not simulated:
         # Guarded offline fixtures live in artifacts; real logs must be external.
         require(not Path(plan['control_root']).is_relative_to(Path(plan['project_root'])),

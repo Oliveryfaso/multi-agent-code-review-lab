@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Machine-only regression custody commitment, no semantic gold",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "version", "neutral_manifest_sha256", "selection_sha256", "pack_sha256", "source_inventory_sha256", "qualification_statement"],
+  "properties": {
+    "schema": {"const": "macr.deepseek.regression.custodian.v1"},
+    "version": {"type": "string", "minLength": 1, "maxLength": 2000, "pattern": "\\S"},
+    "neutral_manifest_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "selection_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "pack_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "source_inventory_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "qualification_statement": {"type": "string", "minLength": 1, "maxLength": 2000, "pattern": "\\S"}
+  }
+}

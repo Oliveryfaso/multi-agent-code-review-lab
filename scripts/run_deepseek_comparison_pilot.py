@@ -13,6 +13,7 @@ sys.path[:0]=[str(PROJECT/'src'),str(PROJECT/'scripts')]
 from macr.evals.deepseek_comparison_pilot import (
     prepare_pilot, propose_pilot_approval, preflight_approved_pilot,
     execute_approved_pilot, run_pilot_dryrun)
+from macr.evals import deepseek_comparison_pilot as pilot
 from macr.evals.deepseek_study_profile import StudyError, read_json, require
 from run_deepseek_study_live import _read_key_without_echo
 
@@ -32,6 +33,15 @@ def main(argv=None):
     prepare.add_argument('--selection',type=Path,help='R-only custodian truncation-selection JSON.')
     prepare.add_argument('--regression-control',type=Path,help='U-only completed R control root.')
     prepare.add_argument('--out',type=Path,required=True)
+    freeze=commands.add_parser('freeze-unseen',help='Freeze U scope only, without an execution plan or R receipt.',
+        description='Return a pre-freeze scope_sha256, not an execution plan hash; no R receipt is created.')
+    freeze.add_argument('--pack',type=Path,required=True)
+    freeze.add_argument('--custodian',type=Path,required=True,help='Hash-only commitment JSON, never gold.')
+    freeze.add_argument('--out',type=Path,required=True)
+    finalize=commands.add_parser('finalize-unseen',help='Create the U plan only after a qualified real R receipt.',
+        description='Write the final U plan only after an eligible real R receipt; this does not execute it.')
+    finalize.add_argument('--control',type=Path,required=True)
+    finalize.add_argument('--regression-control',type=Path,required=True)
     for name in ('proposal','preflight','execute','dry-run'):
         action=commands.add_parser(name)
         action.add_argument('--control',type=Path,required=True)
@@ -41,7 +51,12 @@ def main(argv=None):
         if name=='dry-run':action.add_argument('--scripts',type=Path,required=True,help='Literal offline replies JSON.')
     args=parser.parse_args(argv)
     try:
-        if args.command=='prepare':
+        if args.command=='freeze-unseen':
+            result=pilot.freeze_unseen_inputs(args.pack,custodian=_read_file(args.custodian),
+                out=args.out,project_root=PROJECT,seed=20261030)
+        elif args.command=='finalize-unseen':
+            result=pilot.finalize_unseen_pilot(args.control,regression_control=args.regression_control)
+        elif args.command=='prepare':
             require(args.phase!='R' or args.selection is not None,'pilot_cli_selection_missing')
             require(args.phase!='U' or args.regression_control is not None,'pilot_cli_regression_control_missing')
             require(not (args.phase=='R' and args.regression_control is not None)

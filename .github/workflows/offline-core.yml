@@ -137,6 +137,7 @@ jobs:
           python -I -S -B scripts/run_offline_tests.py
           test_deepseek_comparison_pilot test_deepseek_comparison_report
           test_deepseek_comparison_cli
+          test_deepseek_regression_compat test_deepseek_unseen_scope
 
       - name: Frozen continuation proofs without network
         run: python -I -S -B scripts/run_offline_tests.py test_deepseek_policy_recovery

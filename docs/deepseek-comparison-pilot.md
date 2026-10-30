@@ -24,15 +24,35 @@ selection-source hash/declaration. That declaration needs independent verificati
 its structure alone does not prove all historical failures were selected. The
 executor does not read old answers or gold to select cases. A neutral source
 package supplies only the original authorized code, task facts and manifests.
+R uses exactly the task set named by that selection, such as the actual5task
+2/2/1project subset; it does not inherit U's9task/3x3constraint. Unselected tasks
+are rejected rather than padded into the source scope.
+
+R's separate [machine-only commitment schema](deepseek-regression-commitment.schema.json)
+has version, qualification_statement and four bindings: exact neutral wrapper,
+canonical seven-row selection, selected-task pack and source inventory. It has
+no gold/rubric fields and grants no semantic credit. The independent custodian
+must supply the declaration; the executor only checks its syntax and exact
+bindings. Hashes alone do not establish authorship or case eligibility. Normal
+studies/U keep their original five-field gold/rubric commitment. Removing the
+explicit regression-custody mode cannot reinterpret one as the other.
 
 U requires a new neutral9-task/3-project package and hash-only custody/rubric
 commitments. Newness and category qualification belong to the independent
 custodian; changing a pack name/hash does not establish unseen mechanisms.
 Known development fixtures and the scored nine tasks are not U samples.
 
-U preparation binds an eligible R receipt. Actual U preflight additionally
-requires that receipt to have real approved-live provenance and its own exact
-U approval. A fake R rehearsal cannot activate real U. R qualifies only when
+U data/config/order can be frozen before R with `freeze-unseen`. This produces
+`unseen-scope.json` and a `scope_sha256`, with no R receipt, execution plan,
+authorization or claim. Its18selected D cells, source/code hashes, profiles,
+budgets and order are immutable, while R remains an explicit prerequisite.
+After a qualified real R, `finalize-unseen` derives the final plan hash by binding
+that original scope hash and the verified R receipt. It grants no execution
+permission, replaces no prior plan and leaves data/order/config unchanged.
+
+Actual U preflight requires the sealed scope, a receipt with real approved-live
+provenance and its own exact U approval. A fake R rehearsal cannot finalize or
+activate real U. R qualifies only when
 all7 cells have terminal outcomes, no operational/identity/unknown accounting
 anomaly occurred, at least5 have contract-valid reviewable termination, and at
 most2 cells truncated. This is an operational gate, not a semantic score.
@@ -115,7 +135,11 @@ generalization or automated expansion.
 Before a real approval card is ready, bind exact source paths/bytes/hashes,
 license/qualification, R selection or U commitments, code/config/order hashes,
 new budget/request ceiling, stop rules and the repository-external log path.
-R needs its own permission; U needs a qualified R and a later separate permission.
+R and U need separate exact phase records. One human confirmation may explicitly
+authorize R and a conditional U under its sealed scope; the coordinator must
+still bind the genuine R receipt and final U plan before executing it. General
+continuation or an input freeze is not that permission. Any scope/code/budget
+change requires revisiting the authorization, not reusing a stale hash.
 
 Preparation and inspection commands (placeholder paths are not a real pack):
 
@@ -128,8 +152,22 @@ python3 -I -S -B scripts/run_deepseek_comparison_pilot.py dry-run --control /EXT
 The R selection object has schema`macr.deepseek.pilot.regression.v1`,
 `source_sha256`, a nonblank`selection_statement`, and exactly7`rows`, each with
 `task_id`, original`strategy`, old`response_sha256` and`finish_reason:"length"`.
-The custody file has only schema/version/gold_sha256/rubric_sha256/
-qualification_statement; it contains no answers or private paths. U preparation
-instead supplies`--phase U --regression-control /COMPLETED/R` and its new neutral
-pack. The seed is fixed. Dry-run and live execution both consume a one-use claim;
-never try live against a rehearsed control root.
+R's custody file has only schema/version/neutral_manifest_sha256/selection_sha256/
+pack_sha256/source_inventory_sha256/qualification_statement. Its inventory is
+sorted `{path,size_bytes,sha256}` rows; canonical JSON means compact sorted-key
+UTF-8, ensure_ascii=False, allow_nan=False, no trailing newline. The neutral
+wrapper hash uses its exact bytes. Old response hashes are normalized-record
+hashes, never raw HTTP hashes. No semantic answer or private path belongs here.
+
+U keeps schema/version/gold_sha256/rubric_sha256/qualification_statement, with
+opaque private commitments and no gold content. Its data freeze and later
+metadata finalization use:
+
+```sh
+python3 -I -S -B scripts/run_deepseek_comparison_pilot.py freeze-unseen --pack /NEW/NEUTRAL --custodian /OPAQUE_COMMITMENT.json --out /EXTERNAL/NEW_U
+python3 -I -S -B scripts/run_deepseek_comparison_pilot.py finalize-unseen --control /EXTERNAL/NEW_U --regression-control /QUALIFIED/REAL_R
+```
+
+The seed is fixed. The old direct U prepare path remains useful for scripted
+development, but an unsealed U cannot pass actual live preflight. Dry-run and
+live execution consume a one-use claim; never try live against a rehearsed root.

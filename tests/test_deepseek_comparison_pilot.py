@@ -2,6 +2,7 @@
 import copy
 import importlib
 import importlib.util
+from hashlib import sha256
 import json
 from pathlib import Path
 import shutil
@@ -21,17 +22,37 @@ EVIDENCE = 'study-evidence-v1'
 def make_regression_selection():
     return {'schema': 'macr.deepseek.pilot.regression.v1', 'source_sha256': 'c' * 64,
         'selection_statement': 'Self-authored fixture for all seven selected length failures; not historical evidence.',
-        'rows': [{'task_id': f'dev{i}',
-            'strategy': 'direct_full_3' if i < 4 else 'fixed_read_3',
-            'response_sha256': f'{i + 1:064x}', 'finish_reason': 'length'} for i in range(7)]}
+        'rows': [{'task_id': task_id, 'strategy': strategy,
+            'response_sha256': f'{i + 1:064x}', 'finish_reason': 'length'}
+            for i, (task_id, strategy) in enumerate((
+                ('dev0', 'direct_full_3'), ('dev0', 'fixed_read_3'),
+                ('dev1', 'fixed_read_3'), ('dev2', 'direct_full_3'),
+                ('dev3', 'direct_full_3'), ('dev4', 'direct_full_3'),
+                ('dev4', 'fixed_read_3')))]}
+
+
+def regression_commitment(root, pack, selection):
+    """Synthetic-only hash commitment; this does not qualify an actual dataset."""
+    sources = []
+    for task in pack['tasks']:
+        for name in task['authorized_files']:
+            path = task['snapshot_root'] + '/' + name
+            raw = (root / path).read_bytes()
+            sources.append({'path': path, 'size_bytes': len(raw), 'sha256': sha256(raw).hexdigest()})
+    return {'schema': 'macr.deepseek.regression.custodian.v1', 'version': 'synthetic-only',
+        'neutral_manifest_sha256': selection['source_sha256'],
+        'selection_sha256': digest(selection), 'pack_sha256': digest(pack),
+        'source_inventory_sha256': digest(sorted(sources, key=lambda row: row['path'])),
+        'qualification_statement': 'Self-authored compatibility fixture only; not actual regression qualification.'}
 
 
 def prepare_regression(pilot):
     root = fixture_root()
-    development_pack(root, 9)
+    pack = development_pack(root, 5)
+    selection = make_regression_selection()
     out = root.parent / (root.name + '-regression')
-    plan = pilot.prepare_pilot(root, custodian=COMMITMENT, out=out, phase='R',
-        project_root=PROJECT, regression_selection=make_regression_selection())
+    plan = pilot.prepare_pilot(root, custodian=regression_commitment(root, pack, selection),
+        out=out, phase='R', project_root=PROJECT, regression_selection=selection)
     return root, out, plan
 
 
@@ -77,7 +98,9 @@ class ComparisonPilotTests(unittest.TestCase):
         self.assertEqual(len(plan['cells']), 7)
         self.assertEqual(set(plan['profiles']), {V2})
         self.assertEqual({(c['task_id'], c['strategy']) for c in plan['cells']},
-            {(f'dev{i}', 'direct_full_3' if i < 4 else 'fixed_read_3') for i in range(7)})
+            {('dev0', 'direct_full_3'), ('dev0', 'fixed_read_3'), ('dev1', 'fixed_read_3'),
+             ('dev2', 'direct_full_3'), ('dev3', 'direct_full_3'), ('dev4', 'direct_full_3'),
+             ('dev4', 'fixed_read_3')})
         proposal = pilot.propose_pilot_approval(out)
         self.assertFalse(proposal['authorized'])
         self.assertEqual(proposal['confirmation_ref'], '')
@@ -85,9 +108,9 @@ class ComparisonPilotTests(unittest.TestCase):
         self.assertEqual(proposal['max_requests'], 21)
         self.assertEqual(proposal['max_usd'], '1.000000')
         self.assertEqual(proposal['endpoint'], 'https://api.deepseek.com/chat/completions')
-        self.assertEqual(len(proposal['sources']), 14)
+        self.assertEqual(len(proposal['sources']), 10)
         self.assertEqual({row['path'].split('/')[1] for row in proposal['sources']},
-            {f'dev{i}' for i in range(7)})
+            {f'dev{i}' for i in range(5)})
         self.assertFalse((out / 'execution.claim.json').exists())
 
     def test_disabled_unapproved_and_changed_scope_cannot_read_key(self):
@@ -117,16 +140,16 @@ class ComparisonPilotTests(unittest.TestCase):
         wrong = copy.deepcopy(selected); wrong['rows'][0] = wrong['rows'][1]; variants.append(wrong)
         wrong = copy.deepcopy(selected); wrong['source_sha256'] = 'not-a-hash'; variants.append(wrong)
         for selection in variants:
-            root = fixture_root(); development_pack(root, 9)
+            root = fixture_root(); pack = development_pack(root, 5)
             out = root.parent / (root.name + '-invalid')
             with self.assertRaises(StudyError):
-                pilot.prepare_pilot(root, custodian=COMMITMENT, out=out, phase='R',
+                pilot.prepare_pilot(root, custodian=regression_commitment(root, pack, selection), out=out, phase='R',
                     project_root=PROJECT, regression_selection=selection)
             self.assertFalse(out.exists())
-        root = fixture_root(); development_pack(root, 9)
+        root = fixture_root(); pack = development_pack(root, 5)
         out = root.parent / (root.name + '-invalid-phase')
         with self.assertRaises(StudyError):
-            pilot.prepare_pilot(root, custodian=COMMITMENT, out=out, phase='all',
+            pilot.prepare_pilot(root, custodian=regression_commitment(root, pack, selected), out=out, phase='all',
                 project_root=PROJECT, regression_selection=selected)
         self.assertFalse(out.exists())
 

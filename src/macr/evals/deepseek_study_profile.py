@@ -173,11 +173,14 @@ def load_neutral_pack(pack_root):
     return pack
 
 
-def _custodian(value):
-    require(type(value) is dict and set(value) == {'schema', 'version', 'gold_sha256',
-        'rubric_sha256', 'qualification_statement'} and
-        value['schema'] == 'macr.deepseek.study.custodian.v1', 'custodian_commitment_invalid')
-    for key in ('gold_sha256', 'rubric_sha256'):
+def _custodian(value, *, regression=False):
+    hashes=(('neutral_manifest_sha256','selection_sha256','pack_sha256','source_inventory_sha256')
+        if regression else ('gold_sha256','rubric_sha256'))
+    schema=('macr.deepseek.regression.custodian.v1' if regression
+        else 'macr.deepseek.study.custodian.v1')
+    require(type(value) is dict and set(value)=={'schema','version','qualification_statement',*hashes}
+        and value['schema']==schema, 'custodian_commitment_invalid')
+    for key in hashes:
         require(type(value[key]) is str and _HASH.fullmatch(value[key]), 'custodian_commitment_invalid')
     require(all(type(value[k]) is str and 0 < len(value[k].strip()) <= 2000
                 for k in ('version', 'qualification_statement')), 'custodian_commitment_invalid')
@@ -215,7 +218,7 @@ def _execution_settings(profile):
 
 
 def prepare_study(pack_root, *, custodian, out, project_root, budget=None, seed=20261029,
-                  execution_profile=None):
+                  execution_profile=None, regression_custody=False):
     """Freeze neutral inputs and external commitments, without opening answer files.
 
     This prepares a proposed study, never a live authorization. A custodian's
@@ -223,7 +226,9 @@ def prepare_study(pack_root, *, custodian, out, project_root, budget=None, seed=
     """
     generation, cell_budget, price, limits = _execution_settings(execution_profile)
     pack = load_neutral_pack(pack_root)
-    _custodian(custodian)
+    require(type(regression_custody) is bool and
+        (not regression_custody or execution_profile==V2_PROFILE),'study_custody_mode_invalid')
+    _custodian(custodian,regression=regression_custody)
     budget = validate_budget(budget)
     require(type(seed) is int and 0 <= seed < 2**32, 'order_seed_invalid')
     code = implementation(project_root)
@@ -266,6 +271,8 @@ def prepare_study(pack_root, *, custodian, out, project_root, budget=None, seed=
         'price_snapshot':price, 'cell_limits':limits}
     if execution_profile is not None:
         value['execution_profile'] = execution_profile
+    if regression_custody:
+        value['regression_custody'] = True
     value['profile_sha256'] = digest(value)
     _write_exclusive(output / 'study.json', value, 262144)
     return value
@@ -279,6 +286,12 @@ def load_study(out):
         value.get('remote_enabled') is False and value.get('profile_sha256') ==
         digest({k:v for k,v in value.items() if k != 'profile_sha256'}), 'study_profile_invalid')
     validate_budget(value['budget'])
+    regression=value.get('regression_custody',False)
+    require(type(regression) is bool and
+        ('regression_custody' not in value or regression is True)
+        and (not regression or value.get('execution_profile')==V2_PROFILE),
+        'study_custody_mode_invalid')
+    _custodian(value.get('custodian'),regression=regression)
     generation, cell_budget, price, limits = _execution_settings(value.get('execution_profile'))
     if 'execution_profile' in value:
         require(value['execution_profile'] in (V2_PROFILE,EVIDENCE_PROFILE),
