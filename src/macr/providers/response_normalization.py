@@ -17,13 +17,18 @@ _ERROR_CODES = frozenset({
 _FUNCTION_NAME = re.compile(r'[A-Za-z0-9_-]{1,128}\Z')
 _MAX_TOOL_CALLS = 64
 _MAX_ARGUMENT_BYTES = 64 * 1024
+_TOOL_NAME_REASONS = frozenset({'type', 'format', 'not_declared'})
 
 
 class ResponseNormalizationError(ValueError):
-    def __init__(self, code: str):
+    def __init__(self, code: str, *, tool_name_reason: str | None = None):
         if type(code) is not str or code not in _ERROR_CODES:
             raise ValueError('response_normalization_code_invalid')
+        if tool_name_reason is not None and (code != 'tool_function_name' or
+                type(tool_name_reason) is not str or tool_name_reason not in _TOOL_NAME_REASONS):
+            raise ValueError('response_normalization_reason_invalid')
         self.code = code
+        self.tool_name_reason = tool_name_reason
         super().__init__(code)
 
 
@@ -131,8 +136,12 @@ def normalize_assistant_message(message, *, tool_names: set[str]) -> dict:
         if 'name' not in function or 'arguments' not in function:
             raise ResponseNormalizationError('required_field')
         name, arguments = function['name'], function['arguments']
-        if type(name) is not str or not _FUNCTION_NAME.fullmatch(name) or name not in tool_names:
-            raise ResponseNormalizationError('tool_function_name')
+        if type(name) is not str:
+            raise ResponseNormalizationError('tool_function_name', tool_name_reason='type')
+        if not _FUNCTION_NAME.fullmatch(name):
+            raise ResponseNormalizationError('tool_function_name', tool_name_reason='format')
+        if name not in tool_names:
+            raise ResponseNormalizationError('tool_function_name', tool_name_reason='not_declared')
         if not _arguments_are_bounded(arguments):
             raise ResponseNormalizationError('tool_arguments_type')
         _decode_object(arguments, 'tool_arguments_json')

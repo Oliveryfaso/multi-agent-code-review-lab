@@ -190,7 +190,8 @@ def _run_study_cell_core(manifest_dir: Path, *, dataset_root: Path, strategy: st
                 evidence['identity_evidence_state'] = 'rejected'
         if error is not None and error.diagnostic is not None:
             try:
-                evidence['failure_diagnostic'] = validate_failure_diagnostic(error.diagnostic)
+                evidence['failure_diagnostic'] = validate_failure_diagnostic(
+                    error.diagnostic | {'policy_decision': decision})
             except (ValueError, TypeError):
                 evidence['failure_diagnostic_rejected'] = True
         _write_exclusive(root / f'decision-{decision:02d}.response.json', evidence,

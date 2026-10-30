@@ -108,6 +108,7 @@ jobs:
           python -I -S -B scripts/run_offline_tests.py
           test_deepseek_conversation test_deepseek_response_normalization
           test_provider_billing_evidence test_provider_identity_evidence test_provider_failure_structure
+          test_deepseek_name_failure_reason
           test_deepseek_policy_observability test_deepseek_policy_live_entry
           test_deepseek_policy_batch test_deepseek_policy_spend
 
@@ -131,6 +132,7 @@ jobs:
           test_deepseek_study_generation test_deepseek_study_v2_profile
           test_deepseek_study_v2_runner test_deepseek_study_v2_evidence
           test_deepseek_evidence_decision
+          test_deepseek_field_boundaries
 
       - name: Explicit selected-cell pilot contracts without network
         run: >-
@@ -138,6 +140,7 @@ jobs:
           test_deepseek_comparison_pilot test_deepseek_comparison_report
           test_deepseek_comparison_cli
           test_deepseek_regression_compat test_deepseek_unseen_scope
+          test_deepseek_terminal_contract
 
       - name: Frozen continuation proofs without network
         run: python -I -S -B scripts/run_offline_tests.py test_deepseek_policy_recovery

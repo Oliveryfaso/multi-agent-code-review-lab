@@ -79,6 +79,11 @@ execution processed 36 cells in 90 requests; its [frozen aggregate results](docs
 retain eleven failures, the two-segment identity gap and small-sample limits.
 These observations do not establish general accuracy or an isolated tool benefit.
 
+A later [R/U regression and paired-study report](docs/deepseek-ru-results-20261030.md)
+records 33 requests: R met its machine gate, while U stopped after three contract
+failures with 14 cells unattempted. Its locked semantic review does not establish
+a policy increment.
+
 ## Documentation
 
 - [CLI, Python API, profiles and report semantics](docs/static-evidence.md)

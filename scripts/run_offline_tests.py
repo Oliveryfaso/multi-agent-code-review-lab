@@ -33,6 +33,8 @@ OFFLINE_MODULES = frozenset({
     'test_deepseek_study_v2_evidence', 'test_deepseek_evidence_decision',
     'test_deepseek_comparison_pilot', 'test_deepseek_comparison_report', 'test_deepseek_comparison_cli',
     'test_deepseek_regression_compat', 'test_deepseek_unseen_scope',
+    'test_deepseek_name_failure_reason', 'test_deepseek_field_boundaries',
+    'test_deepseek_terminal_contract',
     'test_deepseek_study_live',
     'test_provider_identity_evidence',
     'test_deepseek_study_continuation',

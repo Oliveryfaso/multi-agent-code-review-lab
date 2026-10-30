@@ -35,6 +35,8 @@ _MODEL = frozenset({'deepseek-flash', 'deepseek-v4-pro', 'missing', 'other', 'in
 _REQUEST_ID = re.compile(r'(?:chatcmpl-)?(?:[0-9a-fA-F]{32,64}|'
     r'[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})\Z')
 _MISSING = object()
+_TOOL_NAME_REASONS = frozenset({'type', 'format', 'not_declared'})
+_TOOL_SETS = frozenset({'none', 'terminal_only', 'other'})
 
 
 def _require(condition):
@@ -46,7 +48,7 @@ def validate_failure_diagnostic(value) -> dict:
     """Reject unknown keys/types; return an independent, fixed-schema copy."""
     allowed = ({'schema', 'stage', 'http_status', 'response_bytes', 'request_id',
                 'model', 'finish_reason', 'usage_counters', 'usage_counter_types',
-                'validation_error'} |
+                'validation_error', 'tool_name_reason', 'declared_tool_set', 'policy_decision'} |
                _KIND_FIELDS | _COUNT_FIELDS | _BOOL_FIELDS)
     _require(type(value) is dict and {'schema', 'stage'} <= set(value) <= allowed)
     _require(value['schema'] == SCHEMA and type(value['stage']) is str and
@@ -60,6 +62,13 @@ def validate_failure_diagnostic(value) -> dict:
             _require(type(item) is bool)
         elif key == 'validation_error':
             _require(type(item) is str and item in _VALIDATION_ERRORS)
+        elif key == 'tool_name_reason':
+            _require(type(item) is str and item in _TOOL_NAME_REASONS and
+                     value.get('validation_error') == 'tool_function_name')
+        elif key == 'declared_tool_set':
+            _require(type(item) is str and item in _TOOL_SETS)
+        elif key == 'policy_decision':
+            _require(type(item) is int and 1 <= item <= 3)
         elif key == 'http_status':
             _require(type(item) is int and 100 <= item <= 599)
         elif key == 'response_bytes':
@@ -113,7 +122,8 @@ def http_failure_metadata(stage, *, status=None, request_id=None,
 
 
 def make_failure_diagnostic(stage, *, data=_MISSING, metadata=None,
-                            validation_error=None) -> dict:
+                            validation_error=None, tool_name_reason=None,
+                            declared_tool_set=None) -> dict:
     """Extract only fixed field types/counts and official integer counters.
 
     Diagnostic usage counters are untrusted observations, never settlement evidence.
@@ -125,6 +135,10 @@ def make_failure_diagnostic(stage, *, data=_MISSING, metadata=None,
     if validation_error is not None:
         _require(type(validation_error) is str and validation_error in _VALIDATION_ERRORS)
         result['validation_error'] = validation_error
+    if tool_name_reason is not None:
+        result['tool_name_reason'] = tool_name_reason
+    if declared_tool_set is not None:
+        result['declared_tool_set'] = declared_tool_set
     if metadata is not None:
         try:
             safe = validate_failure_diagnostic(metadata)

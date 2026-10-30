@@ -193,6 +193,11 @@ class DeepSeekProvider:
     def converse(self, request: ConversationRequest) -> ConversationResponse:
         """Complete one conversation step; tool execution and argument validation are caller-owned."""
         body = self.encode_conversation_request(request)
+        tool_names = {tool['function']['name'] for tool in request.tools
+                      if type(tool.get('function')) is dict
+                      and type(tool['function'].get('name')) is str}
+        declared_tool_set = ('none' if not tool_names else 'terminal_only'
+            if tool_names == {'finish', 'ask_user'} else 'other')
         if self.transport is None:
             if not self.allow_remote:
                 raise ProviderError('remote_disabled')
@@ -233,9 +238,6 @@ class DeepSeekProvider:
                 raise ValueError()
             choice = data['choices'][0]
             stage = 'assistant_message'
-            tool_names = {tool['function']['name'] for tool in request.tools
-                          if type(tool.get('function')) is dict
-                          and type(tool['function'].get('name')) is str}
             message = normalize_assistant_message(choice.get('message'), tool_names=tool_names)
             stage = 'response_contract'
             json.dumps({'message': message, 'model': data.get('model'),
@@ -277,7 +279,9 @@ class DeepSeekProvider:
         except ResponseNormalizationError as error:
             raise ProviderError('model_response_invalid', billing_evidence=billing, identity_evidence=identity,
                 diagnostic=make_failure_diagnostic(stage, data=data,
-                    metadata=_transport_metadata(transport), validation_error=error.code)) from None
+                    metadata=_transport_metadata(transport), validation_error=error.code,
+                    tool_name_reason=error.tool_name_reason,
+                    declared_tool_set=declared_tool_set)) from None
         except (KeyError, IndexError, TypeError, ValueError, AttributeError):
             raise ProviderError('model_response_invalid', billing_evidence=billing, identity_evidence=identity,
                 diagnostic=make_failure_diagnostic(
