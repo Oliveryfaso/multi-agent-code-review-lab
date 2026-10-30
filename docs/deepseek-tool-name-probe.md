@@ -7,6 +7,10 @@ then read_symbol, then one terminal call: finish for a code property, ask_user
 for missing current invocation evidence. They do not measure autonomous
 retrieval or semantic quality.
 
+The [observed six-request run](deepseek-tool-name-probe-results-20261030.md)
+accepted the finish flow and rejected an ask_user gap of 205 > 200 characters.
+It did not reproduce the older tool-name failures.
+
 The [public development inputs](../examples/deepseek-tool-name-dev/cases.json)
 reuse self-authored CC0-1.0 arithmetic fixtures: two Python files total 91 bytes
 and fixed cases.json is 1170 bytes. Exact hashes are checked before preparation
@@ -94,6 +98,24 @@ the run may stop early. These are local controls, not a supplier billing hard
 limit. Recheck official terms before activation.
 
 ## Offline evidence and private records
+
+An explicit `concise-gap-v1` candidate adds only a natural-language reminder of
+the existing gap length and conciseness rules. It preserves the minimum
+sufficient evidence set, including jointly necessary facts, and derives its
+bounds from the same schema. The baseline prompt bytes and all field/tool/cell
+budgets remain unchanged. Candidate manifests use the distinct native prompt
+tag `deepseek-study-gap-budget-v1`; results retain its exact manifest digest.
+
+```sh
+python3.12 -I -S -B scripts/run_deepseek_tool_name_probe.py prepare \
+  --inputs examples/deepseek-tool-name-dev --out /EXTERNAL/NEW_OFFLINE_FIXTURE \
+  --prompt-variant concise-gap-v1
+```
+
+Only dry-run accepts this candidate. Proposal, preflight and execute (including
+scripted approved execution) refuse it before credentials or a claim. This
+does not authorize another paid batch or reuse the stopped run. Offline
+contract checks do not demonstrate improved model compliance.
 
 `dry-run --control /NEW/SEPARATE_FIXTURE --scripts /LITERAL_REPLIES.json` accepts
 only exact two-cell, one-to-three-response literal fixtures. It never reads a

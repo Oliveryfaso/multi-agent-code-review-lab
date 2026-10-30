@@ -11,7 +11,8 @@ import os
 from pathlib import Path
 from time import monotonic
 
-from macr.evals.deepseek_policy_manifest import PROMPT_VERSION, load_policy_manifest
+from macr.evals.deepseek_policy_manifest import (
+    PROMPT_VERSION, STUDY_GAP_PROMPT_VERSION, load_policy_manifest)
 from macr.evals.deepseek_study_generation import (V2_PROFILE, V2_PROMPT_VERSION,
     EVIDENCE_PROFILE, EVIDENCE_PROMPT_VERSION, get_generation)
 from macr.evals.deepseek_policy_runner import (
@@ -57,6 +58,13 @@ EVIDENCE_DECISION_CRITERIA = (
     'Use existing unknowns or ask_user gap limits; if a short question cannot hold the explanation, '
     'use finish with unknown, null cause/when and bounded unknowns. Neither terminal action solves the task '
     'by itself. Do not add fields, mandatory headings or evidence to an arm that has not received it.')
+ASK_USER_CONCISE_INSTRUCTIONS = (
+    'For ask_user.gap, make a concise request for the smallest sufficient evidence set, '
+    'retaining jointly necessary facts or conditions. '
+    f'Use {ASK_USER_GAP_SCHEMA["minLength"]} to {ASK_USER_GAP_SCHEMA["maxLength"]} Unicode code points, '
+    'including spaces, with no leading or trailing whitespace. '
+    'Avoid repeating code analysis or tool history. Choose brief wording that fits this field; '
+    'keep the same gap key and all existing evidence and terminal rules.')
 
 
 def initial_evidence(manifest: dict, tools: StaticEvidenceTools) -> dict:
@@ -110,9 +118,13 @@ def _run_study_cell_core(manifest_dir: Path, *, dataset_root: Path, strategy: st
         raise PolicyRunError('study_strategy_invalid')
     manifest = load_policy_manifest(manifest_dir, dataset_root=dataset_root)
     generation = get_generation({V2_PROMPT_VERSION:V2_PROFILE,
-        EVIDENCE_PROMPT_VERSION:EVIDENCE_PROFILE}.get(manifest['prompt_version']))
-    if manifest['prompt_version'] != generation['prompt_version']:
+        EVIDENCE_PROMPT_VERSION:EVIDENCE_PROFILE,
+        STUDY_GAP_PROMPT_VERSION:EVIDENCE_PROFILE}.get(manifest['prompt_version']))
+    gap_candidate = manifest['prompt_version'] == STUDY_GAP_PROMPT_VERSION
+    if manifest['prompt_version'] != (STUDY_GAP_PROMPT_VERSION if gap_candidate else generation['prompt_version']):
         raise PolicyRunError('policy_prompt_version_invalid')
+    if gap_candidate and strategy != 'adaptive_read_3':
+        raise PolicyRunError('gap_prompt_strategy_invalid')
     if provider.model != manifest['model']['model_id']:
         raise PolicyRunError('model_identity_drift')
     if (manifest['model'].get('model_id') != 'deepseek-flash'
@@ -158,6 +170,8 @@ def _run_study_cell_core(manifest_dir: Path, *, dataset_root: Path, strategy: st
         messages[0]['content'] += ' ' + EXTERNAL_EVIDENCE_CRITERIA
     if generation['name'] == EVIDENCE_PROFILE:
         messages[0]['content'] += ' ' + EVIDENCE_DECISION_CRITERIA
+    if gap_candidate:
+        messages[0]['content'] += ' ' + ASK_USER_CONCISE_INSTRUCTIONS
     if strategy == 'direct_full_3':
         additional = tools.source([name for name in sorted(manifest['task']['authorized_files'])
                                    if name not in manifest['task']['initial_evidence_files']])

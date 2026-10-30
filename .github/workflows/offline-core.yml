@@ -149,6 +149,7 @@ jobs:
         run: >-
           python -I -S -B scripts/run_offline_tests.py
           test_deepseek_tool_name_probe test_deepseek_tool_name_probe_cli
+          test_deepseek_gap_prompt
 
       - name: Known cell failures and fatal CLI gates without network
         run: python -I -S -B scripts/run_offline_tests.py test_deepseek_policy_live_cli

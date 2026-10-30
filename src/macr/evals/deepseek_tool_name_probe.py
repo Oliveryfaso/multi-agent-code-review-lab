@@ -8,7 +8,8 @@ import stat
 
 from macr.evals.deepseek_policy_manifest import (
     _read, _root, DEFAULT_BUDGET, PolicyManifestError,
-    prepare_policy_manifest, load_policy_manifest)
+    prepare_policy_manifest, load_policy_manifest,
+    STUDY_EVIDENCE_PROMPT_VERSION, STUDY_GAP_PROMPT_VERSION)
 from macr.evals.deepseek_policy_runner import PolicyRunError, _write_exclusive
 from macr.evals.deepseek_study_generation import EVIDENCE_PROFILE, get_generation
 from macr.evals.deepseek_study_profile import (
@@ -25,6 +26,10 @@ SOURCES = {
     'entry.py': (59, '60954e8388bddbec9036d46b89ff96cc6456606a2ee66942ebce70c2be27c990'),
     'helper.py': (32, '0adcb531f78a384cb8bbd8939cd48524aab0dcfd4aa17deca3d3eef5598e809e')}
 CASE_IDS = ('dev-finish', 'dev-ask')
+GAP_PROMPT_VARIANT = 'concise-gap-v1'
+PROMPT_VARIANTS = ('baseline', GAP_PROMPT_VARIANT)
+_PROMPT_VERSIONS = {'baseline': STUDY_EVIDENCE_PROMPT_VERSION,
+                    GAP_PROMPT_VARIANT: STUDY_GAP_PROMPT_VERSION}
 BUDGET = {'max_requests': 6, 'max_usd': '0.500000'}
 PRICE = {'checked_date': '2026-10-30', 'source': 'https://api-docs.deepseek.com/quick_start/pricing/',
     'input_hit_per_million': '0.006', 'input_miss_per_million': '0.30',
@@ -65,7 +70,13 @@ def _raw_write(path, raw):
             os.fsync(stream.fileno())
 
 
-def _payload(root, project_root):
+def _prompt_version(variant):
+    require(type(variant) is str and variant in PROMPT_VARIANTS, 'probe_prompt_variant_invalid')
+    return _PROMPT_VERSIONS[variant]
+
+
+def _payload(root, project_root, prompt_variant='baseline'):
+    prompt_version = _prompt_version(prompt_variant)
     data = _root(root / 'data')
     _inventory(data, {'cases.json'} | {'snapshots/developer/' + name for name in SOURCES})
     cases = _cases(data)
@@ -76,22 +87,26 @@ def _payload(root, project_root):
         manifest = load_policy_manifest(root / 'manifests' / case['id'], dataset_root=data)
         require(manifest['task'] == _policy_task(case) and manifest['model'] == MODEL
             and manifest['budget'] == budget and manifest['repeat'] == 1
-            and manifest['prompt_version'] == generation['prompt_version'], 'probe_manifest_drift')
+            and manifest['prompt_version'] == prompt_version, 'probe_manifest_drift')
         for name, (size, expected) in SOURCES.items():
             require(manifest['snapshot']['files'][name] == {'size_bytes': size, 'sha256': expected},
                     'probe_source_drift')
         cells.append({'case_id': case['id'], 'manifest_sha256': manifest['manifest_sha256']})
-    return {'schema': SCHEMA, 'control_root': str(root), 'data_root': str(data),
+    value = {'schema': SCHEMA, 'control_root': str(root), 'data_root': str(data),
         'project_root': str(project_root), 'implementation': _code(project_root),
         'cases_sha256': CASES_SHA256, 'source_bytes': 91, 'cases_bytes': 1170,
         'execution_profile': EVIDENCE_PROFILE, 'model': dict(MODEL), 'endpoint': ENDPOINT,
         'budget': dict(BUDGET), 'price_snapshot': dict(PRICE), 'planned_cells': 2,
         'cells': cells, 'remote_enabled': False, 'stop_on_first_failure': True,
         'purpose': 'author-known developer protocol only; no semantic quality or historical-name recovery'}
+    if prompt_variant != 'baseline':
+        value['prompt_variant'] = prompt_variant
+    return value
 
 
-def prepare_probe(inputs, *, out, project_root):
+def prepare_probe(inputs, *, out, project_root, prompt_variant='baseline'):
     """Copy only three exact public developer inputs; no gold or credential input."""
+    prompt_version = _prompt_version(prompt_variant)
     inputs, project_root = _root(inputs), _root(project_root)
     _cases(inputs)
     raw_sources = {name: _read(inputs, 'sources/' + name, 1024) for name in SOURCES}
@@ -111,9 +126,9 @@ def prepare_probe(inputs, *, out, project_root):
     for case in _cases(root / 'data'):
         prepare_policy_manifest(_policy_task(case), dataset_root=root / 'data',
             out=root / 'manifests' / case['id'], model=dict(MODEL),
-            prompt_version=generation['prompt_version'],
+            prompt_version=prompt_version,
             budget=DEFAULT_BUDGET | {'max_total_output_tokens': generation['max_total_output_tokens']})
-    plan = _payload(root, project_root)
+    plan = _payload(root, project_root, prompt_variant)
     plan['plan_sha256'] = digest(plan)
     _write_exclusive(root / 'probe.json', plan, 65536)
     return plan
@@ -126,7 +141,7 @@ def load_probe(control):
     require(type(value.get('project_root')) is str, 'probe_plan_invalid')
     require(value.get('plan_sha256') == digest({k: v for k, v in value.items() if k != 'plan_sha256'}),
             'probe_plan_invalid')
-    expected = _payload(root, _root(value['project_root']))
+    expected = _payload(root, _root(value['project_root']), value.get('prompt_variant', 'baseline'))
     require(value == expected | {'plan_sha256': digest(expected)}, 'probe_plan_drift')
     return value
 
@@ -149,6 +164,7 @@ def _credential_source(value):
 
 def propose_probe_approval(control, *, credential_source=None):
     plan = load_probe(control)
+    require('prompt_variant' not in plan, 'probe_prompt_variant_live_disabled')
     return {'schema': 'macr.deepseek.tool-name.approval.v1', 'authorized': False,
         'confirmation_ref': '', 'plan_sha256': plan['plan_sha256'],
         'control_root': plan['control_root'], 'cases_sha256': CASES_SHA256,
@@ -162,6 +178,7 @@ def propose_probe_approval(control, *, credential_source=None):
 
 def _preflight(control, approval, *, simulated=False):
     plan = load_probe(control)
+    require('prompt_variant' not in plan, 'probe_prompt_variant_live_disabled')
     require(type(approval) is dict and approval.get('authorized') is True and
         type(approval.get('confirmation_ref')) is str and
         0 < len(approval['confirmation_ref'].strip()) <= 128, 'probe_approval_missing')

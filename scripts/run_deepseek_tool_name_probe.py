@@ -14,7 +14,7 @@ sys.path[:0] = [str(PROJECT / 'src'), str(PROJECT / 'scripts')]
 
 from macr.evals.deepseek_tool_name_probe import (
     prepare_probe, propose_probe_approval, preflight_probe,
-    execute_probe, run_probe_dryrun)
+    execute_probe, run_probe_dryrun, PROMPT_VARIANTS)
 from macr.evals.deepseek_policy_manifest import PolicyManifestError
 from macr.evals.deepseek_policy_runner import PolicyRunError
 from macr.evals.deepseek_study_profile import StudyError, read_json, require
@@ -112,6 +112,7 @@ def main(argv=None):
     prepare = commands.add_parser('prepare')
     prepare.add_argument('--inputs', required=True, type=Path)
     prepare.add_argument('--out', required=True, type=Path)
+    prepare.add_argument('--prompt-variant', choices=PROMPT_VARIANTS, default='baseline')
     proposal = commands.add_parser('proposal')
     proposal.add_argument('--control', required=True, type=Path)
     proposal.add_argument('--project-env', type=Path, help='Bind the project .env path, never a Key value.')
@@ -127,7 +128,8 @@ def main(argv=None):
     try:
         args = parser.parse_args(argv)
         if args.command == 'prepare':
-            plan = prepare_probe(args.inputs, out=args.out, project_root=PROJECT)
+            variant = {} if args.prompt_variant == 'baseline' else {'prompt_variant': args.prompt_variant}
+            plan = prepare_probe(args.inputs, out=args.out, project_root=PROJECT, **variant)
             result = {key: plan[key] for key in ('plan_sha256', 'control_root', 'planned_cells')}
             result.update(execution_enabled=False, model_calls_live=0)
         elif args.command == 'proposal':
