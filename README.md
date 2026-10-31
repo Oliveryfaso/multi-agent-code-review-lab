@@ -88,9 +88,13 @@ The [two developer protocol checks](docs/deepseek-tool-name-probe.md) provide a
 separate, disabled-by-default diagnostic entry. They do not resume U or measure
 model quality.
 
-The proposed [bounded value stage](docs/deepseek-value-stage.md) pairs direct API
-and tool strategies on identical full-source inputs, with a developer gate and
-a preset decision to retain or simplify. It has no live authorization or results.
+The [bounded value stage](docs/deepseek-value-stage.md) is complete. Its
+[locked nine-task results](docs/deepseek-value-results-20261031.md) select
+**prefer direct API**: the tool policy missed the preset net-benefit threshold.
+Tools remain an opt-in research option, without demonstrated retrieval benefit.
+Contract failures were high (direct 6/9, tool 5/9); this does not establish
+production reliability for direct API. The usable static-evidence path remains
+model-free.
 
 ## Documentation
 

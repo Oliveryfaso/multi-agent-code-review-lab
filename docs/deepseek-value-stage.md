@@ -1,9 +1,12 @@
 # A finite check of the tool strategy
 
-**Preparation only. No new paid execution is authorized.** This stage has a
-natural end: pass a small developer protocol gate, compare against direct API on
-independent tasks, then keep the simpler route unless the tool earns its cost.
-It does not reopen any stopped experiment or reuse historical funds.
+**Completed; locked selection: prefer direct API.** The
+[final results](deepseek-value-results-20261031.md) retain all 18 cells and 11
+contract failures. The tool policy earned one net paired win, below the preset
+two-win threshold, and made no read-tool calls. It remains an opt-in research
+option; neither strategy has established production reliability. This closes
+the stage without further paid execution, tuning or reuse of historical funds.
+The frozen protocol below remains the basis of the decision.
 
 | Phase | Fixed work | Request / local budget ceiling |
 |---|---|---|
@@ -11,9 +14,11 @@ It does not reopen any stopped experiment or reuse historical funds.
 | S1 | Nine fresh synthetic tasks, direct API and tool strategy once per task | 54 / $1.50 |
 | Whole stage | S1 runs only if both S0 flows validate | 60 / $2.00 |
 
-S0 uses the existing two public synthetic source files (91 bytes) and fixed
-developer questions (1170 bytes). S1's separate source/question inventory must
-come from the new neutral handoff; it is not included in those S0 byte counts.
+S0 used the existing two public synthetic source files (91 bytes) and fixed
+developer question definition (1170 bytes). The executed S1 neutral handoff
+contained 18 synthetic Python files (4407 bytes) and 13138 bytes of decoded
+question/scenario/assumption fields. These counts exclude shared prompts and
+tool declarations; they are not HTTP-byte or token counts.
 
 The direct strategy gets the initial answer, a self-check and a final answer;
 the tool strategy may end earlier within the same three-request ceiling. Both
@@ -47,7 +52,8 @@ The separate custodian supplies a new `macr.deepseek.study.pack.v1` package:
 The executor validates only neutral data and opaque gold/rubric commitments. It
 does not create the blind tasks or inspect private grading material. Separate
 directories under one user account provide role separation, not OS isolation.
-Exact source inventory, bytes and plan hash can be frozen only after that handoff.
+The completed run bound the actual neutral inventory and plan before dispatch;
+future preparation must likewise wait for a separate custodian handoff.
 
 ## Reproduce preparation without credentials
 
@@ -90,7 +96,7 @@ claim. Do not keep tuning on the independent comparison to cross this threshold.
 The exact protocol and review contract are in the
 [stage specification](superpowers/specs/2026-10-30-debugger-value-stage.md).
 
-## Future execution boundary
+## Execution boundary for any separately approved future stage
 
 Target only the official DeepSeek chat endpoint, `deepseek-flash`, thinking high.
 Use a fresh stage-bound local log directory outside the checkout; no automatic
@@ -100,8 +106,9 @@ may allow an existing project Key in memory for official authentication only;
 it must never enter argv, chat, logs or new credential files. A leaked Key can
 incur unauthorized charges.
 
-Reserve $0.33 before each request and retain uncertain reservations. The proposed
-$2 is a local control, not a supplier hard limit or a guarantee of completion.
+The frozen plan reserved $0.33 before each request and retained uncertain
+reservations. Its $2 was a local control, not a supplier hard limit or a
+guarantee of completion.
 At the 8000-input plan and 8192-output ceiling, 60 all-cache-miss peak-rate requests
 have a $0.733860 planning sensitivity after per-request rounding. Recheck the
 [official prices](https://api-docs.deepseek.com/quick_start/pricing/) before any
