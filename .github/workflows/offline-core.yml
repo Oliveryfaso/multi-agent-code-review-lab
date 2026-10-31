@@ -157,6 +157,11 @@ jobs:
           test_deepseek_value_profile test_deepseek_value_stage
           test_deepseek_value_cli test_deepseek_value_report
 
+      - name: Deterministic diagnostic evidence API fixtures without network
+        run: >-
+          python -I -S -B scripts/run_offline_tests.py
+          test_diagnostic_packet test_static_diagnostic_cli
+
       - name: Known cell failures and fatal CLI gates without network
         run: python -I -S -B scripts/run_offline_tests.py test_deepseek_policy_live_cli
 

@@ -66,6 +66,7 @@ OFFLINE_MODULES = frozenset({
     'test_diagnostic_verification', 'test_diagnostic_prompt_variants', 'test_agent_evidence_integration',
     'test_diagnostic_pipeline_cli',
     'test_diagnostic_compact', 'test_diagnostic_orchestrator',
+    'test_diagnostic_packet', 'test_static_diagnostic_cli',
 })
 OFFLINE_CASES = frozenset({
     'test_orchestrator.OrchestratorTests.test_final_review_receives_store_evidence_after_recovery',
@@ -111,11 +112,11 @@ def offline_context(tmp):
     snapshot_init, index_init = SnapshotStore.__init__, RepositoryIndex.__init__
     verifier_init = PatchVerifierTool.__init__
 
-    def snapshots(self, root=None):
-        return snapshot_init(self, tmp / 'snapshots' if root is None else root)
+    def snapshots(self, root=None, **kwargs):
+        return snapshot_init(self, tmp / 'snapshots' if root is None else root, **kwargs)
 
-    def indexes(self, store, cache_root=None):
-        return index_init(self, store, tmp / 'index' if cache_root is None else cache_root)
+    def indexes(self, store, cache_root=None, **kwargs):
+        return index_init(self, store, tmp / 'index' if cache_root is None else cache_root, **kwargs)
 
     def verifier(self, profile=None, artifact_root=None):
         return verifier_init(self, profile, tmp / 'patch_checks' if artifact_root is None else artifact_root)

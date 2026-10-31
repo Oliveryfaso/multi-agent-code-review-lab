@@ -1,0 +1,41 @@
+# Deterministic evidence + API: minimal design
+
+2026-10-31. User goal: continue towards a stronger API+Debugger combination. The completed value-stage result at aa46123 remains prefer_direct for that frozen policy; it is not a decision to abandon combination research. User has delegated routine design/implementation and opted out of repeated small approvals. This is offline work only: no Key, paid API, target execution, VM or service.
+
+## Choice and alternatives
+
+Use existing snapshot/index/collect_static_facts to compute a bounded evidence capsule, then give it to one model call. Compare R (complete captured source) with E (identical source + capsule), with identical diagnostic-compact-v3 schema, thinking/output/call ceilings. This follows the independent architecture review and avoids hiding decisive code from baseline. An entry-only retrieval comparison would measure extra information, requires a FULL control on small repositories, and is deferred. Autonomous tool feedback and another verification call are deferred; neither is needed to test deterministic computation/presentation. No new agent roles or framework.
+
+The gain hypothesis is fewer mistakes tracing static bindings/coverage, not new runtime knowledge. This slice proves real computation/IO wiring and evidence-dependent requests on public development examples; scripted replies do not prove model improvement. No new holdout tasks, private gold or old paid remainder.
+
+## Existing contracts to reuse
+
+- RepositoryScope → SnapshotStore → RepositoryIndex; collect_static_facts: one-hop plain functions, local/import resolutions under explicit assumptions, bounded literal/assignment and argument bindings. Dynamic/rebound paths, call results and truncation remain unknown.
+- diagnostic-compact-v3 already removes field hard caps and keeps preferred-length warnings. Retain its 8192-byte output object, strict keys/types/verdict/scope and source-ID citations. Do not create v4 or change the old 600/300/200 experiment schema.
+- DeepSeek .converse, not legacy .complete, supplies explicit thinking high and complete response/usage/identity envelopes. Only literal _ScriptedWire is used in this offline slice, never an authorized real transport. Valid final stop+JSON is parsed identically in both arms; unexpected tool calls and length stay failures.
+
+## Interface and ownership
+
+Create src/macr/investigation/diagnostic_packet.py with PROFILE='static-diagnostic-v1':
+
+prepare_pair(bundle,index,*,entries,question,scenario,assumptions,budget) -> JSON dict.
+entries is a nonempty list of exact 'file.py:qualified_name' seeds (<=6). budget is ModelBudget. Core builds the provided index once and measures that E-only cost, then resolves using the existing bounded index query. The CLI constructs but does not prebuild the index. Ambiguous/missing entries produce explicit selection gaps, not invented facts. Read all captured source through store.read_verified; require <=12 nonempty files and <=16384 bytes, do not silently truncate baseline. prepare_scope uses complete captured files (body cap16384) with deterministic case/attempt identifiers bound to profile, full-source digest, entries, question/scenario/assumptions and budget. A changed question must change the common scope; both arms still share it. Both requests share exactly source/task/schema/budget. E adds one user message before the unchanged last task message containing the capsule. Keep validate_candidate_context compatibility. Use the same common supplemental-evidence instruction for R/E.
+
+Measure common capture/source preparation separately from E-only index/query/collector/normalization; never hide or equally charge the evidence overhead to direct API. CLI records capture and index timings separately. Bound question/scenario to4096 UTF-8 bytes, <=12 assumptions of<=4096 bytes and<=6 entries of<=256 bytes.
+
+Returned dict: schema/profile, scope (to_dict), packet, packet_sha256, initial_source_sha256, requests {'direct':asdict(ModelRequest),'evidence':...}, operations, timing_seconds. Packet is bounded <=32768 bytes. Source + request JSON <=65536 bytes/arm; request bytes are not token estimates. Collection freezes max_context_bytes1200/max_functions6/max_facts32/max_bindings16/max_candidates50. Packet contains content_id/parser/coordinate versions, canonical selected symbol identities and locations, facts/bindings/relations/unknowns, assumptions/limits/truncations/coverage. Normalize ephemeral snapshot/evidence UUIDs to stable file/span/content or scope refs; no absolute local paths in model input. Repeated unchanged captures yield the same capsule digest. Refs/bindings must resolve to actual captured source. Retain source_syntax vs runtime boundaries and explicit unknowns. Raw source remains identical even when facts are unsupported/truncated.
+
+run_offline_pair(bundle,index,*,entries,question,scenario,assumptions,budget,replies,order=('direct','evidence')) -> JSON result.
+Call prepare_pair afresh, validate replies as one literal provider envelope per arm using existing _ScriptedWire, dispatch exactly once per arm through DeepSeekProvider.converse (thinking enabled/high, same budgets). No generic transport, remote switch, Key reader or persisted resume. Record request/response, all raw usage/identity/finish evidence, elapsed/preparation costs and bounded status. Parse original JSON with compact-v3; good outputs are semantic_pending, never semantic success. Tool calls/length/invalid citations/scope remain failed. Verify snapshot before/after; no silent repair/retry or hidden second candidate. model_calls_live=0, fixture_model_calls<=2, provenance=scripted_offline_fixture. Citable results are candidate-only, not runtime/cause proof.
+
+Create scripts/run_static_diagnostic.py: prepare and offline subcommands. Explicit --repo/--entry (repeat)/--question/--scenario/--assumption (repeat)/--out; offline adds --replies JSON. No live flag or Key. Own a fresh output directory outside repo, use SnapshotStore and RepositoryIndex allowed_root there, conservative ScopeProfile, fail closed on scope errors/oversize rather than dropping baseline files. Save bounded prepared/result JSON atomically/exclusively. Keep common task inputs and snapshot context; do not run/import target source. CLI --help and prepare do not call provider. Existing product CLI/defaults untouched.
+
+## Development evidence and validation
+
+Three public source-only development examples: cross-file keyword binding defect, corresponding healthy variation, and dynamic/unresolved dependency. Shared family examples are not independent benchmark samples. Real snapshot/index/context reads must create canonical relations and bindings. Fixture model replies can be built from actual preparation and alter based on the real binding packet; show input packet/citation/decision changes when literal arguments change, never claim live quality. Full-source direct control remains able to reason from identical code.
+
+RED→GREEN cases: import-bound literal keyword arguments and stable packet digests; no runtime-return inference; rebind/dynamic/truncation unknown; changed verified bytes abort; R/E same source/schema/budgets and only E supplemental capsule; long v3 text accepted within8KiB; forged refs/scope, duplicate JSON keys and total-byte overflow fail; same valid JSON stop accepted both; literal offline .converse captures thinking/rawusage/identity; live transport impossible; no target import, network or subprocess. CLI real prepare/offline end to end, owned/existing/outside-repo output checks, malformed replies failure and complete two-arm denominator.
+
+## Next real stage, not authorized now
+
+After offline review, propose a separate small public developer check of at most3cases×2arms×1=6requests, fresh local$0.50 ceiling, official deepseek-flash thinking high and existing projectKey only after explicit approval. Reuse established spend/identity/unknown-stop owner rather than granting this offline runner live capability. Freeze exact file/byte/hash/entry inventory, contract/version and response-reliability gate; old budget cannot authorize it. Future unseen quality comparison is separate, fair full-source R/E, independently authored/graded and includes prep cost. No real model gain claim until evidence exists.

@@ -24,7 +24,7 @@ No automatic model retry occurs in this diagnostic path. A technical failure,
 rejected candidate, supported defect, supported healthy scenario and essential
 evidence gap remain separate states.
 
-The current `diagnostic-compact-v2` candidate uses at most three short reference
+The current `diagnostic-compact-v3` candidate uses at most three short reference
 IDs; each verifier check still uses at most two. The host restores the
 exact file, start/end lines, symbol and source tool from a table bound to the
 case, attempt and source bytes. Source readers capture complete lines, recalculate
@@ -45,11 +45,13 @@ model judgment, not semantic proof. Rejecting a defect does not produce a health
 report.
 
 Cause/when lengths of 160/80 characters and each unknown of 80 are preferred
-targets. Hard limits are 600/300/200, matching the existing diagnostic parser.
-Exceeding a preferred target records a trace quality warning and preserves the
-original text for verification. Two unknowns, the verifier's 96-character reason,
-8192-byte parsing bound, source binding and explicit token/context budgets remain
-hard limits. No truncation, verdict repair or additional generation occurs.
+targets. Current v3 has no per-field text hard cap: the 600/300/200 candidate and
+96-character verifier-reason limits belong to retained legacy-v2 attempts.
+Exceeding a preferred target records a quality warning and preserves the text.
+The two-unknown array cap, 8192-byte parsing bound, strict structure/source binding
+and explicit token/context budgets remain hard. No truncation, verdict repair or
+additional generation occurs. The [new deterministic evidence/API preparation](static-diagnostic-evidence.md)
+reuses v3 without changing historical experiment parsers or results.
 
 For the confirmed llama.cpp `b11521` backend, a dedicated diagnostic provider can
 opt in with `LocalHTTPProvider(profile, diagnostic_schema_decoding=True, ...)`.
