@@ -93,15 +93,15 @@ computation, serialization and citation validation; only model responses are
 literal fixtures. They prove wiring and mechanical behavior, not a model
 improvement. Giving R a deliberately wrong fixture answer would prove nothing.
 
-## Next bounded validation, not authorized here
+## Bounded validation requires explicit approval
 
-A possible next check is three public developer cases × R/E once: at most six
-new requests, a fresh $0.50 local budget, official `deepseek-flash` thinking high,
-unchanged output limits and no retries. It must first receive an exact frozen
-inventory, a reviewed live owner using the established reservation/usage/identity
-stop gates, and explicit authentication/data/cost approval. This offline entry
-cannot launch that check. Old balances and previous stage approval do not apply.
-A fixture response's token counters are not a real model bill.
+The separate [stage entry](static-diagnostic-stage.md) prepares a three-pair
+development qualification followed conditionally by nine independently authored
+new task pairs. Its fixed proposed ceiling is 24 requests/$1.50, in separate
+phase budgets, with persistent reservation, usage, identity and unique-run gates.
+It remains default off until the exact frozen stage receives explicit approval.
+This offline single-pair entry cannot launch it. Old balances and approvals do
+not apply. A fixture response's token counters are not a real model bill.
 
 The first real check should assess delivery and whether the model actually uses
 supported bindings, including healthy and unresolved counterexamples. Subsequent

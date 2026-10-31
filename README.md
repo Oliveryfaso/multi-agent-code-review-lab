@@ -98,6 +98,9 @@ model-free.
 
 Active combination development now tests [deterministic static evidence plus API](docs/static-diagnostic-evidence.md):
 the same full-source baseline, with an added snapshot-bound computation capsule.
+Its [explicit comparison stage](docs/static-diagnostic-stage.md) freezes both
+requests, reserves cost before dispatch and keeps live execution disabled until
+separately approved. Offline fixtures establish wiring, not a model gain.
 The current entry is offline only; real model gain remains unproven.
 
 ## Documentation

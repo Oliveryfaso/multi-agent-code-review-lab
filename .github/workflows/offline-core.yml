@@ -162,6 +162,12 @@ jobs:
           python -I -S -B scripts/run_offline_tests.py
           test_diagnostic_packet test_static_diagnostic_cli
 
+      - name: Explicit static diagnostic stage and blind reporting without network
+        run: >-
+          python -I -S -B scripts/run_offline_tests.py
+          test_static_diagnostic_pack test_static_diagnostic_stage
+          test_static_diagnostic_report test_static_diagnostic_stage_cli
+
       - name: Known cell failures and fatal CLI gates without network
         run: python -I -S -B scripts/run_offline_tests.py test_deepseek_policy_live_cli
 

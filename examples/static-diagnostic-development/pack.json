@@ -1,0 +1,85 @@
+{
+  "pack_id": "static-diagnostic-public-development-v1",
+  "schema": "macr.static-diagnostic.pack.v1",
+  "tasks": [
+    {
+      "assumptions": [],
+      "authorized_files": [
+        "entry.py",
+        "predicate.py"
+      ],
+      "entries": [
+        "entry.py:start"
+      ],
+      "entrypoint": {
+        "file": "entry.py",
+        "symbol": "start"
+      },
+      "id": "dev-defect",
+      "initial_evidence_files": [
+        "entry.py",
+        "predicate.py"
+      ],
+      "license": {
+        "provenance": "Self-authored public development source in this repository; known mechanism fixtures, not independent or unseen quality cases.",
+        "spdx": "MIT"
+      },
+      "project_id": "dev-project-a",
+      "question": "Does start satisfy the supplied requirement?",
+      "scenario": "start must return True; integer literals and unchanged module bindings.",
+      "snapshot_root": "keyword-defect"
+    },
+    {
+      "assumptions": [],
+      "authorized_files": [
+        "entry.py",
+        "predicate.py"
+      ],
+      "entries": [
+        "entry.py:start"
+      ],
+      "entrypoint": {
+        "file": "entry.py",
+        "symbol": "start"
+      },
+      "id": "dev-healthy",
+      "initial_evidence_files": [
+        "entry.py",
+        "predicate.py"
+      ],
+      "license": {
+        "provenance": "Self-authored public development source in this repository; known mechanism fixtures, not independent or unseen quality cases.",
+        "spdx": "MIT"
+      },
+      "project_id": "dev-project-b",
+      "question": "Does start satisfy the supplied requirement?",
+      "scenario": "start must return True; integer literals and unchanged module bindings.",
+      "snapshot_root": "keyword-healthy"
+    },
+    {
+      "assumptions": [],
+      "authorized_files": [
+        "entry.py"
+      ],
+      "entries": [
+        "entry.py:start"
+      ],
+      "entrypoint": {
+        "file": "entry.py",
+        "symbol": "start"
+      },
+      "id": "dev-dynamic",
+      "initial_evidence_files": [
+        "entry.py"
+      ],
+      "license": {
+        "provenance": "Self-authored public development source in this repository; known mechanism fixtures, not independent or unseen quality cases.",
+        "spdx": "MIT"
+      },
+      "project_id": "dev-project-c",
+      "question": "Will the current callback make start return True?",
+      "scenario": "The supplied callback is deterministic and returns bool; its identity and return contract are unavailable.",
+      "snapshot_root": "dynamic"
+    }
+  ]
+}

@@ -67,6 +67,8 @@ OFFLINE_MODULES = frozenset({
     'test_diagnostic_pipeline_cli',
     'test_diagnostic_compact', 'test_diagnostic_orchestrator',
     'test_diagnostic_packet', 'test_static_diagnostic_cli',
+    'test_static_diagnostic_pack', 'test_static_diagnostic_stage',
+    'test_static_diagnostic_report', 'test_static_diagnostic_stage_cli',
 })
 OFFLINE_CASES = frozenset({
     'test_orchestrator.OrchestratorTests.test_final_review_receives_store_evidence_after_recovery',
