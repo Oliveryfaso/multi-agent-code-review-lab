@@ -96,12 +96,15 @@ Contract failures were high (direct 6/9, tool 5/9); this does not establish
 production reliability for direct API. The usable static-evidence path remains
 model-free.
 
-Active combination development now tests [deterministic static evidence plus API](docs/static-diagnostic-evidence.md):
-the same full-source baseline, with an added snapshot-bound computation capsule.
-Its [explicit comparison stage](docs/static-diagnostic-stage.md) freezes both
-requests, reserves cost before dispatch and keeps live execution disabled until
-separately approved. Offline fixtures establish wiring, not a model gain.
-The current entry is offline only; real model gain remains unproven.
+[Deterministic static evidence plus API](docs/static-diagnostic-evidence.md) adds
+a computation capsule to the same full-source baseline. Its [locked nine-task
+result](docs/static-diagnostic-results-20261031.md) met the frozen **continue-research**
+threshold: 2 paired wins, 0 losses, 7 ties; complete solutions 2/6 → 4/6 at 23.2%
+more local cost. Complete necessary abstention remained 0/3 for both arms.
+Scoring arbitration for 11/18 outputs and an arbitration order bias limit confidence;
+this does not establish general quality, orchestration or production benefits.
+The [comparison stage](docs/static-diagnostic-stage.md) remains default off and
+requires separate approval for each frozen real run.
 
 ## Documentation
 
