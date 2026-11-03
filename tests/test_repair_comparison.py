@@ -65,6 +65,15 @@ class ThreeArmComparisonTests(unittest.TestCase):
         self.assertEqual(comparison.result_digest(comparison.generation_view(plan,spec['tasks'][0]['task_id'])),
             '6b9f0bf654a423497af80fa302680885b9c417956330192f8fa1f177dcc2efdb')
 
+    def test_v4_canonical_plan_report_and_generation_remain_unchanged(self):
+        spec=self.spec(proposal_contract='v4');plan=comparison.compile_comparison(spec)
+        self.assertEqual(comparison.result_digest(plan),
+            '18303ac7ec6a0c5b991511821f0a7d8e6db402be4591cdde198cd60225407aca')
+        self.assertEqual(comparison.result_digest(comparison.build_report(plan,{})),
+            '41c7806accb1f3f1b04423b4efe7cf8f2d67fc8c3c99b46a5afef6d8b9ddaf68')
+        self.assertEqual(comparison.result_digest(comparison.generation_view(plan,spec['tasks'][0]['task_id'])),
+            '709078ed4dbf5824b7c48a22d03b64448d387b14ce03263e99055103072b702b')
+
     def test_v2_three_arm_order_is_frozen_and_balanced_without_extra_authority(self):
         for tasks in (1,2,3,5,6,8):
             spec=self.spec(tasks=tasks,repeats=2)
@@ -132,6 +141,29 @@ class ThreeArmComparisonTests(unittest.TestCase):
                 comparison.build_report(current,{cell['cell_id']:row})
 
     def test_v4_finalize_chain_keeps_candidate_in_unscored_handoff(self):
+        self.finalize_chain('v4')
+
+    def test_v5_trajectory_contract_rejects_mixed_legacy_results(self):
+        spec=self.spec(tasks=1,proposal_contract='v5')
+        try:plan=comparison.compile_comparison(spec)
+        except ValueError as error:self.fail('explicit v5 three-arm plan should compile: '+str(error))
+        self.assertFalse(plan['remote_enabled']);self.assertFalse(plan['execution_authorized'])
+        self.assertEqual(comparison.build_report(plan,{})['planned_cells'],3)
+        for version in ('v3','v4'):
+            legacy=self.spec(tasks=1,proposal_contract=version)
+            legacy_plan=comparison.compile_comparison(legacy)
+            self.assertNotEqual(plan['comparison_sha256'],legacy_plan['comparison_sha256'])
+            for current,wrong in ((plan,legacy),(legacy_plan,spec)):
+                cell=current['cells'][0];row=self.row(current['spec'],cell,reviewed=False)
+                row['output_contract_sha256']=wrong['model']['output_contract_sha256']
+                with self.subTest(legacy=version,plan=current['comparison_sha256']),\
+                        self.assertRaisesRegex(ValueError,'comparison_model_or_contract_mismatch'):
+                    comparison.build_report(current,{cell['cell_id']:row})
+
+    def test_v5_finalize_chain_keeps_current_candidate_in_unscored_handoff(self):
+        self.finalize_chain('v5')
+
+    def finalize_chain(self, version):
         from macr.investigation.repair_edits import apply_edits
         from macr.investigation.repair_loop import source_id
         files={'app.py':b'def value():\n    return 1\n',
@@ -139,11 +171,11 @@ class ThreeArmComparisonTests(unittest.TestCase):
                 b'    def test_value(self):\n        self.assertTrue(True)\n'}
         edits=[{'file':'app.py','old':'return 1','new':'return 2'}]
         changed=apply_edits(files,edits,editable_paths=['app.py'])
-        spec=self.spec(tasks=1,proposal_contract='v4')
+        spec=self.spec(tasks=1,proposal_contract=version)
         spec['tasks'][0].update(snapshot_sha256=source_id(files),
             visible_tests_sha256=source_id({'checks.py':files['checks.py']}))
         try:plan=comparison.compile_comparison(spec)
-        except ValueError as error:self.fail('explicit v4 score plan should compile: '+str(error))
+        except ValueError as error:self.fail('explicit '+version+' score plan should compile: '+str(error))
         cell=plan['cells'][0]
         first={'status':'candidate','base_content_id':source_id(files),'edits':edits}
         final={'status':'finalize_current','base_content_id':source_id(changed),'edits':[]}

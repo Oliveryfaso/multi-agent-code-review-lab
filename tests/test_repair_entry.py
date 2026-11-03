@@ -57,6 +57,91 @@ class InterceptedOfficialOpener:
 
 
 class RepairEntryTests(TestCase):
+    def test_v5_history_distinguishes_regression_and_informs_the_third_edit(self):
+        names=loop.test_manifest(self.files,['checks.py'])
+        fixed=dict(self.files);fixed['builder.py']=fixed['builder.py'].replace(OLD.encode(),NEW.encode())
+        testcase=self;histories=[]
+        for earlier_passed in (True,False):
+            self.out=self.root/('trajectory-'+str(earlier_passed))
+            class HistoryTransport(InterceptedTransport):
+                def post(self,endpoint,body,timeout_seconds,max_response_bytes):
+                    if len(self.requests)==2:
+                        payload=json.loads(json.loads(body)['messages'][1]['content'])
+                        history=payload['attempt_history'];histories.append(history)
+                        testcase.assertEqual(payload['files'],{p:b.decode() for p,b in self_files.items()})
+                        regressions=history['entries'][1]['public_test_progress']['regressed']
+                        self.replies.append(testcase.proposal() if regressions else
+                            {'status':'finalize_current','summary':'Keep current; no new regression observed.','edits':[]})
+                    return super().post(endpoint,body,timeout_seconds,max_response_bytes)
+            self_files=self.files
+            transport=HistoryTransport([self.proposal(),self.proposal(old=NEW,new=OLD)])
+            observations=[self.observation(self.files,[names[0]]),
+                self.observation(fixed,[] if earlier_passed else [names[0]]),
+                self.observation(self.files,[names[0]])]
+            if earlier_passed:observations.append(self.observation(fixed))
+            code,result=self.invoke('api_test_feedback',transport,loop.ReplayVerifier(observations),proposal_contract='v5')
+            self.assertEqual((code,result['provider_requests']),(0,3))
+            report=loop.verify_loop(self.out)
+            self.assertEqual(report['final_source_id'],loop.source_id(fixed if earlier_passed else self.files))
+            self.assertFalse(report['repaired']);self.assertFalse(report['target_code_executed'])
+            self.assertEqual(json.loads(transport.requests[0]['messages'][1]['content'])['attempt_history']['entries'],[])
+        self.assertEqual(histories[0]['entries'][1]['public_test_progress']['regressed'],[names[0]])
+        self.assertEqual(histories[1]['entries'][1]['public_test_progress']['still_failing'],[names[0]])
+        self.assertFalse(histories[0]['details_omitted'])
+
+    def test_v5_strong_baseline_shares_feedback_history_while_direct_only_sees_own_edits(self):
+        names=loop.test_manifest(self.files,['checks.py'])
+        fixed=dict(self.files);fixed['builder.py']=fixed['builder.py'].replace(OLD.encode(),NEW.encode())
+        payloads={}
+        for strategy in ('direct_api','api_test_feedback','api_debugger'):
+            self.out=self.root/('history-'+strategy)
+            transport=InterceptedTransport([self.proposal(),
+                {'status':'finalize_current','summary':'Retain without claiming repair.','edits':[]}])
+            code,result=self.invoke(strategy,transport,loop.ReplayVerifier([
+                self.observation(self.files,[names[0]]),self.observation(fixed,[names[0]])]),proposal_contract='v5')
+            self.assertEqual((code,result['provider_requests']),(0,2))
+            payloads[strategy]=json.loads(transport.requests[1]['messages'][1]['content'])
+        left,right=payloads['api_test_feedback'],payloads['api_debugger']
+        self.assertEqual(left['feedback'],right['feedback'])
+        self.assertEqual(left['attempt_history'],right['attempt_history'])
+        direct=payloads['direct_api']['attempt_history']['entries'][0]
+        shared=deepcopy(left['attempt_history']['entries'][0]);shared.pop('public_test_progress')
+        self.assertEqual(direct,shared)
+        self.assertNotIn('public_test_progress',json.dumps(payloads['direct_api']))
+        self.assertNotIn(names[0],json.dumps(direct))
+
+    def test_v5_oversized_history_omits_context_details_without_rewriting_proposals(self):
+        entry={'round':1,'base_content_id':'a'*64,'candidate_content_id':'b'*64,
+               'proposal_sha256':'c'*64,'summary':'public summary '*140,'edited_paths':['builder.py'],
+               'public_test_progress':{'comparison':'completed','resolved':['long_test_'+str(n)*100 for n in range(32)],
+                   'regressed':[],'still_failing':[],'unchanged_passed_count':0,
+                   'counts':{'resolved':32,'regressed':0,'still_failing':0,'unchanged_passed':0},'names_omitted':False}}
+        history=[entry,dict(deepcopy(entry),round=2)];before=deepcopy(history)
+        context=loop._history_context(history)
+        self.assertTrue(context['details_omitted'])
+        self.assertEqual(history,before)
+        self.assertLessEqual(len(loop.encode_bounded(context,8192)),8192)
+        self.assertEqual(context['entries'][0]['public_test_progress']['counts']['resolved'],32)
+        self.assertTrue(context['entries'][0]['public_test_progress']['names_omitted'])
+        self.assertNotIn('summary',context['entries'][0])
+
+    def test_v4_request_bytes_remain_unchanged_with_history_available(self):
+        from dataclasses import asdict
+        expected={'direct_api':'fa0d5035aa922acabda03fd7df30d32c48000a19dd35ce62728bf9798c8c6acb',
+            'api_debugger':'04b1c0efe720b5bb5c638f7bafc92ea8fab55a7c0f2cc7281826379521a32f33',
+            'api_test_feedback':'d049d0cbf9745f3a63a241d9b3a22044d23207837f6cc33a23bd21018c31d6ba'}
+        names=loop.test_manifest(self.files,['checks.py'])
+        feedback={'source_id':loop.source_id(self.files),'origin':'synthetic_replay',
+            'result':{'execution_status':'completed','observed_status':'failed'},
+            'outcomes':{n:'failed' for n in names},'diagnostics':[]}
+        self.assertEqual(loop.digest(loop.output_contract('v4')),
+            'f9aac9ed71a352004725d12509cf39c72a67b6cd3d46989f989a821da3bbae33')
+        for strategy,wanted in expected.items():
+            request=loop._request(self.files,'Legacy trajectory compatibility.',
+                ['app.py','builder.py','records.py'],['checks.py'],feedback,1,strategy=strategy,
+                bound=True,proposal_contract='v4')
+            self.assertEqual(loop.digest(asdict(request)),wanted)
+
     def failure_detail(self, test_id):
         return {'test_id':test_id,'kind':'assertion','message':'Expected 2000; observed 2500.',
                 'frames':[{'file':'builder.py','line':3},{'file':'app.py','line':5}]}

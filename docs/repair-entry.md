@@ -178,6 +178,32 @@ default provider transport remains disabled. Deterministic intercepted-CLI
 tests demonstrate that an authored response can select its next edit location
 from this feedback; they do not establish model autonomy or quality gains.
 
+### Accepted-attempt context (explicit v5)
+
+`--proposal-contract v5` adds at most two prior accepted candidate summaries to
+the next request: round, parent/candidate source IDs, proposal digest and edited
+paths. It does not replay whole sources or full edit bodies. The public-feedback
+strategies also receive test transitions recomputed from their complete public
+outcomes: resolved failures, new regressions, still-failing tests and unchanged
+passes. Unrun or invalid observations are not comparable and never become
+progress. The direct self-review strategy gets only its own proposal history,
+with no test results or transitions.
+
+The history projection is capped at 8 KiB. If full summaries/paths/test names
+do not fit, it explicitly reports `details_omitted` and retains only identities,
+proposal digests and counts; the original proposals and receipts stay intact.
+Omitted detail cannot be recovered from a digest alone. Saved verification
+reconstructs the same history and request. V1–V4 remain unchanged.
+
+For fair evaluation, `direct_api` is the no-feedback reference, **not** the
+strong iterative baseline. `api_test_feedback` controls its own continuation
+with the same public results, diagnostics and own-attempt history as
+`api_debugger`. All share the model and request/token/dollar ceilings; added
+context still consumes the metered input budget. Debugger's current policy
+difference is automatic stopping on a public pass. This change does not add
+model calls, select an earlier candidate, enable verification, or demonstrate
+combination gains. `finalize_current` always retains the current candidate.
+
 ## Source and scoring boundary
 
 The neutral task has exactly `schema`, `task_id`, `issue`, `source_files` (SHA256
