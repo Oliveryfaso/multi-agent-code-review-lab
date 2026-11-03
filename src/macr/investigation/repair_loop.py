@@ -42,6 +42,15 @@ def _require(ok, field):
         raise ContractError('repair_loop_invalid', field)
 
 
+def output_contract(version='v1'):
+    _require(type(version) is str and version in ('v1','v2'), 'proposal_contract_version')
+    contract = deepcopy(OUTPUT_CONTRACT)
+    if version == 'v2':
+        contract['version'] = 'macr.repair.bound-proposal.v2'
+        contract['statuses'].append('finalize_current')
+    return contract
+
+
 def digest(value):
     return sha256(encode_bounded(value, CAP)).hexdigest()
 
@@ -173,7 +182,9 @@ def _files(root, expected_files=None):
     return files
 
 
-def _request(files, issue, editable, protected, feedback, number, *, strategy='api_debugger', bound=False):
+def _request(files, issue, editable, protected, feedback, number, *, strategy='api_debugger', bound=False,
+             proposal_contract='v1'):
+    contract = output_contract(proposal_contract)
     identity = source_id(files)
     if strategy == 'direct_api':
         feedback = {'source_id': identity, 'verification':'not_performed',
@@ -183,6 +194,8 @@ def _request(files, issue, editable, protected, feedback, number, *, strategy='a
         'editable_paths': editable, 'protected_paths': protected,
         'feedback': deepcopy(feedback), 'round': number,
         'provenance': 'provider_output_unattested' if bound else 'scripted_simulation_not_observed_execution'}
+    if proposal_contract == 'v2':
+        binding.update(proposal_contract='v2', output_contract=contract)
     # Persist/reload must produce byte-identical request content, including nested feedback.
     binding = load_json(encode_bounded(binding, CAP).decode(), max_bytes=CAP, max_depth=24)
     request = PatchAgent.bound_request({p: b.decode() for p, b in sorted(files.items())}, binding)
@@ -199,32 +212,54 @@ def _request(files, issue, editable, protected, feedback, number, *, strategy='a
         'Non-candidate statuses require empty edits. The complete JSON response is at most 65536 UTF-8 bytes.')
     if bound:
         request.metadata = {'prompt_version':'debugger-bound-repair-feedback-v2', 'strategy':strategy}
+    if proposal_contract == 'v2':
+        old = 'status (candidate/no_candidate/insufficient_evidence)'
+        _require(old in request.messages[0]['content'], 'proposal_prompt_binding')
+        request.messages[0]['content'] = request.messages[0]['content'].replace(
+            old, 'status ('+'/'.join(contract['statuses'])+')', 1)
+        request.messages[0]['content'] += (
+            ' finalize_current requires a previously accepted candidate and empty edits. '
+            'It retains that current candidate without another verification or any claim of success. '
+            'no_candidate and insufficient_evidence withdraw the answer instead of retaining a candidate.')
+        request.metadata.update(proposal_contract='v2', prompt_version='debugger-bound-repair-feedback-v3')
     _require(len(encode_bounded(asdict(request), CAP)) <= 98304, 'request_size')
     return request
 
 
-def parse_proposal_content(content):
+def parse_proposal_content(content, *, proposal_contract='v1'):
     """The published proposal limit is raw UTF-8, not ASCII re-encoding."""
+    output_contract(proposal_contract)
     return load_json(content, max_bytes=65536, max_depth=8, utf8_bytes=True)
 
 
 def _proposal(response, request, files, editable):
     _require(response.tool_calls == [] and response.finish_reason == 'stop', 'response_contract')
-    raw = parse_proposal_content(response.content)
+    version = request.metadata.get('proposal_contract','v1')
+    contract = output_contract(version)
+    raw = parse_proposal_content(response.content, proposal_contract=version)
     _require(type(raw) is dict and set(raw) == {'status', 'summary', 'base_content_id',
         'hypothesis_id', 'evidence_ids', 'edits'}, 'proposal_fields')
     payload = load_json(request.messages[1]['content'], max_bytes=CAP, max_depth=24)
+    _require(payload.get('proposal_contract','v1') == version and
+        (version == 'v1' or payload.get('output_contract') == contract), 'proposal_contract_binding')
     _require(raw['base_content_id'] == payload['base_content_id']
         and raw['hypothesis_id'] == payload['hypothesis_id']
         and type(raw['evidence_ids']) is list and 1 <= len(raw['evidence_ids']) <= 2
         and len(set(raw['evidence_ids'])) == len(raw['evidence_ids'])
         and all(n in payload['evidence_ids'] for n in raw['evidence_ids']), 'proposal_binding')
     _require(type(raw['summary']) is str and 0 < len(raw['summary'].encode()) <= 2048
-             and raw['status'] in ('candidate', 'no_candidate', 'insufficient_evidence'), 'proposal_status')
+             and raw['status'] in contract['statuses'], 'proposal_status')
     if raw['status'] != 'candidate':
         _require(raw['edits'] == [], 'abstention_edits')
         return raw, None
     return raw, apply_edits(files, raw['edits'], editable_paths=editable)
+
+
+def _proposal_terminal_status(proposal, accepted_candidates):
+    if proposal['status'] == 'finalize_current':
+        _require(accepted_candidates > 0, 'finalize_without_candidate')
+        return 'candidate_finalized'
+    return None if proposal['status'] == 'candidate' else proposal['status']
 
 
 def _check_stop(record, baseline=False):
@@ -252,15 +287,18 @@ def _usage_valid(response, request):
 
 def run_simulated_loop(repo, issue, *, editable_paths, test_paths, provider=None,
                        verifier=None, out, max_rounds=3,
-                       max_total_input_tokens=24576, max_total_output_tokens=3072):
+                       max_total_input_tokens=24576, max_total_output_tokens=3072,
+                       proposal_contract='v1'):
     _require(provider is None or type(provider) is ScriptedPatchProvider, 'simulation_provider_only')
     return _run_loop(repo, issue, editable_paths=editable_paths, test_paths=test_paths,
         provider=provider, verifier=verifier, out=out, max_rounds=max_rounds,
-        max_total_input_tokens=max_total_input_tokens, max_total_output_tokens=max_total_output_tokens)
+        max_total_input_tokens=max_total_input_tokens, max_total_output_tokens=max_total_output_tokens,
+        proposal_contract=proposal_contract)
 
 
 def run_repair_loop(repo, issue, *, editable_paths, test_paths, provider, out,
-                    strategy='api_debugger', task_id='repair', verifier=None, expected_source_files=None):
+                    strategy='api_debugger', task_id='repair', verifier=None, expected_source_files=None,
+                    proposal_contract='v1'):
     """Normal application route; the shared binding has no native network transport.
 
     Real validation remains unavailable. Tests may inject the existing explicit
@@ -273,13 +311,14 @@ def run_repair_loop(repo, issue, *, editable_paths, test_paths, provider, out,
         provider=provider, verifier=verifier, out=out, max_rounds=limits['max_requests'],
         max_total_input_tokens=limits['max_total_input_tokens'],
         max_total_output_tokens=limits['max_total_output_tokens'], strategy=strategy, task_id=task_id,
-        expected_source_files=expected_source_files)
+        expected_source_files=expected_source_files, proposal_contract=proposal_contract)
 
 
 def _prepared_request(files, config, feedback, number):
     bound = config.get('provider_config') is not None
     request = _request(files, config['issue'], config['editable_paths'], config['test_paths'],
-                       feedback, number, strategy=config['strategy'], bound=bound)
+                       feedback, number, strategy=config['strategy'], bound=bound,
+                       proposal_contract=config.get('proposal_contract','v1'))
     if bound:
         from macr.providers.repair_binding import RepairProviderBinding
         request = RepairProviderBinding(config['provider_config']).prepare_request(request)
@@ -303,13 +342,15 @@ def _response(raw):
 
 def _run_loop(repo, issue, *, editable_paths, test_paths, provider, verifier, out,
               max_rounds, max_total_input_tokens, max_total_output_tokens,
-              strategy='api_debugger', task_id='development', expected_source_files=None):
+              strategy='api_debugger', task_id='development', expected_source_files=None,
+              proposal_contract='v1'):
     """Exercise the actual repair control flow using explicitly scripted adapters.
 
     Exclusive output directory is the no-resume claim. Partial sessions are never
     restarted; inspect their intent files instead. No live implementation exists.
     """
     started = time.monotonic()
+    output_contract(proposal_contract)
     from macr.providers.repair_binding import RepairProviderBinding
     bound = type(provider) is RepairProviderBinding
     _require(provider is None or type(provider) is ScriptedPatchProvider or bound, 'provider_binding_required')
@@ -341,9 +382,10 @@ def _run_loop(repo, issue, *, editable_paths, test_paths, provider, verifier, ou
         'provider_available': provider is not None, 'verifier_available': verifier is not None,
         'strategy':strategy, 'task_id':task_id, 'provider_config':deepcopy(provider.config) if bound else None,
         'provider_enabled':provider.enabled if bound else provider is not None}
+    if proposal_contract == 'v2': config['proposal_contract'] = 'v2'
     _write(out, 'claim.json', {'mode': 'bound_no_native_transport' if bound else 'simulation_only', 'config': config})
     store = SnapshotStore(out/'snapshots', allowed_root=out)
-    checks = []; rounds = []; inputs = outputs = attempts = 0
+    checks = []; rounds = []; inputs = outputs = attempts = accepted_candidates = 0
     provider_seconds = validation_seconds = 0.0
 
     def check(files, number):
@@ -417,13 +459,15 @@ def _run_loop(repo, issue, *, editable_paths, test_paths, provider, verifier, ou
         inputs += usage['input_tokens']; outputs += usage['output_tokens']
         try:
             proposal, changed = _proposal(response, request, current, editable_paths)
+            proposal_status = _proposal_terminal_status(proposal, accepted_candidates)
         except (ContractError, TypeError, ValueError):
             status = row['status'] = 'proposal_invalid'
             _write(out, folder+'/event.json', row); break
         if changed is None:
-            status = row['status'] = proposal['status']
+            status = row['status'] = proposal_status
             _write(out, folder+'/event.json', row); break
         current = changed; row['candidate_source_id'] = source_id(current)
+        accepted_candidates += 1
         feedback = check(current, attempts)
         status = _candidate_stop(feedback, config)
         row['status'] = status or ('candidate_unverified' if strategy == 'direct_api' else 'candidate_failed')
@@ -462,6 +506,7 @@ def verify_loop(out):
     """Revalidate local integrity and source/request/feedback links; never dispatch."""
     out = _root(out); report = _read(out, 'report.json'); claim = _read(out, 'claim.json')
     config = claim['config']
+    output_contract(config.get('proposal_contract','v1'))
     bound = config.get('provider_config') is not None
     _require(report['artifact_hashes'] == _file_hashes(out, skip=('report.json',))
         and report['config_sha256'] == digest(config) and claim['mode'] == (
@@ -500,7 +545,7 @@ def verify_loop(out):
                     decode_record(CheckSpec, saved['spec']))), 'invalid_receipt')
     feedback = report['checks'][0]
     status = _initial_stop(feedback, config)
-    inputs = outputs = 0; used_checks = 1
+    inputs = outputs = accepted_candidates = 0; used_checks = 1
     meter = report['provider_accounting']
     if bound:
         from macr.providers.repair_binding import validate_meter
@@ -550,15 +595,17 @@ def verify_loop(out):
                 inputs += response.usage['input_tokens']; outputs += response.usage['output_tokens']
                 try:
                     proposal, changed = _proposal(response, request, files, config['editable_paths'])
+                    proposal_status = _proposal_terminal_status(proposal, accepted_candidates)
                 except (ContractError, TypeError, ValueError):
                     status = 'proposal_invalid'
                 else:
                     if changed is None:
-                        status = proposal['status']
+                        status = proposal_status
                     else:
                         _require(source_id(changed) == row.get('candidate_source_id')
                             and changed == _files(out/f'sources/{i}'), 'candidate_binding')
                         files = changed; feedback = report['checks'][i]; used_checks += 1
+                        accepted_candidates += 1
                         status = _candidate_stop(feedback, config)
         _require(row['status'] == (status or ('candidate_unverified' if config['strategy'] == 'direct_api' else 'candidate_failed')), 'round_status')
     if status is None:

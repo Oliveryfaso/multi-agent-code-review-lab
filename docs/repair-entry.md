@@ -59,6 +59,17 @@ normal Debugger stops before a model request. The existing replay verifier can
 only be injected by trusted tests and remains synthetic; there is no saved-replay
 CLI argument or backend fallback. No host subprocess substitutes for isolation.
 
+Use `--proposal-contract v2` for an explicit retain-and-finish action in either
+strategy. After an accepted candidate, `finalize_current` requires empty edits
+and the current source/evidence bindings. It consumes its normal model request,
+preserves the candidate without another check and reports `candidate_finalized`,
+never a verified repair. The complete chain and unchanged tests reach the same
+pending scoring handoff. A first-round finalize, stale binding or dispatch after
+finalize is rejected. `no_candidate` and `insufficient_evidence` still withdraw
+the candidate. Legacy v1 remains the default with unchanged request bytes; it
+lacks this action and must not be used as a strong iterative baseline. New v2
+comparisons must bind the v2 output-contract digest for both strategies.
+
 ## Source and scoring boundary
 
 The neutral task has exactly `schema`, `task_id`, `issue`, `source_files` (SHA256
@@ -100,6 +111,13 @@ requests, tokens, known local cost, unknown reserve and preparation/provider/
 validation/total time use the same accounting route for both arms. Equal ceilings
 are not equal actual consumption or an orchestration-only causal claim.
 
+After a revalidated provider record reports settled usage beyond a per-request
+or cumulative limit, the pending handoff uses `budget_exceeded`. It retains the
+actual tokens and known local charge, earns no success credit and requires the
+comparison to stop; later dispatched cells are rejected. This failure-only
+reporting path does not increase dispatch limits, release unknown reserves or
+authenticate metering. Original response records remain available for audit.
+
 ## Persistence and verification
 
 Each output directory is exclusive; a repeated or partial run cannot be resumed
@@ -117,10 +135,10 @@ an exact fair freeze and a new bounded paid-run approval. No native backend or e
 
 ## Offline verification scope
 
-This integration passed 335 explicitly selected deterministic checks with no
+This integration passed 347 explicitly selected deterministic checks with no
 skips on Python 3.12. These exercise source/storage boundaries, existing APIs,
 the normal checkout entry, intercepted provider responses, budgeting and pending
-scoring records. They are software regression checks, not 335 model-evaluation
+scoring records. They are software regression checks, not 347 model-evaluation
 tasks, and establish no real repair or combination-quality gain.
 
 A separate set of 37 optional recovery checks also passed with zero skips in

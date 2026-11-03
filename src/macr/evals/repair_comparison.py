@@ -25,7 +25,8 @@ import json
 SCHEMA = 'macr.repair-comparison.spec.v1'
 ARMS = ('direct_api', 'api_debugger')
 STATUSES = ('not_attempted', 'skipped', 'answer_recorded', 'contract_failed',
-            'transport_failed', 'verification_unavailable', 'verification_timeout', 'unknown')
+            'transport_failed', 'verification_unavailable', 'verification_timeout',
+            'budget_exceeded', 'unknown')
 OUTCOMES = ('full_repair', 'healthy_correct', 'necessary_abstention',
             'unnecessary_abstention', 'false_positive', 'false_release', 'partial')
 SUCCESS = frozenset({'full_repair', 'healthy_correct', 'necessary_abstention'})
@@ -203,11 +204,19 @@ def _row(row, task, spec):
         ('final_output_sha256', 'candidate_sha256', 'verification_receipt_sha256')),
         'comparison_artifact_digest_invalid')
     limits = spec['limits']
+    budget_failure = row['status'] == 'budget_exceeded'
     for key in ('requests', 'input_tokens', 'output_tokens'):
         limit = limits['max_requests' if key == 'requests' else key]
-        _require(_integer(row[key], 0, limit), 'comparison_actual_budget_exceeded')
+        _require(_integer(row[key]) and (budget_failure or row[key] <= limit),
+                 'comparison_actual_budget_exceeded')
     known, reserved = _amount(row['known_usd']), _amount(row['unknown_reserved_usd'])
-    _require(known + reserved <= _amount(limits['max_usd']), 'comparison_actual_budget_exceeded')
+    _require(budget_failure or known + reserved <= _amount(limits['max_usd']),
+             'comparison_actual_budget_exceeded')
+    # A settled overrun is a failed observation, never permission to dispatch
+    # beyond the plan or an answer eligible for success credit. Keep raw actuals.
+    if budget_failure:
+        _require(row['verdict'] is row['final_output_sha256'] is row['candidate_sha256'] is None,
+                 'comparison_budget_failure_has_answer')
     _require((reserved > 0) == (row['status'] == 'unknown'), 'comparison_unknown_reserve_invalid')
     _require(_integer(row['feedback_validation_attempts'], 0, 32),
              'comparison_feedback_count_invalid')
@@ -273,12 +282,14 @@ def score_packet(plan: dict, cell_id: str, row: dict, *, original_files: dict,
     """
     from macr.investigation.repair_io import bounded_json
     from macr.investigation.repair_edits import apply_edits, validate_files
-    from macr.investigation.repair_loop import source_id
+    from macr.investigation.repair_loop import source_id, output_contract, digest
 
     plan = validate_comparison(plan)
     cell = next((c for c in plan['cells'] if c['cell_id'] == cell_id), None)
     _require(cell is not None, 'comparison_score_cell_missing')
     task = next(t for t in plan['spec']['tasks'] if t['task_id'] == cell['task_id'])
+    finalize_allowed = (plan['spec']['model']['output_contract_sha256'] ==
+                        digest(output_contract('v2')))
     _require(type(row) is dict and row.get('review') is None, 'comparison_score_review_must_be_separate')
     _row(row, task, plan['spec'])
     validate_files(original_files)
@@ -292,7 +303,7 @@ def score_packet(plan: dict, cell_id: str, row: dict, *, original_files: dict,
     _require(source_id(original_files) == task['snapshot_sha256']
         and source_id({p:original_files[p] for p in protected_paths}) == task['visible_tests_sha256'],
         'comparison_score_source_binding')
-    changed = None; last_applied = original_files
+    changed = None; last_applied = original_files; has_candidate = False
     if proposal_chain is not None:
         bounded_json(proposal_chain, max_bytes=65536, max_depth=16, utf8_bytes=True)
         _require(edits is None and type(proposal_chain) is list
@@ -300,17 +311,22 @@ def score_packet(plan: dict, cell_id: str, row: dict, *, original_files: dict,
                  'comparison_score_chain_contract')
         for index, proposal in enumerate(proposal_chain):
             _require(type(proposal) is dict and proposal.get('base_content_id') == source_id(last_applied)
-                and proposal.get('status') in ('candidate', 'no_candidate', 'insufficient_evidence')
+                and proposal.get('status') in ('candidate', 'no_candidate', 'insufficient_evidence',
+                                               'finalize_current')
                 and type(proposal.get('edits')) is list, 'comparison_score_chain_binding')
             if proposal['status'] == 'candidate':
                 last_applied = apply_edits(last_applied, proposal['edits'], editable_paths=editable_paths)
                 _require(all(last_applied[p] == original_files[p] for p in protected_paths),
                          'comparison_score_chain_protected')
+                has_candidate = True
+            elif proposal['status'] == 'finalize_current':
+                _require(finalize_allowed and has_candidate and index == len(proposal_chain)-1
+                    and proposal['edits'] == [], 'comparison_score_finalize_contract')
             else:
                 _require(index == len(proposal_chain)-1 and proposal['edits'] == [],
                          'comparison_score_chain_after_abstention')
         _require(final_output == proposal_chain[-1], 'comparison_score_chain_final_output')
-        if proposal_chain[-1]['status'] == 'candidate':
+        if proposal_chain[-1]['status'] in ('candidate', 'finalize_current'):
             changed = last_applied
         expected_candidate = source_id(changed) if changed is not None else None
         _require(row['candidate_sha256'] == expected_candidate, 'comparison_score_candidate_binding')
@@ -330,11 +346,15 @@ def score_packet(plan: dict, cell_id: str, row: dict, *, original_files: dict,
             'comparison_score_artifact_binding')
     if row['status'] == 'answer_recorded':
         _require(type(final_output) is dict and final_output.get('status') in
-            ('candidate', 'no_candidate', 'insufficient_evidence')
+            ('candidate', 'no_candidate', 'insufficient_evidence', 'finalize_current')
             and type(final_output.get('edits')) is list, 'comparison_score_proposal_contract')
+        finalized = final_output['status'] == 'finalize_current'
+        _require(not finalized or (finalize_allowed and proposal_chain is not None),
+                 'comparison_score_finalize_chain_required')
         if changed is not None:
             expected_edits = proposal_chain[-1]['edits'] if proposal_chain is not None else edits
-            _require(final_output['status'] == 'candidate' and final_output['edits'] == expected_edits,
+            _require((final_output['status'] == 'candidate' or finalized)
+                and final_output['edits'] == expected_edits,
                      'comparison_score_proposal_candidate_mismatch')
         else:
             _require(final_output['status'] != 'candidate' and final_output['edits'] == [],
@@ -386,7 +406,7 @@ def build_report(plan: dict, results: dict) -> dict:
                 identity_valid = True
                 if first_identity is None:
                     first_identity = identity
-        if row['status'] == 'unknown':
+        if row['status'] in {'unknown', 'budget_exceeded'}:
             must_stop = True
         stats = arms[cell['arm']]
         stats['identity_invalid'] += int(row['requests'] > 0 and not identity_valid)

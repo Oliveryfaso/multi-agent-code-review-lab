@@ -16,6 +16,135 @@ from macr.providers.base import ProviderError
 
 
 class RepairLoopTests(TestCase):
+    def versioned_loop(self, replies, *, strategy='api_debugger', proposal_contract='v2'):
+        fixed = dict(self.files)
+        fixed['builder.py'] = fixed['builder.py'].replace(OLD.encode(), NEW.encode())
+        self.out = fixture_root()/'versioned-run'
+        self.provider = loop.ScriptedPatchProvider(replies)
+        self.verifier = loop.ReplayVerifier([self.observation(self.files,self.tests),
+                                            self.observation(fixed,self.tests)])
+        try:
+            return loop._run_loop(self.repo,'Discount applies only to items.',
+                editable_paths=['app.py','builder.py','records.py'],test_paths=['checks.py'],
+                provider=self.provider,verifier=self.verifier,out=self.out,max_rounds=3,
+                max_total_input_tokens=24576,max_total_output_tokens=3072,
+                strategy=strategy,proposal_contract=proposal_contract)
+        except TypeError as error:
+            self.fail('The explicit versioned repair interface failed: '+str(error))
+
+    def test_v2_finalize_current_preserves_candidate_without_extra_validation(self):
+        finalize = {'status':'finalize_current','summary':'Retain the current unverified candidate.','edits':[]}
+        for strategy in ('direct_api','api_debugger'):
+            with self.subTest(strategy=strategy):
+                result = self.versioned_loop([self.proposal(),finalize,self.proposal()],strategy=strategy)
+                self.assertEqual(result['status'],'candidate_finalized')
+                self.assertEqual(result['proposal_requests'],2)
+                self.assertEqual(len(self.provider.replies),1)
+                self.assertEqual(len(result['checks']),2)
+                self.assertEqual(self.verifier.calls,0 if strategy=='direct_api' else 2)
+                self.assertEqual(result['final_source_id'],result['rounds'][0]['candidate_source_id'])
+                self.assertFalse((self.out/'sources/2').exists())
+                self.assertEqual(result,loop.verify_loop(self.out))
+                claim = loop._read(self.out,'claim.json')['config']
+                self.assertEqual(claim['proposal_contract'],'v2')
+                first = json.loads(self.provider.requests[0]['messages'][1]['content'])
+                final = json.loads(self.provider.requests[1]['messages'][1]['content'])
+                self.assertEqual(final['base_content_id'],result['final_source_id'])
+                self.assertNotEqual(first['base_content_id'],final['base_content_id'])
+                self.assertEqual(final['files']['checks.py'],SOURCES['checks.py'])
+                self.assertFalse(result['repaired']);self.assertFalse(result['target_code_executed'])
+
+    def test_finalize_rejects_first_round_legacy_and_invalid_bindings(self):
+        finalize = {'status':'finalize_current','summary':'Keep candidate.','edits':[]}
+        for version, replies in (
+            ('v2',[finalize]), ('v1',[self.proposal(),finalize]),
+            ('v2',[self.proposal(),dict(finalize,base_content_id='0'*64)]),
+            ('v2',[self.proposal(),dict(finalize,hypothesis_id='0'*64)]),
+            ('v2',[self.proposal(),dict(finalize,evidence_ids=['not-supplied'])]),
+            ('v2',[self.proposal(),dict(finalize,edits=self.proposal()['edits'])]),
+        ):
+            with self.subTest(version=version,replies=len(replies)):
+                result = self.versioned_loop(replies,proposal_contract=version)
+                self.assertEqual(result['status'],'proposal_invalid')
+                self.assertEqual(result['proposal_requests'],len(replies))
+                self.assertFalse(result['repaired'])
+
+    def test_v2_abstention_still_discards_answer_instead_of_finalizing(self):
+        for status in ('no_candidate','insufficient_evidence'):
+            with self.subTest(status=status):
+                result = self.versioned_loop([self.proposal(),{
+                    'status':status,'summary':'Withdraw the candidate.','edits':[]}])
+                self.assertEqual(result['status'],status)
+                self.assertEqual(result['proposal_requests'],2)
+                self.assertEqual(len(result['checks']),2)
+                self.assertFalse(result['repaired'])
+
+    def test_finalize_record_cannot_dispatch_again_or_change_contract_version(self):
+        finalize = {'status':'finalize_current','summary':'Keep candidate.','edits':[]}
+        self.versioned_loop([self.proposal(),finalize],strategy='direct_api')
+        original = loop._read(self.out,'report.json')
+        bad = deepcopy(original);bad['rounds'].append(deepcopy(bad['rounds'][-1]))
+        bad['proposal_requests'] = 3
+        loop._write(self.out,'report.json',bad)
+        with self.assertRaises(ContractError) as raised:loop.verify_loop(self.out)
+        self.assertEqual(raised.exception.field,'dispatch_after_stop')
+        claim = loop._read(self.out,'claim.json')
+        claim['config']['proposal_contract'] = 'v404'
+        loop._write(self.out,'claim.json',claim)
+        original['config_sha256'] = loop.digest(claim['config'])
+        original['artifact_hashes'] = loop._file_hashes(self.out,skip=('report.json',))
+        loop._write(self.out,'report.json',original)
+        with self.assertRaises(ContractError):loop.verify_loop(self.out)
+
+    def test_v1_contract_and_request_bytes_remain_unchanged(self):
+        from dataclasses import asdict
+        expected = {'direct_api:False':'950767c9ab09377c7322886038364a9cb6e319a6ca9daa907d999dee93f920e7',
+            'direct_api:True':'a75a20294fc26aeccd0aab492eba0d4a1eaa24e9ae43e453c6c4fae488a3438f',
+            'api_debugger:False':'54d9446604f93beddd77cdfe117d15063e5e7cbc457cfd36ca7257b20081328e',
+            'api_debugger:True':'e11c310a8e715c922d5f5e01a5e5cee947ee399b83ae185fc4d46fa0bf6d73c9'}
+        self.assertEqual(loop.digest(loop.output_contract()),
+                         '858d7f0cf904759fcb6dc1659f1a4107ea2a09b8ad478df785b6890398f5f5c6')
+        for strategy in ('direct_api','api_debugger'):
+            for bound in (False,True):
+                request = loop._request(self.files,'Legacy byte-compatibility fixture.',
+                    ['builder.py'],['checks.py'],{},1,strategy=strategy,bound=bound)
+                self.assertEqual(loop.digest(asdict(request)),expected[strategy+':'+str(bound)])
+        contract = loop.output_contract();contract['statuses'].append('forged')
+        self.assertEqual(loop.output_contract(),loop.OUTPUT_CONTRACT)
+        result = self.versioned_loop([{'status':'no_candidate','summary':'No candidate.','edits':[]}],
+                                     strategy='direct_api',proposal_contract='v1')
+        self.assertNotIn('proposal_contract',loop._read(self.out,'claim.json')['config'])
+        self.assertNotIn('proposal_contract',self.provider.requests[0]['metadata'])
+        self.assertEqual(result,loop.verify_loop(self.out))
+
+    def test_v2_contract_is_serialized_once_and_request_bound(self):
+        for strategy in ('direct_api','api_debugger'):
+            request = loop._request(self.files,'Public issue',['builder.py'],['checks.py'],{},2,
+                strategy=strategy,bound=True,proposal_contract='v2')
+            self.assertIn('status (candidate/no_candidate/insufficient_evidence/finalize_current)',request.messages[0]['content'])
+            self.assertNotIn('status (candidate/no_candidate/insufficient_evidence),',request.messages[0]['content'])
+            payload = json.loads(request.messages[1]['content'])
+            self.assertEqual(payload['output_contract'],loop.output_contract('v2'))
+            self.assertEqual(request.metadata['proposal_contract'],'v2')
+            reply = {key:payload[key] for key in ('base_content_id','hypothesis_id','evidence_ids')}
+            reply.update(status='finalize_current',summary='Keep candidate.',edits=[])
+            from macr.providers.base import ModelResponse
+            response = ModelResponse(content=json.dumps(reply))
+            self.assertIsNone(loop._proposal(response,request,self.files,['builder.py'])[1])
+            payload['proposal_contract'] = 'v1';request.messages[1]['content'] = json.dumps(payload)
+            with self.assertRaises(ContractError):loop._proposal(response,request,self.files,['builder.py'])
+
+    def test_invalid_proposal_version_rejects_before_output_or_dispatch(self):
+        for version in ('v404',None,1,True):
+            with self.subTest(version=version):
+                with self.assertRaises(ContractError):
+                    loop.run_simulated_loop(self.repo,'Issue',editable_paths=['builder.py'],
+                        test_paths=['checks.py'],provider=None,verifier=None,out=self.out,
+                        proposal_contract=version)
+                self.assertFalse(self.out.exists())
+                with self.assertRaises(ContractError):
+                    loop.parse_proposal_content('{}',proposal_contract=version)
+
     def test_utf8_proposal_round_trip_uses_published_byte_contract(self):
         original = SOURCES['builder.py'] + '#' + '文'*5300 + '\n'
         changed = original.replace(OLD, NEW)

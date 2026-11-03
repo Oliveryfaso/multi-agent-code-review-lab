@@ -219,6 +219,30 @@ class RepairScoringFlowTests(unittest.TestCase):
         self.assertEqual(packet['last_applied_source_id'], source_id(self.changed))
         self.assertEqual(comparison.build_report(self.plan,{self.cell['cell_id']:packet['result']})['arms']['direct_api']['scored'],0)
 
+    def test_v2_finalize_preserves_candidate_only_with_bound_prior_chain(self):
+        from macr.investigation.repair_loop import output_contract, digest
+        self.spec['model']['output_contract_sha256']=digest(output_contract('v2'))
+        self.plan=comparison.compile_comparison(self.spec);self.cell=self.plan['cells'][0]
+        self.row['output_contract_sha256']=self.spec['model']['output_contract_sha256']
+        end={'status':'finalize_current','base_content_id':source_id(self.changed),'edits':[]}
+        chain=[{'status':'candidate','base_content_id':source_id(self.files),'edits':self.edits},end]
+        self.row.update(requests=2,final_output_sha256=comparison.result_digest(end))
+        packet=self.packet(edits=None,final_output=end,proposal_chain=chain)
+        self.assertEqual(packet['candidate_files']['app.py'].encode(),self.changed['app.py'])
+        self.assertEqual(packet['last_applied_source_id'],source_id(self.changed))
+        self.assertFalse(packet['semantic_truth_validated'])
+        for bad in ([end],chain+[end],chain[::-1],
+                    [chain[0],dict(end,base_content_id=source_id(self.files))],
+                    [chain[0],dict(end,edits=self.edits)]):
+            with self.subTest(bad=bad),self.assertRaises(ValueError):
+                self.packet(edits=None,final_output=end,proposal_chain=bad)
+        with self.assertRaises(ValueError): self.packet(edits=self.edits,final_output=end)
+        old=deepcopy(self.spec);old['model']['output_contract_sha256']='1'*64
+        self.plan=comparison.compile_comparison(old)
+        self.row['output_contract_sha256']='1'*64
+        with self.assertRaises(ValueError):
+            self.packet(edits=None,final_output=end,proposal_chain=chain)
+
     def test_chain_cannot_hide_extra_model_proposals_under_one_counted_request(self):
         chain = [{'status':'candidate','base_content_id':source_id(self.files),'edits':self.edits},
                  {'status':'candidate','base_content_id':source_id(self.changed),

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import math
+from decimal import Decimal
 from pathlib import Path
 import re
 
@@ -16,6 +17,8 @@ def add_parser(subparsers):
     parser.add_argument('--model-config', required=True, type=Path, help='Nonsecret shared model, limits and declared price schedule.')
     parser.add_argument('--out', required=True, type=Path, help='New exclusive local record directory.')
     parser.add_argument('--strategy', choices=('direct_api','api_debugger'), default='api_debugger')
+    parser.add_argument('--proposal-contract', choices=('v1','v2'), default='v1',
+                        help='v2 explicitly allows retaining the current candidate; legacy v1 is unchanged.')
 
 
 def _json(path):
@@ -89,16 +92,29 @@ def score_handoff(record_root, plan, cell_id):
     task = next(t for t in plan['spec']['tasks'] if t['task_id'] == config['task_id'])
     original = loop._files(root/'sources/0')
     model_config = config['provider_config']; limits = model_config['limits']
+    proposal_contract = config.get('proposal_contract','v1')
     loop._require(task['issue_sha256'] == loop.digest(config['issue'])
         and task['initial_context_sha256'] == initial_context_id(original,config['issue'])
         and plan['spec']['model']['configuration_sha256'] == loop.digest(model_config)
-        and plan['spec']['model']['output_contract_sha256'] == loop.digest(loop.OUTPUT_CONTRACT)
+        and plan['spec']['model']['output_contract_sha256'] == loop.digest(loop.output_contract(proposal_contract))
         and plan['spec']['limits'] == {'max_requests':limits['max_requests'],
             'input_tokens':limits['max_total_input_tokens'],'output_tokens':limits['max_total_output_tokens'],
             'max_usd':limits['max_usd']}, 'score_shared_contract_binding')
     row = _empty(task,plan['spec']); meter=report['provider_accounting']
-    answer = report['status'] in ('simulation_passed','candidate_unverified','no_candidate','insufficient_evidence')
-    row['status'] = ('answer_recorded' if answer else 'unknown' if report['unknown_request_reservation'] else
+    # verify_loop has already rebound actual usage to persisted responses/wires.
+    # A failed provider envelope may still carry independently settled usage;
+    # preserve that overrun even when its call status is known_provider_failure.
+    budget_failure = (meter['input_tokens'] > limits['max_total_input_tokens']
+        or meter['output_tokens'] > limits['max_total_output_tokens']
+        or Decimal(meter['known_usd']) > Decimal(limits['max_usd'])
+        or any(call['usage'] and (
+            call['usage']['input_tokens'] > limits['max_input_per_request']
+            or call['usage']['output_tokens'] > limits['max_output_per_request'])
+            for call in meter['calls']))
+    answer = not budget_failure and report['status'] in (
+        'simulation_passed','candidate_unverified','candidate_finalized','no_candidate','insufficient_evidence')
+    row['status'] = ('unknown' if report['unknown_request_reservation'] else
+        'budget_exceeded' if budget_failure else 'answer_recorded' if answer else
         'verification_unavailable' if report['status']=='verification_unavailable' else
         'verification_timeout' if report['status']=='verification_timeout' else
         'not_attempted' if meter['requests']==0 else 'contract_failed')
@@ -114,12 +130,14 @@ def score_handoff(record_root, plan, cell_id):
             and identity['model_state']=='validated' and identity['fingerprint_state']=='validated'
             and identity.get('identity_matches_config') is True else None)
         if answer:
-            chain = [loop.parse_proposal_content(loop.read_proposal_response(root,n)['content'])
+            chain = [loop.parse_proposal_content(loop.read_proposal_response(root,n)['content'],
+                                                 proposal_contract=proposal_contract)
                      for n in range(1,len(report['rounds'])+1)]
             final_output=chain[-1]
-            row['verdict']='defect' if final_output['status']=='candidate' else 'unknown'
+            retained = final_output['status'] in ('candidate','finalize_current')
+            row['verdict']='defect' if retained else 'unknown'
             row['final_output_sha256']=loop.digest(final_output)
-            if final_output['status']=='candidate': row['candidate_sha256']=report['final_source_id']
+            if retained: row['candidate_sha256']=report['final_source_id']
         check=report['checks'][-1]
         receipt={key:check[key] for key in ('source_id','spec','origin','outcomes','result')}
         row['verification_receipt_sha256']=loop.digest(receipt)
@@ -154,6 +172,7 @@ def run(args):
         report = repair_loop.run_repair_loop(args.repo,task['issue'],
             editable_paths=task['editable_paths'],test_paths=task['test_paths'],
             task_id=task['task_id'],strategy=args.strategy,provider=provider,
+            proposal_contract=args.proposal_contract,
             verifier=_verification_backend(),out=args.out,expected_source_files=task['source_files'])
         meter = report['provider_accounting']
         summary = {key:report[key] for key in ('status','simulation','proposal_requests','provider_requests',
@@ -164,7 +183,8 @@ def run(args):
             cost_basis=meter['cost_basis'],total_seconds=report['total_seconds'])
         print(json.dumps(summary))
         # No candidate or abstention here is declared a successful real repair.
-        return 0 if report['status'] in ('simulation_passed','candidate_unverified','no_candidate','insufficient_evidence') else 2
+        return 0 if report['status'] in ('simulation_passed','candidate_unverified','candidate_finalized',
+                                        'no_candidate','insufficient_evidence') else 2
     except (ContractError,ProviderError,OSError,ValueError,TypeError,KeyError,UnicodeError) as error:
         meter = provider.snapshot() if provider is not None else None
         print(json.dumps({'status':'rejected','error':getattr(error,'code','repair_input_invalid'),

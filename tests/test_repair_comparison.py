@@ -150,6 +150,39 @@ class RepairComparisonTests(unittest.TestCase):
         row = self.row(cell); row['review'] = None; row['timing_ms']['total'] = 8
         with self.assertRaises(ValueError): comparison.build_report(plan, {cell['cell_id']: row})
 
+    def test_settled_budget_failures_keep_actual_consumption_and_stop_without_credit(self):
+        plan = self.plan(); cell, later = plan['cells']
+        for field, value in [('requests', 4), ('input_tokens', 10001),
+                ('output_tokens', 2001), ('known_usd', '0.100001')]:
+            row = self.row(cell)
+            row.update(status='budget_exceeded', review=None, verdict=None,
+                       final_output_sha256=None, candidate_sha256=None)
+            row[field] = value
+            with self.subTest(field=field):
+                report = comparison.build_report(plan, {cell['cell_id']: row})
+                stats = report['arms'][cell['arm']]
+                self.assertEqual(stats[field], value)
+                self.assertEqual(stats['statuses']['budget_exceeded'], 1)
+                self.assertEqual((stats['scored'], stats['unscored']), (0, 1))
+                self.assertEqual(report['planned_cells'], 2)
+                self.assertEqual(report['pairs']['not_comparable'], 1)
+                self.assertTrue(report['must_stop'])
+                with self.assertRaisesRegex(ValueError, 'comparison_dispatch_after_stop'):
+                    comparison.build_report(plan, {cell['cell_id']: row,
+                        later['cell_id']: self.row(later)})
+
+    def test_budget_failure_cannot_carry_success_review_or_unbounded_statistics(self):
+        plan = self.plan(); cell = plan['cells'][0]
+        row = self.row(cell)
+        row.update(status='budget_exceeded', review=None, verdict=None,
+                   final_output_sha256=None, candidate_sha256=None)
+        for field, value in [('review', self.row(cell)['review']), ('verdict', 'defect'),
+                ('candidate_sha256', 'c'*64), ('final_output_sha256', 'b'*64),
+                ('unknown_reserved_usd', '0.030000'), ('requests', 0),
+                ('input_tokens', True), ('output_tokens', -1), ('requests', 10**12+1)]:
+            with self.subTest(field=field), self.assertRaises(ValueError):
+                comparison.build_report(plan, {cell['cell_id']: dict(row, **{field:value})})
+
     def test_locked_review_binds_raw_result_rubric_actual_verdict_and_identity(self):
         plan = self.plan(); left, right = plan['cells']
         rows = {left['cell_id']: self.row(left), right['cell_id']: self.row(right)}

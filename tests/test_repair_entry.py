@@ -175,11 +175,12 @@ class RepairEntryTests(TestCase):
         self.process_guard = patch('subprocess.Popen', side_effect=AssertionError('no target or VM'))
         self.process_guard.start(); self.addCleanup(self.process_guard.stop)
 
-    def invoke(self, strategy='direct_api', transport=None, verifier=None):
+    def invoke(self, strategy='direct_api', transport=None, verifier=None, *, proposal_contract='v1'):
         output = io.StringIO(); provider = RepairProviderBinding(self.config, transport=transport)
         self.provider = provider
         args = ['agent-review','repair','--repo',str(self.repo),'--task',str(self.task_file),
                 '--model-config',str(self.config_file),'--out',str(self.out),'--strategy',strategy]
+        if proposal_contract != 'v1': args.extend(['--proposal-contract',proposal_contract])
         with patch('sys.argv', args), patch.object(entry, '_make_provider', return_value=provider), \
              patch.object(entry, '_verification_backend', return_value=verifier), redirect_stdout(output):
             with self.assertRaises(SystemExit) as exited: cli.main()
@@ -437,3 +438,101 @@ class RepairEntryTests(TestCase):
         report=build_report(plan,{cell['cell_id']:packet['result']})
         self.assertEqual(report['arms']['api_debugger']['statuses']['verification_timeout'],1)
         self.assertEqual(report['arms']['api_debugger']['scored'],0)
+
+    def test_settled_provider_overrun_exports_actual_failure_instead_of_losing_denominator(self):
+        from macr.evals.repair_comparison import compile_comparison, build_report
+        from pathlib import Path
+
+        class OverrunTransport(InterceptedTransport):
+            def post(inner, *args):
+                reply = super().post(*args)
+                reply['usage'] = {'prompt_tokens':inputs, 'completion_tokens':outputs,
+                                  'total_tokens':inputs+outputs}
+                return reply
+
+        for inputs, outputs, cost, finish in (
+                (25000,50,'0.007560','stop'), (100,4000,'0.004830','stop'),
+                (9000,50,'0.002760','stop'), (100,1100,'0.001350','stop'),
+                (3500000,50,'1.050060','stop'), (25000,50,'0.007560','length')):
+            with self.subTest(inputs=inputs,outputs=outputs,finish=finish):
+                self.out = self.root/f'overrun-{inputs}-{outputs}-{finish}'
+                transport = OverrunTransport([self.proposal()], finish_reason=finish)
+                code, result = self.invoke(transport=transport)
+                self.assertEqual((code,result['status']), (2,'provider_response_rejected'))
+                persisted = loop.verify_loop(self.out)
+                self.assertEqual(persisted['provider_accounting']['known_usd'],cost)
+                self.assertEqual(persisted['provider_accounting']['requests'],1)
+                self.assertTrue(persisted['provider_accounting']['stopped'])
+                spec = json.loads((Path(__file__).resolve().parents[1]/
+                                   'examples/repair_comparison_development.json').read_text())
+                spec['tasks'] = [{'task_id':self.task['task_id'],
+                    'snapshot_sha256':loop.source_id(self.files), 'issue_sha256':loop.digest(self.task['issue']),
+                    'visible_tests_sha256':loop.source_id({'checks.py':self.files['checks.py']}),
+                    'initial_context_sha256':entry.initial_context_id(self.files,self.task['issue'])}]
+                spec['model']['configuration_sha256'] = loop.digest(self.config)
+                spec['model']['output_contract_sha256'] = loop.digest(loop.OUTPUT_CONTRACT)
+                limits = self.config['limits']
+                spec['limits'] = {'max_requests':limits['max_requests'],
+                    'input_tokens':limits['max_total_input_tokens'],
+                    'output_tokens':limits['max_total_output_tokens'], 'max_usd':limits['max_usd']}
+                plan = compile_comparison(spec)
+                cell = next(c for c in plan['cells'] if c['arm']=='direct_api')
+                packet = entry.score_handoff(self.out,plan,cell['cell_id'])
+                row = packet['result']
+                self.assertEqual((row['status'],row['input_tokens'],row['output_tokens']),
+                                 ('budget_exceeded',inputs,outputs))
+                self.assertEqual((row['known_usd'],row['unknown_reserved_usd']), (cost,'0.000000'))
+                self.assertIsNone(row['review']); self.assertIsNone(packet['final_output'])
+                self.assertIsNone(packet['candidate_files'])
+                report = build_report(plan,{cell['cell_id']:row})
+                self.assertTrue(report['must_stop'])
+                self.assertEqual(report['actual_known_usd'],cost)
+                self.assertEqual(report['arms']['direct_api']['scored'],0)
+                self.assertEqual(report['arms']['api_debugger']['statuses']['not_attempted'],1)
+                self.assertEqual(report['pairs']['not_comparable'],1)
+
+    def test_explicit_v2_finalizes_same_candidate_for_both_strategies_without_extra_check(self):
+        from macr.evals.repair_comparison import compile_comparison, build_report
+        from pathlib import Path
+        fixed = dict(self.files);fixed['builder.py']=fixed['builder.py'].replace(OLD.encode(),NEW.encode())
+        names = loop.test_manifest(self.files,['checks.py'])
+        for strategy in ('direct_api','api_debugger'):
+            with self.subTest(strategy=strategy):
+                self.out=self.root/('finalize-'+strategy)
+                verifier=loop.ReplayVerifier([self.observation(self.files,names[:1]),
+                                              self.observation(fixed,names[:1])])
+                transport=InterceptedTransport([self.proposal(),
+                    {'status':'finalize_current','summary':'Keep this candidate for independent evaluation.','edits':[]}])
+                code,result=self.invoke(strategy,transport,verifier,proposal_contract='v2')
+                self.assertEqual((code,result['status']),(0,'candidate_finalized'))
+                report=loop.verify_loop(self.out)
+                self.assertEqual(report['provider_requests'],2)
+                self.assertEqual(len(report['checks']),2)
+                self.assertEqual(report['final_source_id'],loop.source_id(fixed))
+                self.assertEqual((report['repaired'],report['target_code_executed']),(False,False))
+                self.assertIn('finalize_current',json.dumps(transport.requests[1]['messages']))
+                spec=json.loads((Path(__file__).resolve().parents[1]/'examples/repair_comparison_development.json').read_text())
+                spec['tasks']=[{'task_id':self.task['task_id'],'snapshot_sha256':loop.source_id(self.files),
+                    'issue_sha256':loop.digest(self.task['issue']),
+                    'visible_tests_sha256':loop.source_id({'checks.py':self.files['checks.py']}),
+                    'initial_context_sha256':entry.initial_context_id(self.files,self.task['issue'])}]
+                spec['model']['configuration_sha256']=loop.digest(self.config)
+                spec['model']['output_contract_sha256']=loop.digest(loop.output_contract('v2'))
+                limits=self.config['limits']
+                spec['limits']={'max_requests':limits['max_requests'],
+                    'input_tokens':limits['max_total_input_tokens'],
+                    'output_tokens':limits['max_total_output_tokens'],'max_usd':limits['max_usd']}
+                plan=compile_comparison(spec);cell=next(c for c in plan['cells'] if c['arm']==strategy)
+                packet=entry.score_handoff(self.out,plan,cell['cell_id'])
+                self.assertEqual(packet['final_output']['status'],'finalize_current')
+                self.assertEqual(len(packet['proposal_chain']),2)
+                self.assertEqual(packet['candidate_files']['builder.py'].encode(),fixed['builder.py'])
+                self.assertEqual(packet['candidate_files']['checks.py'].encode(),self.files['checks.py'])
+                self.assertIsNone(packet['result']['review'])
+                self.assertEqual(packet['result']['verdict'],'defect')
+                aggregate=build_report(plan,{cell['cell_id']:packet['result']})
+                self.assertEqual(aggregate['arms'][strategy]['scored'],0)
+                old_spec=deepcopy(spec);old_spec['model']['output_contract_sha256']=loop.digest(loop.OUTPUT_CONTRACT)
+                old_plan=compile_comparison(old_spec)
+                with self.assertRaises(ValueError):
+                    entry.score_handoff(self.out,old_plan,cell['cell_id'])
