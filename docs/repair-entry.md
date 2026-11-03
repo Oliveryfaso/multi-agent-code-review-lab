@@ -124,10 +124,14 @@ CLI argument or backend fallback. No host subprocess substitutes for isolation.
 
 For evaluation, a one-call API is only a reference. A competitive iterative API
 baseline must receive the same public-test feedback, edit permissions and
-budgets. With today's fixed repair policy that feedback baseline is equivalent
-to `api_debugger`; comparing duplicate policies cannot identify a separate
-Debugger orchestration benefit. Feedback gain and any future distinct policy
-gain require separate contrasts, held-out scoring and the full failure denominator.
+budgets. The current two strategies do not yet include a separate feedback
+baseline controlled by the model. That baseline should allow self-review or
+explicit finalization after public tests pass; `api_debugger` currently stops
+automatically on that pass. Comparing these policies would measure this specific
+early-stop quality/resource tradeoff, with the same final independent tests.
+It would not establish a general orchestration benefit. The third profile and
+paired reporting need explicit implementation before such a comparison;
+failures and unrun cells must remain in its planned denominator.
 
 Use `--proposal-contract v2` for an explicit retain-and-finish action in either
 strategy. After an accepted candidate, `finalize_current` requires empty edits
