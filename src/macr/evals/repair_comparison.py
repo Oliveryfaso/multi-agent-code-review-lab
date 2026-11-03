@@ -8,6 +8,10 @@ auxiliary needs its own frozen plan; it cannot be reconstructed after success.
 ``verification_origin`` describes final independent outcome verification, common
 to both arms. In-generation checks belong to ``feedback_validation_attempts``.
 
+Explicit spec.v2 adds model-controlled public-test feedback between self-review
+and Debugger's public-pass early stop. D-C identifies only that stopping policy;
+planned missing/pending/unknown outcomes are interval-valued, not failed answers.
+
 This module reads no files and dispatches nothing. Hashes bind local records;
 they do not authenticate a provider, isolation, hidden-test exclusion or review.
 The development example uses placeholder commitments, not a runnable experiment.
@@ -17,6 +21,7 @@ from __future__ import annotations
 from copy import deepcopy
 import random
 import re
+import math
 
 from decimal import Decimal, InvalidOperation
 from hashlib import sha256
@@ -24,6 +29,17 @@ import json
 
 SCHEMA = 'macr.repair-comparison.spec.v1'
 ARMS = ('direct_api', 'api_debugger')
+SCHEMA_V2 = 'macr.repair-comparison.spec.v2'
+ARMS_V2 = ('direct_api', 'api_test_feedback', 'api_debugger')
+CONTRAST_V2 = 'feedback_and_public_pass_stop_policy'
+_CONTRASTS_V2 = {
+    'api_test_feedback_vs_direct_api': {'treatment':'api_test_feedback',
+        'control':'direct_api','mechanism':'public_test_feedback'},
+    'api_debugger_vs_api_test_feedback': {'treatment':'api_debugger',
+        'control':'api_test_feedback','mechanism':'public_pass_early_stop_policy'},
+    'api_debugger_vs_direct_api': {'treatment':'api_debugger',
+        'control':'direct_api','mechanism':'feedback_and_stopping_whole_policy'},
+}
 STATUSES = ('not_attempted', 'skipped', 'answer_recorded', 'contract_failed',
             'transport_failed', 'verification_unavailable', 'verification_timeout',
             'budget_exceeded', 'unknown')
@@ -90,16 +106,18 @@ def _amount(value):
 def compile_comparison(spec: dict) -> dict:
     """Freeze equal opportunities and a near-balanced paired order; never enable execution."""
     _object(spec, _SPEC_FIELDS, 'comparison_spec_fields')
-    _require(spec['schema'] == SCHEMA and type(spec['comparison_id']) is str
+    _require(spec['schema'] in (SCHEMA, SCHEMA_V2) and type(spec['comparison_id']) is str
         and _ID.fullmatch(spec['comparison_id']) and spec['purpose'] in
         {'development_contract_only', 'preregistered_proposal'}, 'comparison_spec_invalid')
+    three = spec['schema'] == SCHEMA_V2
     _require(spec['initial_evidence'] == 'identical_full_source_issue_visible_tests'
-        and spec['contrast'] == 'whole_strategy_with_extra_computed_and_validation_information'
+        and spec['contrast'] == (CONTRAST_V2 if three else
+            'whole_strategy_with_extra_computed_and_validation_information')
         and spec['stop_policy'] == 'unknown_identity_or_cost_halts_no_retry',
         'comparison_evidence_or_stop_policy')
     tasks = spec['tasks']
     _require(type(tasks) is list and 1 <= len(tasks) <= 32, 'comparison_tasks_invalid')
-    seen = set()
+    seen = set(); contents = set()
     for task in tasks:
         _object(task, {'task_id', 'snapshot_sha256', 'issue_sha256',
             'visible_tests_sha256', 'initial_context_sha256'}, 'comparison_task_fields')
@@ -107,15 +125,24 @@ def compile_comparison(spec: dict) -> dict:
             and task['task_id'] not in seen and all(_hash(v) for k, v in task.items()
             if k != 'task_id'), 'comparison_task_invalid')
         seen.add(task['task_id'])
+        if three:
+            content = tuple(task[k] for k in ('snapshot_sha256','issue_sha256',
+                'visible_tests_sha256','initial_context_sha256'))
+            _require(content not in contents, 'comparison_task_content_alias')
+            contents.add(content)
     _object(spec['model'], {'configuration_sha256', 'output_contract_sha256',
         'identity_policy'}, 'comparison_model_fields')
     _require(spec['model']['identity_policy'] == 'strict_run_fingerprint' and
         all(_hash(spec['model'][k]) for k in ('configuration_sha256', 'output_contract_sha256')),
         'comparison_model_invalid')
+    if three:
+        from macr.investigation.repair_loop import output_contract, digest
+        _require(spec['model']['output_contract_sha256'] == digest(output_contract('v3')),
+                 'comparison_three_arm_output_contract')
     limits = spec['limits']
     _object(limits, {'max_requests', 'input_tokens', 'output_tokens', 'max_usd'},
             'comparison_limit_fields')
-    _require(_integer(limits['max_requests'], 1, 8) and
+    _require(_integer(limits['max_requests'], 1, 3 if three else 8) and
         _integer(limits['input_tokens'], 1, 8_000_000) and
         _integer(limits['output_tokens'], 1, 1_000_000) and
         0 < _amount(limits['max_usd']) <= 100_000_000, 'comparison_limits_invalid')
@@ -132,10 +159,15 @@ def compile_comparison(spec: dict) -> dict:
     _require(_integer(spec['repeats'], 1, 8) and _integer(spec['order_seed'], 0, 2**32 - 1),
              'comparison_order_invalid')
     pairs = [(task['task_id'], repeat) for repeat in range(spec['repeats']) for task in tasks]
-    random.Random(spec['order_seed']).shuffle(pairs)
+    rng = random.Random(spec['order_seed'])
+    rng.shuffle(pairs)
+    if three:
+        base = list(ARMS_V2); rng.shuffle(base)
+        rotations = [tuple(base[n:]+base[:n]) for n in range(3)]
+        orders = rotations + [tuple(reversed(order)) for order in rotations]
     cells = []
     for index, (task_id, repeat) in enumerate(pairs):
-        order = ARMS if index % 2 == 0 else ARMS[::-1]
+        order = orders[index % 6] if three else ARMS if index % 2 == 0 else ARMS[::-1]
         for arm in order:
             cell = {'task_id': task_id, 'repeat': repeat, 'arm': arm}
             cell['cell_id'] = result_digest({'comparison_id': spec['comparison_id'], **cell})[:32]
@@ -147,6 +179,17 @@ def compile_comparison(spec: dict) -> dict:
         'remote_enabled': False, 'execution_authorized': False,
         'arms': {'direct_api': 'full_source_iterative_self_review',
                  'api_debugger': 'same_full_source_plus_computed_and_validation_information'}}
+    if three:
+        plan.update(schema='macr.repair-comparison.plan.v2',
+            arms={'direct_api':'full_source_model_controlled_self_review',
+                  'api_test_feedback':'public_test_feedback_model_controlled_finalize',
+                  'api_debugger':'same_public_test_feedback_stop_on_public_pass'},
+            contrasts=deepcopy(_CONTRASTS_V2),
+            order_policy='seeded_task_repeat_shuffle_six_orders_balanced_positions',
+            current_spend_capacity={'schema':'macr.repair.spend-plan.v1',
+                'max_cells':128,'max_requests':384,
+                'fits':len(cells)<=128 and len(cells)*limits['max_requests']<=384,
+                'meaning':'Size compatibility only; not an executable spend plan or authority.'})
     plan['comparison_sha256'] = result_digest(plan)
     return plan
 
@@ -169,7 +212,8 @@ def generation_view(plan: dict, task_id: str) -> dict:
     plan = validate_comparison(plan)
     task = next((t for t in plan['spec']['tasks'] if t['task_id'] == task_id), None)
     _require(task is not None, 'comparison_generation_task_missing')
-    return {'schema': 'macr.repair-comparison.generation.v1', 'task': deepcopy(task),
+    return {'schema': 'macr.repair-comparison.generation.v2' if plan['spec']['schema']==SCHEMA_V2
+            else 'macr.repair-comparison.generation.v1', 'task': deepcopy(task),
         'model': deepcopy(plan['spec']['model']), 'limits': deepcopy(plan['spec']['limits'])}
 
 
@@ -288,8 +332,9 @@ def score_packet(plan: dict, cell_id: str, row: dict, *, original_files: dict,
     cell = next((c for c in plan['cells'] if c['cell_id'] == cell_id), None)
     _require(cell is not None, 'comparison_score_cell_missing')
     task = next(t for t in plan['spec']['tasks'] if t['task_id'] == cell['task_id'])
+    finalize_version = 'v3' if plan['spec']['schema']==SCHEMA_V2 else 'v2'
     finalize_allowed = (plan['spec']['model']['output_contract_sha256'] ==
-                        digest(output_contract('v2')))
+                        digest(output_contract(finalize_version)))
     _require(type(row) is dict and row.get('review') is None, 'comparison_score_review_must_be_separate')
     _row(row, task, plan['spec'])
     validate_files(original_files)
@@ -359,7 +404,8 @@ def score_packet(plan: dict, cell_id: str, row: dict, *, original_files: dict,
         else:
             _require(final_output['status'] != 'candidate' and final_output['edits'] == [],
                      'comparison_score_proposal_candidate_missing')
-    packet = {'schema': 'macr.repair-comparison.score-packet.v1',
+    packet = {'schema': 'macr.repair-comparison.score-packet.v2' if plan['spec']['schema']==SCHEMA_V2
+              else 'macr.repair-comparison.score-packet.v1',
         'comparison_sha256': plan['comparison_sha256'], 'cell': deepcopy(cell),
         'result': deepcopy(row), 'original_source_id': source_id(original_files),
         'protected_paths': sorted(protected_paths),
@@ -380,13 +426,15 @@ def build_report(plan: dict, results: dict) -> dict:
     _require(type(results) is dict and set(results) <= {c['cell_id'] for c in plan['cells']},
              'comparison_result_cell_unknown')
     tasks = {t['task_id']: t for t in plan['spec']['tasks']}
-    arms = {arm: {'planned': len(plan['cells']) // 2, 'scored': 0, 'unscored': 0,
+    three = plan['spec']['schema'] == SCHEMA_V2
+    active_arms = ARMS_V2 if three else ARMS
+    arms = {arm: {'planned': len(plan['cells']) // len(active_arms), 'scored': 0, 'unscored': 0,
         'identity_invalid': 0, 'excluded_locked_reviews': 0,
         'statuses': dict.fromkeys(STATUSES, 0), 'outcomes': dict.fromkeys(OUTCOMES, 0),
         'requests': 0, 'input_tokens': 0, 'output_tokens': 0, 'known_usd': 0,
         'unknown_reserved_usd': 0, 'feedback_validation_attempts': 0,
         'timing_ms': dict.fromkeys(('preparation', 'provider', 'verification', 'total'), 0)}
-        for arm in ARMS}
+        for arm in active_arms}
     rows, first_identity, must_stop = {}, None, False
     for cell in plan['cells']:
         row = deepcopy(results.get(cell['cell_id'], _empty(tasks[cell['task_id']], plan['spec'])))
@@ -423,6 +471,8 @@ def build_report(plan: dict, results: dict) -> dict:
             stats['unscored'] += 1
             stats['excluded_locked_reviews'] += int(row['review'] is not None)
         rows[(cell['task_id'], cell['repeat'], cell['arm'])] = row, identity_valid
+    if three:
+        return _three_arm_report(plan, arms, rows, must_stop)
     pairs = dict.fromkeys(('direct_api_win', 'api_debugger_win', 'tie', 'not_comparable'), 0)
     for task in tasks:
         for repeat in range(plan['spec']['repeats']):
@@ -455,3 +505,100 @@ def build_report(plan: dict, results: dict) -> dict:
             'Failures, unavailable verification and pending reviews remain in the planned denominator.',
             'Repeated runs are not additional independent tasks.',
             'Extra validation/computed information confounds orchestration-only attribution.']}
+
+
+def _completion(row, identity_valid):
+    """An interval-valued planned outcome, not missing-answer imputation.
+
+    A terminal pipeline failure is observed noncompletion. An answer with no
+    usable locked review, an unrun cell or unknown outcome remains unresolved.
+    """
+    if row['review'] is not None and identity_valid:
+        return int(row['review']['outcome'] in SUCCESS)
+    if row['status'] in {'contract_failed','transport_failed','verification_unavailable',
+                         'verification_timeout','budget_exceeded'}:
+        return 0
+    return None
+
+
+def _three_arm_report(plan, arms, rows, must_stop):
+    """Descriptive contrasts with bounded, explicitly assumed task independence.
+
+    Repeat-level differences are averaged inside each task first. For X in
+    [-1,1], Hoeffding gives radius sqrt(2 log(2/alpha)/n). Bonferroni across
+    three frozen contrasts uses alpha=.05/3; unknown outcomes widen the mean
+    bounds before that radius is added. This is not a semantic attestation or
+    a claim that tasks from the same project are actually independent.
+    """
+    spec=plan['spec']; tasks=spec['tasks']; repeats=spec['repeats']
+    states={key:_completion(*value) for key,value in rows.items()}
+    for arm,stats in arms.items():
+        outcomes=[states[(task['task_id'],repeat,arm)] for task in tasks for repeat in range(repeats)]
+        success=sum(value==1 for value in outcomes)
+        unresolved=sum(value is None for value in outcomes)
+        stats['completion_bounds']={'observed_successes':success,
+            'definite_noncompletions':len(outcomes)-success-unresolved,'unresolved':unresolved,
+            'rate_bounds':[success/len(outcomes),(success+unresolved)/len(outcomes)]}
+    contrasts={}
+    radius=math.sqrt(2*math.log(2*len(_CONTRASTS_V2)/0.05)/len(tasks))
+    for name,definition in _CONTRASTS_V2.items():
+        treatment,control=definition['treatment'],definition['control']
+        quality=dict.fromkeys(('treatment_win','control_win','tie','not_comparable',
+                               'both_success','both_noncompletion'),0)
+        e2e=dict.fromkeys(('treatment_only_completed','control_only_completed',
+                          'both_completed','both_noncompletion','unresolved'),0)
+        task_bounds=[]
+        for task in tasks:
+            lower=upper=0.0
+            for repeat in range(repeats):
+                tkey=(task['task_id'],repeat,treatment);ckey=(task['task_id'],repeat,control)
+                t,c=states[tkey],states[ckey]
+                lower+=(0 if t is None else t)-(1 if c is None else c)
+                upper+=(1 if t is None else t)-(0 if c is None else c)
+                if t is None or c is None:e2e['unresolved']+=1
+                else:
+                    e2e['both_completed' if t==c==1 else 'both_noncompletion' if t==c==0
+                        else 'treatment_only_completed' if t else 'control_only_completed']+=1
+                (tr,tvalid),(cr,cvalid)=rows[tkey],rows[ckey]
+                if (not tvalid or not cvalid or tr['review'] is None or cr['review'] is None
+                        or tr['model_identity_sha256']!=cr['model_identity_sha256']):
+                    quality['not_comparable']+=1
+                elif t==c:
+                    quality['tie']+=1
+                    quality['both_success' if t else 'both_noncompletion']+=1
+                else:quality['treatment_win' if t else 'control_win']+=1
+            task_bounds.append((lower/repeats,upper/repeats))
+        low=sum(bound[0] for bound in task_bounds)/len(tasks)
+        high=sum(bound[1] for bound in task_bounds)/len(tasks)
+        contrasts[name]={**deepcopy(definition),'planned_pairs':len(tasks)*repeats,
+            'conditional_quality':quality,'e2e_pair_states':e2e,
+            'task_cluster':{'independent_tasks_assumed':len(tasks),'repeats_per_task':repeats,
+                'fully_ascertained_tasks':sum(a==b for a,b in task_bounds),
+                'difference_bounds':[low,high],'point_difference':low if low==high else None},
+            'uncertainty':{'method':'hoeffding_task_means_bonferroni',
+                'simultaneous_confidence':0.95,'contrasts':len(_CONTRASTS_V2),
+                'radius':radius,'interval':[max(-1.0,low-radius),min(1.0,high+radius)],
+                'assumptions':['Independent bounded task outcomes; project/family dependence can invalidate coverage.',
+                    'Repeats are averaged within task, never counted as independent samples.',
+                    'Terminal failures are noncompletion; missing, pending and unknown outcomes remain interval-valued.',
+                    'Local review/identity bindings are not semantic or producer attestation.']}}
+    known=sum(stats['known_usd'] for stats in arms.values())
+    reserved=sum(stats['unknown_reserved_usd'] for stats in arms.values())
+    for stats in arms.values():
+        for key in ('known_usd','unknown_reserved_usd'):stats[key]=_money(stats[key])
+    return {'schema':'macr.repair-comparison.report.v2','comparison_sha256':plan['comparison_sha256'],
+        'planned_cells':plan['planned_cells'],'task_count':len(tasks),'repeats':repeats,
+        'arms':arms,'contrasts':contrasts,'actual_known_usd':_money(known),
+        'unknown_reserved_usd':_money(reserved),'must_stop':must_stop,
+        'endpoint':'effective_completion','full_repair_rate_established':False,
+        'endpoint_limitation':'No task strata are declared; full_repair and necessary_abstention counts remain separate.',
+        'automatic_retry_allowed':False,'remote_enabled':False,'execution_authorized':False,
+        'semantic_truth_validated':False,'provenance_authenticated':False,
+        'hidden_test_exclusion_authenticated':False,'equal_ceilings_prove_equal_consumption':False,
+        'orchestration_only_gain_established':False,'contrast':spec['contrast'],
+        'current_spend_capacity':deepcopy(plan['current_spend_capacity']),
+        'tie_semantics':'equal_reviewed_completion_not_equal_correctness; unresolved pairs are not ties',
+        'limitations':['Eight-task pilots are exploratory; this report establishes no gain, power or general superiority.',
+            'D-C is only the public-pass early-stop strategy, C-B feedback, D-B their whole policy.',
+            'Failures and missing cells stay in the planned denominator; unresolved outcomes are not set to zero.',
+            'Exact task-content aliases are rejected, but independence across related mechanisms/projects is unverified.']}

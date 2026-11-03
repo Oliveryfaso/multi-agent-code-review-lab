@@ -44,10 +44,10 @@ def _require(ok, field):
 
 
 def output_contract(version='v1'):
-    _require(type(version) is str and version in ('v1','v2'), 'proposal_contract_version')
+    _require(type(version) is str and version in ('v1','v2','v3'), 'proposal_contract_version')
     contract = deepcopy(OUTPUT_CONTRACT)
-    if version == 'v2':
-        contract['version'] = 'macr.repair.bound-proposal.v2'
+    if version in ('v2','v3'):
+        contract['version'] = 'macr.repair.bound-proposal.'+version
         contract['statuses'].append('finalize_current')
     return contract
 
@@ -211,13 +211,16 @@ def _request(files, issue, editable, protected, feedback, number, *, strategy='a
     if strategy == 'direct_api':
         feedback = {'source_id': identity, 'verification':'not_performed',
                     'revision':'Self-review the current candidate against the original issue and visible tests.'}
+    elif proposal_contract == 'v3':
+        feedback = _public_feedback(feedback, test_manifest(files, protected))
+        _require(feedback['source_id'] == identity, 'feedback_source_binding')
     binding = {'base_content_id': identity, 'hypothesis_id': digest({'issue': issue}),
         'evidence_ids': ['issue-report', 'verification-feedback'], 'issue': issue,
         'editable_paths': editable, 'protected_paths': protected,
         'feedback': deepcopy(feedback), 'round': number,
         'provenance': 'provider_output_unattested' if bound else 'scripted_simulation_not_observed_execution'}
-    if proposal_contract == 'v2':
-        binding.update(proposal_contract='v2', output_contract=contract)
+    if proposal_contract in ('v2','v3'):
+        binding.update(proposal_contract=proposal_contract, output_contract=contract)
     # Persist/reload must produce byte-identical request content, including nested feedback.
     binding = load_json(encode_bounded(binding, CAP).decode(), max_bytes=CAP, max_depth=24)
     request = PatchAgent.bound_request({p: b.decode() for p, b in sorted(files.items())}, binding)
@@ -234,7 +237,7 @@ def _request(files, issue, editable, protected, feedback, number, *, strategy='a
         'Non-candidate statuses require empty edits. The complete JSON response is at most 65536 UTF-8 bytes.')
     if bound:
         request.metadata = {'prompt_version':'debugger-bound-repair-feedback-v2', 'strategy':strategy}
-    if proposal_contract == 'v2':
+    if proposal_contract in ('v2','v3'):
         old = 'status (candidate/no_candidate/insufficient_evidence)'
         _require(old in request.messages[0]['content'], 'proposal_prompt_binding')
         request.messages[0]['content'] = request.messages[0]['content'].replace(
@@ -243,9 +246,35 @@ def _request(files, issue, editable, protected, feedback, number, *, strategy='a
             ' finalize_current requires a previously accepted candidate and empty edits. '
             'It retains that current candidate without another verification or any claim of success. '
             'no_candidate and insufficient_evidence withdraw the answer instead of retaining a candidate.')
-        request.metadata.update(proposal_contract='v2', prompt_version='debugger-bound-repair-feedback-v3')
+        request.metadata.update(proposal_contract=proposal_contract,
+            prompt_version=('debugger-bound-repair-feedback-v3' if proposal_contract=='v2'
+                            else 'debugger-bound-repair-public-feedback-v1'))
     _require(len(encode_bounded(asdict(request), CAP)) <= 98304, 'request_size')
     return request
+
+
+def _public_feedback(record, names):
+    """Expose only source-linked public outcomes, never raw verifier records."""
+    _require(type(record) is dict and type(record.get('source_id')) is str
+        and len(record['source_id'])==64 and all(c in '0123456789abcdef' for c in record['source_id'])
+        and record.get('origin') in ('synthetic_replay','unavailable')
+        and type(record.get('result')) is dict, 'public_feedback_contract')
+    result=record['result'];state=result.get('execution_status');observed=result.get('observed_status')
+    _require(state in ('completed','timeout','resource_limit','error','blocked','cancelled','outcome_unknown')
+        and observed in ('passed','failed','skipped','zero_tests','unknown','not_applicable'),
+        'public_feedback_status')
+    outcomes=record.get('outcomes');counts=None
+    _require(type(outcomes) is dict, 'public_feedback_outcomes')
+    if state=='completed':
+        _require(set(outcomes)==set(names) and all(v in ('passed','failed') for v in outcomes.values()),
+                 'public_feedback_outcomes')
+        failed=sum(v=='failed' for v in outcomes.values())
+        counts={'passed':len(names)-failed,'failed':failed,'executed':len(names),'collected':len(names)}
+        _require(observed==('failed' if failed else 'passed'), 'public_feedback_status')
+    else:
+        _require(outcomes=={}, 'public_feedback_outcomes')
+    return {'source_id':record['source_id'],'origin':record['origin'],'execution_status':state,
+        'observed_status':observed,'outcomes':{n:outcomes[n] for n in sorted(outcomes)},'test_counts':counts}
 
 
 def parse_proposal_content(content, *, proposal_contract='v1'):
@@ -354,8 +383,17 @@ def _initial_stop(record, config):
 def _candidate_stop(record, config):
     if config['strategy'] == 'direct_api': return None
     status = _check_stop(record)
-    if status is None and record['result']['observed_status'] == 'passed': return 'simulation_passed'
+    if status is None and config['strategy']=='api_debugger' and record['result']['observed_status'] == 'passed': return 'simulation_passed'
     return status
+
+
+def _validate_strategy(strategy, proposal_contract):
+    _require(strategy in ('direct_api','api_debugger','api_test_feedback'), 'strategy')
+    _require(strategy!='api_test_feedback' or proposal_contract=='v3', 'feedback_strategy_contract')
+
+
+def _continuing_status(strategy):
+    return 'candidate_unverified' if strategy in ('direct_api','api_test_feedback') else 'candidate_failed'
 
 
 def _response(raw):
@@ -378,8 +416,8 @@ def _run_loop(repo, issue, *, editable_paths, test_paths, provider, verifier, ou
     _require(provider is None or type(provider) is ScriptedPatchProvider or bound, 'provider_binding_required')
     initial_meter=provider.snapshot() if bound else None
     if initial_meter is not None and initial_meter.get('remote_enabled') is True:
-        _require(proposal_contract=='v2','remote_proposal_contract_required')
-    _require(strategy in ('direct_api', 'api_debugger'), 'strategy')
+        _require(proposal_contract in ('v2','v3'),'remote_proposal_contract_required')
+    _validate_strategy(strategy, proposal_contract)
     _require(type(task_id) is str and 0 < len(task_id) <= 128, 'task_id')
     _require(verifier is None or type(verifier) is ReplayVerifier, 'simulation_verifier_only')
     if strategy == 'direct_api': verifier = None  # No in-generation validation advantage for the baseline.
@@ -407,7 +445,7 @@ def _run_loop(repo, issue, *, editable_paths, test_paths, provider, verifier, ou
         'provider_available': provider is not None, 'verifier_available': verifier is not None,
         'strategy':strategy, 'task_id':task_id, 'provider_config':deepcopy(provider.config) if bound else None,
         'provider_enabled':provider.enabled if bound else provider is not None}
-    if proposal_contract == 'v2': config['proposal_contract'] = 'v2'
+    if proposal_contract in ('v2','v3'): config['proposal_contract'] = proposal_contract
     if bound:
         if initial_meter['schema']=='macr.repair.provider-meter.v2':
             config['provider_runtime']={'spend_commitment':deepcopy(initial_meter['spend_commitment']),
@@ -499,9 +537,9 @@ def _run_loop(repo, issue, *, editable_paths, test_paths, provider, verifier, ou
         accepted_candidates += 1
         feedback = check(current, attempts)
         status = _candidate_stop(feedback, config)
-        row['status'] = status or ('candidate_unverified' if strategy == 'direct_api' else 'candidate_failed')
+        row['status'] = status or _continuing_status(strategy)
         _write(out, folder+'/event.json', row)
-    status = status or ('candidate_unverified' if strategy == 'direct_api' else 'round_limit')
+    status = status or ('candidate_unverified' if strategy in ('direct_api','api_test_feedback') else 'round_limit')
     meter = provider.snapshot() if bound else None
     if meter is not None: _write(out, 'provider-accounting.json', meter)
     total_seconds = time.monotonic()-started
@@ -539,6 +577,7 @@ def verify_loop(out):
     out = _root(out); report = _read(out, 'report.json'); claim = _read(out, 'claim.json')
     config = claim['config']
     output_contract(config.get('proposal_contract','v1'))
+    _validate_strategy(config['strategy'],config.get('proposal_contract','v1'))
     bound = config.get('provider_config') is not None
     runtime=_runtime_reference(config)
     official=runtime is not None and runtime['remote_enabled']
@@ -648,10 +687,10 @@ def verify_loop(out):
                         files = changed; feedback = report['checks'][i]; used_checks += 1
                         accepted_candidates += 1
                         status = _candidate_stop(feedback, config)
-        _require(row['status'] == (status or ('candidate_unverified' if config['strategy'] == 'direct_api' else 'candidate_failed')), 'round_status')
+        _require(row['status'] == (status or _continuing_status(config['strategy'])), 'round_status')
     if status is None:
         if len(report['rounds']) == config['max_rounds']:
-            status = 'candidate_unverified' if config['strategy'] == 'direct_api' else 'round_limit'
+            status = 'candidate_unverified' if config['strategy'] in ('direct_api','api_test_feedback') else 'round_limit'
         elif not config['provider_enabled'] and config['provider_available']:
             status = 'provider_disabled'
         elif inputs + (config['provider_config']['limits']['max_input_per_request'] if bound else 8192) > config['max_total_input_tokens'] or outputs + (config['provider_config']['limits']['max_output_per_request'] if bound else 1024) > config['max_total_output_tokens']:

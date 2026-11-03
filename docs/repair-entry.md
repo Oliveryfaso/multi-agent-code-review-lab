@@ -63,13 +63,14 @@ and ordered `cells`, each containing exactly `cell_id` and `binding_sha256`.
 complete neutral task, strategy, common configuration and output contract; it
 excludes the output directory. Plan/task/configuration/version mismatches,
 expired plans and ledger overlap with source/output fail before claim or Key
-input. A plan is a local limit and integrity record, not user authorization or
+input. Explicit v3 is also supported; its output-contract digest and strategy
+must match the frozen cell. A plan is a local limit and integrity record, not user authorization or
 permission to bypass the platform's network controls.
 
 Only `https://api.deepseek.com/chat/completions` is available, through the existing
 bounded stdlib transport, normal TLS validation, no environment proxies,
 redirects or retries. No real validator is supported by the CLI yet:
-`api_debugger` reports `verification_unavailable` without opening/claiming the
+`api_debugger` and `api_test_feedback` report `verification_unavailable` without opening/claiming the
 ledger, reading a Key or requesting HTTP. A synthetic replay cannot unlock it.
 `direct_api` can record a candidate, not verify or execute it.
 
@@ -122,18 +123,18 @@ normal Debugger stops before a model request. The existing replay verifier can
 only be injected by trusted tests and remains synthetic; there is no saved-replay
 CLI argument or backend fallback. No host subprocess substitutes for isolation.
 
-For evaluation, a one-call API is only a reference. A competitive iterative API
-baseline must receive the same public-test feedback, edit permissions and
-budgets. The current two strategies do not yet include a separate feedback
-baseline controlled by the model. That baseline should allow self-review or
-explicit finalization after public tests pass; `api_debugger` currently stops
-automatically on that pass. Comparing these policies would measure this specific
-early-stop quality/resource tradeoff, with the same final independent tests.
-It would not establish a general orchestration benefit. The third profile and
-paired reporting need explicit implementation before such a comparison;
-failures and unrun cells must remain in its planned denominator.
+For evaluation, a one-call API is only a reference. The explicit v3 strategy
+`api_test_feedback` is a competitive iterative API baseline receiving the same
+public-test feedback, edit permissions and budgets as `api_debugger`. It lets
+the model continue, finalize or withdraw after a public test pass; Debugger
+stops automatically on that pass. Comparing these policies measures this
+specific early-stop quality/resource tradeoff, with the same final independent
+tests. It does not establish a general orchestration benefit. The normal
+`repair-comparison` CLI supports a versioned three-arm frozen plan, pending
+handoff and full-denominator report; see [repair-comparison.md](repair-comparison.md).
+Neither feedback strategy currently has a permitted real verification backend.
 
-Use `--proposal-contract v2` for an explicit retain-and-finish action in either
+Use `--proposal-contract v2` for an explicit retain-and-finish action in either original
 strategy. After an accepted candidate, `finalize_current` requires empty edits
 and the current source/evidence bindings. It consumes its normal model request,
 preserves the candidate without another check and reports `candidate_finalized`,
@@ -142,7 +143,11 @@ pending scoring handoff. A first-round finalize, stale binding or dispatch after
 finalize is rejected. `no_candidate` and `insufficient_evidence` still withdraw
 the candidate. Legacy v1 remains the default with unchanged request bytes; it
 lacks this action and must not be used as a strong iterative baseline. New v2
-comparisons must bind the v2 output-contract digest for both strategies.
+comparisons must bind the v2 output-contract digest for both strategies. V3
+retains those actions and bounds while providing the common allowlisted public
+feedback view for three-arm comparisons. The third strategy requires v3; all
+three arms in a new comparison must share its digest. Old V1/V2 request bytes
+and saved comparisons are not rewritten.
 
 ## Source and scoring boundary
 

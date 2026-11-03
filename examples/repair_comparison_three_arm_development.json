@@ -1,0 +1,37 @@
+{
+  "schema": "macr.repair-comparison.spec.v2",
+  "comparison_id": "three-policy-development-contract-only",
+  "purpose": "development_contract_only",
+  "tasks": [
+    {
+      "task_id": "self-authored-development",
+      "snapshot_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+      "issue_sha256": "2222222222222222222222222222222222222222222222222222222222222222",
+      "visible_tests_sha256": "3333333333333333333333333333333333333333333333333333333333333333",
+      "initial_context_sha256": "4444444444444444444444444444444444444444444444444444444444444444"
+    }
+  ],
+  "model": {
+    "configuration_sha256": "5555555555555555555555555555555555555555555555555555555555555555",
+    "output_contract_sha256": "c26507449d31951d824e500372a6f5f1d491cd3e08ab7e1dd6d5542b6961bdcc",
+    "identity_policy": "strict_run_fingerprint"
+  },
+  "limits": {
+    "max_requests": 3,
+    "input_tokens": 10000,
+    "output_tokens": 2000,
+    "max_usd": "0.100000"
+  },
+  "scoring": {
+    "rubric_sha256": "7777777777777777777777777777777777777777777777777777777777777777",
+    "hidden_tests_sha256": "8888888888888888888888888888888888888888888888888888888888888888",
+    "custodian_commitment_sha256": "9999999999999999999999999999999999999999999999999999999999999999",
+    "generation_access": "excluded"
+  },
+  "repeats": 1,
+  "order_seed": 20261103,
+  "initial_evidence": "identical_full_source_issue_visible_tests",
+  "contrast": "feedback_and_public_pass_stop_policy",
+  "same_evidence_auxiliary": null,
+  "stop_policy": "unknown_identity_or_cost_halts_no_retry"
+}

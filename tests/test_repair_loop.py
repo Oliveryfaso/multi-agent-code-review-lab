@@ -16,6 +16,107 @@ from macr.providers.base import ProviderError
 
 
 class RepairLoopTests(TestCase):
+    def three_profile_loop(self, replies, observations, *, strategy='api_test_feedback', max_rounds=3):
+        self.out = fixture_root()/'three-profile-run'
+        self.provider = loop.ScriptedPatchProvider(replies)
+        self.verifier = None if observations is None else loop.ReplayVerifier(observations)
+        return loop._run_loop(self.repo,'Discount applies only to items.',
+            editable_paths=['app.py','builder.py','records.py'],test_paths=['checks.py'],
+            provider=self.provider,verifier=self.verifier,out=self.out,max_rounds=max_rounds,
+            max_total_input_tokens=24576,max_total_output_tokens=3072,
+            strategy=strategy,proposal_contract='v3')
+
+    def test_v3_feedback_baseline_keeps_last_candidate_and_model_finalize(self):
+        fixed=dict(self.files);fixed['builder.py']=fixed['builder.py'].replace(OLD.encode(),NEW.encode())
+        replies=[self.proposal(),self.proposal(old=NEW,new=OLD),
+                 {'status':'finalize_current','summary':'Retain latest candidate.','edits':[]}]
+        observations=[self.observation(self.files,self.tests),self.observation(fixed),
+                      self.observation(self.files,self.tests)]
+        result=self.three_profile_loop(replies,observations)
+        self.assertEqual((result['status'],result['proposal_requests']),('candidate_finalized',3))
+        self.assertEqual(self.verifier.calls,3)
+        self.assertEqual(result['final_source_id'],loop.source_id(self.files))
+        self.assertNotEqual(result['final_source_id'],result['rounds'][0]['candidate_source_id'])
+        self.assertEqual(result,loop.verify_loop(self.out))
+        requests=deepcopy(self.provider.requests)
+        debugger=self.three_profile_loop(replies,observations,strategy='api_debugger')
+        self.assertEqual((debugger['status'],debugger['proposal_requests']),('simulation_passed',1))
+        self.assertEqual(self.verifier.calls,2)
+        self.assertEqual(json.loads(requests[0]['messages'][1]['content'])['feedback'],
+                         json.loads(self.provider.requests[0]['messages'][1]['content'])['feedback'])
+
+    def test_v3_feedback_cap_keeps_candidate_but_never_claims_pass(self):
+        fixed=dict(self.files);fixed['builder.py']=fixed['builder.py'].replace(OLD.encode(),NEW.encode())
+        result=self.three_profile_loop([self.proposal()],[self.observation(self.files,self.tests),
+            self.observation(fixed)],max_rounds=1)
+        self.assertEqual(result['status'],'candidate_unverified')
+        self.assertEqual(result['proposal_requests'],1)
+        self.assertFalse(result['repaired']);self.assertFalse(result['target_code_executed'])
+        self.assertEqual(result,loop.verify_loop(self.out))
+
+    def test_v3_feedback_requires_verifier_and_preserves_explicit_withdrawal(self):
+        result=self.three_profile_loop([self.proposal()],None)
+        self.assertEqual((result['status'],result['proposal_requests']),('verification_unavailable',0))
+        for terminal in ('no_candidate','insufficient_evidence'):
+            result=self.three_profile_loop([{'status':terminal,'summary':'Withdraw.','edits':[]}],
+                [self.observation(self.files,self.tests)])
+            self.assertEqual(result['status'],terminal)
+        with self.assertRaises(ContractError):
+            self.versioned_loop([self.proposal()],strategy='api_test_feedback',proposal_contract='v2')
+
+    def test_v3_feedback_invalid_termination_and_verification_stop_do_not_continue(self):
+        result=self.three_profile_loop([{'status':'finalize_current','summary':'No prior candidate.','edits':[]}],
+            [self.observation(self.files,self.tests)])
+        self.assertEqual((result['status'],result['proposal_requests']),('proposal_invalid',1))
+        fixed=dict(self.files);fixed['builder.py']=fixed['builder.py'].replace(OLD.encode(),NEW.encode())
+        result=self.three_profile_loop([self.proposal(),self.proposal(old=NEW,new=OLD)],
+            [self.observation(self.files,self.tests),self.observation(fixed,status='timeout')])
+        self.assertEqual((result['status'],result['proposal_requests']),('verification_timeout',1))
+        self.assertEqual(len(self.provider.replies),1)
+        self.assertEqual(result,loop.verify_loop(self.out))
+        claim=loop._read(self.out,'claim.json');claim['config']['proposal_contract']='v2'
+        loop._write(self.out,'claim.json',claim)
+        with self.assertRaises(ContractError) as raised:loop.verify_loop(self.out)
+        self.assertEqual(raised.exception.field,'feedback_strategy_contract')
+
+    def test_v3_public_projection_excludes_raw_check_paths_and_extra_details(self):
+        fixed=dict(self.files);fixed['builder.py']=fixed['builder.py'].replace(OLD.encode(),NEW.encode())
+        self.three_profile_loop([self.proposal(),{'status':'finalize_current','summary':'Keep.','edits':[]}],
+            [self.observation(self.files,self.tests),self.observation(fixed)])
+        feedback=json.loads(self.provider.requests[1]['messages'][1]['content'])['feedback']
+        self.assertEqual(set(feedback),{'source_id','origin','execution_status','observed_status',
+                                        'outcomes','test_counts'})
+        self.assertEqual(feedback['source_id'],loop.source_id(fixed))
+        self.assertEqual(feedback['test_counts'],{'passed':len(self.tests),'failed':0,
+            'executed':len(self.tests),'collected':len(self.tests)})
+        check=loop._read(self.out,'checks/1/receipt.json')
+        check['result'].update(stdout_ref='/private/HOST-SECRET',details='HIDDEN-EXTRA')
+        check['observation']['hidden']='HIDDEN-EXTRA'
+        request=loop._request(fixed,'Public issue',['builder.py'],['checks.py'],check,2,
+            strategy='api_test_feedback',bound=True,proposal_contract='v3')
+        encoded=json.dumps(request.messages)
+        self.assertNotIn('HOST-SECRET',encoded);self.assertNotIn('HIDDEN-EXTRA',encoded)
+        self.assertNotIn(str(self.out),encoded)
+        self.assertEqual(json.loads(request.messages[1]['content'])['feedback'],feedback)
+        check['source_id']='0'*64
+        with self.assertRaises(ContractError):
+            loop._request(fixed,'Issue',['builder.py'],['checks.py'],check,2,
+                strategy='api_test_feedback',proposal_contract='v3')
+
+    def test_v2_request_bytes_remain_unchanged_with_v3_available(self):
+        from dataclasses import asdict
+        expected={'direct_api:False':'580f5882a37c02b4cefffb8a54bd6754d18efaf43eaf0c828aa99cb6d829d27a',
+            'direct_api:True':'56f99e066ee722eb6e1ee39a5c686d8e72b959c42bb92b928aee575cdb5ceb54',
+            'api_debugger:False':'48ec648c563c2a2d6a684382ff17778f8671bc473b39c74cfa8f2dff78f27f7e',
+            'api_debugger:True':'5a1a281ef4e93c05a6c18f37fe2ed4a5c70c483ad19fc61d88ebcc74302142e3'}
+        self.assertEqual(loop.digest(loop.output_contract('v2')),
+                         '4cbfe4afe745df551a61b1a45dd009528e7a7497ba68be344dac8651ee2cbbcb')
+        for strategy in ('direct_api','api_debugger'):
+            for bound in (False,True):
+                request=loop._request(self.files,'Legacy byte-compatibility fixture.',
+                    ['builder.py'],['checks.py'],{},1,strategy=strategy,bound=bound,proposal_contract='v2')
+                self.assertEqual(loop.digest(asdict(request)),expected[strategy+':'+str(bound)])
+
     def test_legacy_record_cannot_claim_configured_http_provenance(self):
         self.run_loop([], [self.observation(self.files)])
         original=loop._read(self.out,'report.json')

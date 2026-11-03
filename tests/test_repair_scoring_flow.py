@@ -261,3 +261,38 @@ class RepairScoringFlowTests(unittest.TestCase):
         report = comparison.build_report(self.plan, {self.cell['cell_id']: packet['result']})
         self.assertEqual(report['arms']['direct_api']['outcomes']['necessary_abstention'], 0)
         self.assertEqual(report['arms']['direct_api']['unscored'], 1)
+
+    def test_three_arm_v3_feedback_finalize_handoff_keeps_last_candidate_unscored(self):
+        from macr.investigation.repair_loop import output_contract, digest
+        self.spec.update(schema='macr.repair-comparison.spec.v2',
+                         contrast='feedback_and_public_pass_stop_policy')
+        self.spec['model']['output_contract_sha256']=digest(output_contract('v3'))
+        self.plan=comparison.compile_comparison(self.spec)
+        self.cell=next(c for c in self.plan['cells'] if c['arm']=='api_test_feedback')
+        self.row['output_contract_sha256']=self.spec['model']['output_contract_sha256']
+        end={'status':'finalize_current','base_content_id':source_id(self.changed),'edits':[]}
+        chain=[{'status':'candidate','base_content_id':source_id(self.files),'edits':self.edits},end]
+        self.row.update(requests=2,feedback_validation_attempts=2,
+                        final_output_sha256=comparison.result_digest(end))
+        packet=self.packet(edits=None,final_output=end,proposal_chain=chain)
+        self.assertEqual(packet['schema'],'macr.repair-comparison.score-packet.v2')
+        self.assertEqual(packet['cell']['arm'],'api_test_feedback')
+        self.assertEqual(packet['candidate_files']['app.py'].encode(),self.changed['app.py'])
+        self.assertEqual(packet['final_output'],end)
+        self.assertIsNone(packet['result']['review'])
+        report=comparison.build_report(self.plan,{self.cell['cell_id']:packet['result']})
+        self.assertEqual(report['arms']['api_test_feedback']['scored'],0)
+        self.assertEqual(report['arms']['api_test_feedback']['completion_bounds']['unresolved'],1)
+        chain[-1]=dict(end,edits=self.edits)
+        with self.assertRaises(ValueError):self.packet(edits=None,final_output=chain[-1],proposal_chain=chain)
+
+    def test_v1_plan_does_not_gain_v3_finalize_behavior(self):
+        from macr.investigation.repair_loop import output_contract, digest
+        self.spec['model']['output_contract_sha256']=digest(output_contract('v3'))
+        self.plan=comparison.compile_comparison(self.spec);self.cell=self.plan['cells'][0]
+        self.row['output_contract_sha256']=self.spec['model']['output_contract_sha256']
+        end={'status':'finalize_current','base_content_id':source_id(self.changed),'edits':[]}
+        chain=[{'status':'candidate','base_content_id':source_id(self.files),'edits':self.edits},end]
+        self.row.update(requests=2,final_output_sha256=comparison.result_digest(end))
+        with self.assertRaisesRegex(ValueError,'comparison_score_finalize_contract'):
+            self.packet(edits=None,final_output=end,proposal_chain=chain)

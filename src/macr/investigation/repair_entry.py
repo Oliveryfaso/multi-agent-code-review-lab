@@ -16,10 +16,10 @@ def add_parser(subparsers):
     parser.add_argument('--task', required=True, type=Path, help='Strict neutral task JSON; never a scoring or private-answer path.')
     parser.add_argument('--model-config', required=True, type=Path, help='Nonsecret shared model, limits and declared price schedule.')
     parser.add_argument('--out', required=True, type=Path, help='New exclusive local record directory.')
-    parser.add_argument('--strategy', choices=('direct_api','api_debugger'), default='api_debugger')
-    parser.add_argument('--proposal-contract', choices=('v1','v2'), default='v1',
-                        help='v2 explicitly allows retaining the current candidate; legacy v1 is unchanged.')
-    parser.add_argument('--enable-remote',action='store_true',help='Explicit official HTTP mode; requires v2 and a durable spend plan/cell.')
+    parser.add_argument('--strategy', choices=('direct_api','api_test_feedback','api_debugger'), default='api_debugger')
+    parser.add_argument('--proposal-contract', choices=('v1','v2','v3'), default='v1',
+                        help='v2 allows explicit retention; v3 shares public feedback with the test-feedback baseline.')
+    parser.add_argument('--enable-remote',action='store_true',help='Explicit official HTTP mode; requires v2/v3 and a durable spend plan/cell.')
     parser.add_argument('--spend-plan',type=Path,help='Nonsecret frozen spend plan; never a credential file.')
     parser.add_argument('--spend-cell',help='One exact planned cell; replay in another output directory is forbidden.')
 
@@ -72,7 +72,7 @@ def spend_binding_sha256(task,strategy,config,*,proposal_contract='v2'):
     from . import repair_loop as loop
     from macr.providers.repair_binding import validate_config
     loop._require(type(task) is dict and set(task)==_TASK_FIELDS,'neutral_task_contract')
-    loop._require(strategy in ('direct_api','api_debugger'),'strategy')
+    loop._validate_strategy(strategy,proposal_contract)
     return loop.digest({'task':task,'strategy':strategy,
         'configuration_sha256':loop.digest(validate_config(config)),
         'output_contract_sha256':loop.digest(loop.output_contract(proposal_contract))})
@@ -229,7 +229,7 @@ def score_handoff(record_root, plan, cell_id):
             'simulation' if report['verification_origin']=='synthetic_replay' else 'unavailable'),
             requests=meter['requests'],input_tokens=report['input_tokens'],output_tokens=report['output_tokens'],
             known_usd=meter['known_usd'],unknown_reserved_usd=meter['unknown_reserved_usd'],
-            feedback_validation_attempts=len(report['checks']) if config['strategy']=='api_debugger' else 0)
+            feedback_validation_attempts=len(report['checks']) if config['strategy'] in ('api_debugger','api_test_feedback') else 0)
         identity=meter['calls'][-1]['identity']
         row['model_identity_sha256']=(loop.digest(identity) if identity
             and identity['model_state']=='validated' and identity['fingerprint_state']=='validated'
@@ -274,12 +274,13 @@ def run(args):
     try:
         complete=remote and getattr(args,'spend_plan',None) is not None and getattr(args,'spend_cell',None) is not None
         requested=remote or getattr(args,'spend_plan',None) is not None or getattr(args,'spend_cell',None) is not None
-        repair_loop._require(not requested or (complete and args.proposal_contract=='v2'),'repair_remote_scope_required')
+        repair_loop._validate_strategy(args.strategy,args.proposal_contract)
+        repair_loop._require(not requested or (complete and args.proposal_contract in ('v2','v3')),'repair_remote_scope_required')
         task = load_task(args.repo,args.task)
         config = validate_config(_json(args.model_config))
         if remote:
             plan,binding=_runtime_plan(args,task,config)
-            if args.strategy=='api_debugger':
+            if args.strategy in ('api_debugger','api_test_feedback'):
                 # No supported real verifier exists. A synthetic replay is not
                 # authority to consume a live cell or read a credential.
                 state['spend_status']='not_opened_no_verifier'

@@ -13,6 +13,167 @@ except ModuleNotFoundError:
 EXAMPLE = Path(__file__).resolve().parents[1] / 'examples/repair_comparison_development.json'
 
 
+class ThreeArmComparisonTests(unittest.TestCase):
+    """Synthetic receipt arithmetic only; none of these rows attest execution."""
+    arms = ('direct_api', 'api_test_feedback', 'api_debugger')
+    contrast = 'feedback_and_public_pass_stop_policy'
+
+    def spec(self, tasks=8, repeats=1):
+        from macr.investigation.repair_loop import output_contract, digest
+        spec = json.loads(EXAMPLE.read_text())
+        spec.update(schema='macr.repair-comparison.spec.v2', contrast=self.contrast,
+                    repeats=repeats)
+        contract = deepcopy(output_contract('v2'))
+        contract['version'] = 'macr.repair.bound-proposal.v3'
+        spec['model']['output_contract_sha256'] = digest(contract)
+        spec['tasks'] = [dict(task_id='case-'+str(n), **{key:comparison.result_digest([key,n])
+            for key in ('snapshot_sha256','issue_sha256','visible_tests_sha256','initial_context_sha256')})
+            for n in range(tasks)]
+        return spec
+
+    def row(self, spec, cell, outcome='full_repair', *, status='answer_recorded', reviewed=True):
+        task = next(t for t in spec['tasks'] if t['task_id']==cell['task_id'])
+        row = comparison._empty(task, spec)
+        row.update(status=status, candidate_origin='model', verification_origin='isolated_execution',
+            requests=1,input_tokens=40,output_tokens=20,known_usd='0.001000',
+            model_identity_sha256='a'*64)
+        if status=='answer_recorded':
+            row.update(verdict='defect' if outcome!='necessary_abstention' else 'unknown',
+                final_output_sha256='b'*64,candidate_sha256='c'*64 if outcome!='necessary_abstention' else None,
+                verification_receipt_sha256='d'*64)
+            if reviewed:
+                row['review']={'status':'locked','source':'independent_custodian',
+                    'rubric_sha256':spec['scoring']['rubric_sha256'],
+                    'hidden_tests_sha256':spec['scoring']['hidden_tests_sha256'],
+                    'result_sha256':comparison.result_digest(row),'outcome':outcome}
+        return row
+
+    def test_v1_canonical_plan_report_and_generation_remain_unchanged(self):
+        spec=json.loads(EXAMPLE.read_text());plan=comparison.compile_comparison(spec)
+        self.assertEqual(comparison.result_digest(plan),'25f3ca6df927bbd25334c9e1480b64fdf1c5241d4c73f3e3f18a39148c2d000e')
+        self.assertEqual(comparison.result_digest(comparison.build_report(plan,{})),
+            '904d5ef541b831807633ab93bfb107d13d51972a065d21e3ff80dc1b054053eb')
+        self.assertEqual(comparison.result_digest(comparison.generation_view(plan,spec['tasks'][0]['task_id'])),
+            'f422d969be82338448a16e89d93643b27e0b5f72bc96317ac5b12fe30f56045b')
+
+    def test_v2_three_arm_order_is_frozen_and_balanced_without_extra_authority(self):
+        for tasks in (1,2,3,5,6,8):
+            spec=self.spec(tasks=tasks,repeats=2)
+            try: plan=comparison.compile_comparison(spec)
+            except ValueError as error: self.fail('explicit three-arm v2 should compile: '+str(error))
+            self.assertEqual(plan['schema'],'macr.repair-comparison.plan.v2')
+            self.assertEqual(plan['planned_cells'],tasks*2*3)
+            self.assertEqual(plan['max_requests'],tasks*2*9)
+            self.assertEqual(set(plan['arms']),set(self.arms))
+            orders=[tuple(c['arm'] for c in plan['cells'][n:n+3]) for n in range(0,len(plan['cells']),3)]
+            for pos in range(3):
+                counts=[sum(order[pos]==arm for order in orders) for arm in self.arms]
+                self.assertLessEqual(max(counts)-min(counts),1)
+            if len(orders)>=6:self.assertEqual(len(set(orders[:6])),6)
+            self.assertFalse(plan['remote_enabled']);self.assertFalse(plan['execution_authorized'])
+            self.assertEqual(comparison.validate_comparison(plan),plan)
+            self.assertEqual(comparison.compile_comparison(spec),plan)
+            plan['cells'][0],plan['cells'][1]=plan['cells'][1],plan['cells'][0]
+            with self.assertRaises(ValueError):comparison.validate_comparison(plan)
+
+    def test_v2_rejects_task_content_aliases_old_contracts_and_unfair_request_ceiling(self):
+        for mutate in (lambda s:s['tasks'].append(dict(s['tasks'][0],task_id='alias')),
+                lambda s:s['model'].update(output_contract_sha256='1'*64),
+                lambda s:s['limits'].update(max_requests=4)):
+            spec=self.spec();mutate(spec)
+            with self.subTest(mutate=mutate),self.assertRaises(ValueError):comparison.compile_comparison(spec)
+
+    def test_large_proposal_does_not_claim_current_spend_ledger_can_execute_it(self):
+        for tasks,fits in ((21,True),(24,False)):
+            spec=self.spec(tasks=tasks,repeats=2);plan=comparison.compile_comparison(spec)
+            self.assertEqual(plan['current_spend_capacity']['fits'],fits)
+            self.assertEqual(plan['current_spend_capacity']['max_cells'],128)
+            self.assertEqual(plan['current_spend_capacity']['max_requests'],384)
+            self.assertFalse(plan['execution_authorized'])
+            if not fits:
+                self.assertEqual((plan['planned_cells'],plan['max_requests']),(144,432))
+                self.assertEqual(comparison.build_report(plan,{})['planned_cells'],144)
+
+    def test_v2_generation_capsule_is_detached_and_excludes_scoring(self):
+        spec=self.spec();plan=comparison.compile_comparison(spec)
+        view=comparison.generation_view(plan,spec['tasks'][0]['task_id'])
+        self.assertEqual(view['schema'],'macr.repair-comparison.generation.v2')
+        self.assertEqual(set(view),{'schema','task','model','limits'})
+        self.assertNotIn('scoring',json.dumps(view));self.assertNotIn('hidden_tests',json.dumps(view))
+        view['limits']['max_requests']=1
+        self.assertEqual(plan['spec']['limits']['max_requests'],3)
+
+    def test_missing_and_pending_results_are_unresolved_not_zero_effect_ties(self):
+        spec=self.spec();plan=comparison.compile_comparison(spec)
+        for results in ({},{c['cell_id']:self.row(spec,c,reviewed=False) for c in plan['cells']}):
+            report=comparison.build_report(plan,results)
+            self.assertEqual(report['schema'],'macr.repair-comparison.report.v2')
+            self.assertEqual(report['planned_cells'],24)
+            for arm in self.arms:
+                completion=report['arms'][arm]['completion_bounds']
+                self.assertEqual(completion['observed_successes'],0)
+                self.assertEqual(completion['unresolved'],8)
+                self.assertEqual(completion['rate_bounds'],[0.0,1.0])
+            for contrast in report['contrasts'].values():
+                self.assertEqual(contrast['conditional_quality']['tie'],0)
+                self.assertEqual(contrast['conditional_quality']['not_comparable'],8)
+                self.assertIsNone(contrast['task_cluster']['point_difference'])
+                self.assertEqual(contrast['task_cluster']['difference_bounds'],[-1.0,1.0])
+                self.assertEqual(contrast['uncertainty']['interval'],[-1.0,1.0])
+
+    def test_definite_failures_keep_all_denominators_without_correct_ties(self):
+        spec=self.spec();plan=comparison.compile_comparison(spec)
+        results={c['cell_id']:self.row(spec,c,status='contract_failed') for c in plan['cells']}
+        report=comparison.build_report(plan,results)
+        for stats in report['arms'].values():
+            self.assertEqual(stats['planned'],8)
+            self.assertEqual(stats['statuses']['contract_failed'],8)
+            self.assertEqual(stats['completion_bounds']['definite_noncompletions'],8)
+            self.assertEqual(stats['completion_bounds']['observed_successes'],0)
+            self.assertEqual(stats['outcomes']['full_repair'],0)
+        for contrast in report['contrasts'].values():
+            self.assertEqual(contrast['conditional_quality']['tie'],0)
+            self.assertEqual(contrast['e2e_pair_states']['both_noncompletion'],8)
+            self.assertEqual(contrast['task_cluster']['point_difference'],0.0)
+            self.assertGreater(contrast['uncertainty']['interval'][1],0)
+        self.assertFalse(report['semantic_truth_validated'])
+
+    def test_repeat_aggregation_preserves_task_count_and_uncertainty_width(self):
+        reports=[]
+        for repeats in (1,4):
+            spec=self.spec(repeats=repeats);plan=comparison.compile_comparison(spec)
+            results={c['cell_id']:self.row(spec,c,outcome='partial' if c['arm']=='api_debugger' else 'full_repair')
+                     for c in plan['cells']}
+            reports.append(comparison.build_report(plan,results))
+        for report in reports:
+            contrast=report['contrasts']['api_debugger_vs_api_test_feedback']
+            self.assertEqual(contrast['task_cluster']['independent_tasks_assumed'],8)
+            self.assertEqual(contrast['task_cluster']['point_difference'],-1.0)
+            self.assertFalse(report['full_repair_rate_established'])
+        self.assertEqual(reports[0]['contrasts']['api_debugger_vs_api_test_feedback']['uncertainty']['interval'],
+                         reports[1]['contrasts']['api_debugger_vs_api_test_feedback']['uncertainty']['interval'])
+        self.assertEqual(reports[1]['arms']['api_test_feedback']['outcomes']['full_repair'],32)
+
+    def test_unknown_outcome_retains_reserve_and_prohibits_later_dispatch(self):
+        spec=self.spec();plan=comparison.compile_comparison(spec);first=plan['cells'][0]
+        unknown=self.row(spec,first,status='unknown');unknown['unknown_reserved_usd']='0.030000'
+        report=comparison.build_report(plan,{first['cell_id']:unknown})
+        self.assertTrue(report['must_stop']);self.assertEqual(report['unknown_reserved_usd'],'0.030000')
+        later=plan['cells'][1]
+        with self.assertRaisesRegex(ValueError,'comparison_dispatch_after_stop'):
+            comparison.build_report(plan,{first['cell_id']:unknown,later['cell_id']:self.row(spec,later)})
+
+    def test_simulated_or_unattested_rows_cannot_earn_completion_credit(self):
+        spec=self.spec();plan=comparison.compile_comparison(spec);cell=plan['cells'][0]
+        row=self.row(spec,cell);row['candidate_origin']='simulation'
+        with self.assertRaises(ValueError):comparison.build_report(plan,{cell['cell_id']:row})
+        row['review']=None
+        report=comparison.build_report(plan,{cell['cell_id']:row})
+        stats=report['arms'][cell['arm']]
+        self.assertEqual(stats['completion_bounds']['observed_successes'],0)
+        self.assertEqual(stats['completion_bounds']['unresolved'],8)
+
+
 class RepairComparisonTests(unittest.TestCase):
     def setUp(self):
         self.assertIsNotNone(comparison, 'fair repair comparison contract missing')

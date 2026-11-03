@@ -57,6 +57,76 @@ class InterceptedOfficialOpener:
 
 
 class RepairEntryTests(TestCase):
+    def test_v3_feedback_cli_continues_after_public_pass_and_retains_current(self):
+        fixed=dict(self.files);fixed['builder.py']=fixed['builder.py'].replace(OLD.encode(),NEW.encode())
+        names=loop.test_manifest(self.files,['checks.py'])
+        verifier=loop.ReplayVerifier([self.observation(self.files,names),self.observation(fixed)])
+        transport=InterceptedTransport([self.proposal(),
+            {'status':'finalize_current','summary':'Keep candidate without claiming success.','edits':[]}])
+        code,result=self.invoke('api_test_feedback',transport,verifier,proposal_contract='v3')
+        self.assertEqual((code,result['status']),(0,'candidate_finalized'))
+        report=loop.verify_loop(self.out)
+        self.assertEqual((report['provider_requests'],len(report['checks'])),(2,2))
+        self.assertEqual(report['final_source_id'],loop.source_id(fixed))
+        self.assertFalse(report['repaired']);self.assertFalse(report['target_code_executed'])
+
+    def test_v3_feedback_remote_without_verifier_never_claims_or_reads_key(self):
+        plan,path=self.spend_plan(strategy='api_test_feedback',proposal_contract='v3')
+        with patch.object(entry,'_read_runtime_credential',side_effect=AssertionError('no Key')), \
+             patch.object(entry,'_make_runtime_provider',side_effect=AssertionError('no HTTP')):
+            code,result=self.invoke('api_test_feedback',proposal_contract='v3',enable_remote=True,
+                spend_plan=path,spend_cell='one')
+        self.assertEqual((code,result['status']),(2,'verification_unavailable'))
+        self.assertEqual(result['spend_status'],'not_opened_no_verifier')
+        self.assertEqual(result['provider_requests'],0)
+        self.assertFalse(Path(plan['ledger_root']).exists())
+
+    def test_v3_feedback_binding_is_strategy_and_contract_specific(self):
+        binding=entry.spend_binding_sha256(self.task,'api_test_feedback',self.config,proposal_contract='v3')
+        for strategy in ('direct_api','api_debugger'):
+            self.assertNotEqual(binding,entry.spend_binding_sha256(self.task,strategy,self.config,
+                                                                proposal_contract='v3'))
+        from macr.investigation.validation import ContractError
+        with self.assertRaises(ContractError):
+            entry.spend_binding_sha256(self.task,'api_test_feedback',self.config,proposal_contract='v2')
+
+    def test_v3_feedback_score_handoff_preserves_cap_and_finalized_candidates(self):
+        from macr.evals.repair_comparison import compile_comparison
+        fixed=dict(self.files);fixed['builder.py']=fixed['builder.py'].replace(OLD.encode(),NEW.encode())
+        names=loop.test_manifest(self.files,['checks.py'])
+        for finalized in (False,True):
+            with self.subTest(finalized=finalized):
+                self.out=self.root/('v3-handoff-'+str(finalized))
+                self.config['limits']['max_requests']=3 if finalized else 1
+                self.config_file.write_text(json.dumps(self.config))
+                replies=[self.proposal()]
+                if finalized:replies.append({'status':'finalize_current','summary':'Retain.','edits':[]})
+                verifier=loop.ReplayVerifier([self.observation(self.files,names),self.observation(fixed)])
+                code,result=self.invoke('api_test_feedback',InterceptedTransport(replies),verifier,
+                                        proposal_contract='v3')
+                self.assertEqual(code,0)
+                self.assertEqual(result['status'],'candidate_finalized' if finalized else 'candidate_unverified')
+                spec=json.loads((Path(__file__).resolve().parents[1]/'examples/repair_comparison_development.json').read_text())
+                spec.update(schema='macr.repair-comparison.spec.v2',contrast='feedback_and_public_pass_stop_policy')
+                spec['tasks']=[{'task_id':self.task['task_id'],'snapshot_sha256':loop.source_id(self.files),
+                    'issue_sha256':loop.digest(self.task['issue']),
+                    'visible_tests_sha256':loop.source_id({'checks.py':self.files['checks.py']}),
+                    'initial_context_sha256':entry.initial_context_id(self.files,self.task['issue'])}]
+                spec['model']['configuration_sha256']=loop.digest(self.config)
+                spec['model']['output_contract_sha256']=loop.digest(loop.output_contract('v3'))
+                limits=self.config['limits']
+                spec['limits']={'max_requests':limits['max_requests'],'input_tokens':limits['max_total_input_tokens'],
+                    'output_tokens':limits['max_total_output_tokens'],'max_usd':limits['max_usd']}
+                plan=compile_comparison(spec)
+                cell=next(c for c in plan['cells'] if c['arm']=='api_test_feedback')
+                packet=entry.score_handoff(self.out,plan,cell['cell_id'])
+                self.assertEqual(packet['result']['status'],'answer_recorded')
+                self.assertEqual(packet['result']['requests'],2 if finalized else 1)
+                self.assertEqual(packet['result']['feedback_validation_attempts'],2)
+                self.assertEqual(packet['candidate_files']['builder.py'].encode(),fixed['builder.py'])
+                self.assertIsNone(packet['result']['review'])
+                self.assertFalse(packet['semantic_truth_validated'])
+
     def test_official_response_credential_echo_stops_without_persisting_raw_response(self):
         key='DUMMY-ACTIVE-KEY-FIXTURE'
         for escaped in (False,True):
@@ -246,14 +316,15 @@ class RepairEntryTests(TestCase):
         self.assertTrue(output.getvalue(),'Repair CLI must return a structured boundary result.')
         return exited.exception.code, json.loads(output.getvalue())
 
-    def spend_plan(self,*,strategy='direct_api',cells=('one','two')):
+    def spend_plan(self,*,strategy='direct_api',cells=('one','two'),proposal_contract='v2'):
         import time
         plan={'schema':'macr.repair.spend-plan.v1','run_id':'public-runtime-fixture',
             'ledger_root':str(self.root/'durable-spend'),'configuration_sha256':loop.digest(self.config),
-            'output_contract_sha256':loop.digest(loop.output_contract('v2')),
+            'output_contract_sha256':loop.digest(loop.output_contract(proposal_contract)),
             'max_requests':6,'max_usd':'2.000000','max_total_input_tokens':49152,
             'max_total_output_tokens':6144,'expires_at':int(time.time())+600,
-            'cells':[{'cell_id':cell,'binding_sha256':entry.spend_binding_sha256(self.task,strategy,self.config)}
+            'cells':[{'cell_id':cell,'binding_sha256':entry.spend_binding_sha256(self.task,strategy,self.config,
+                                                                           proposal_contract=proposal_contract)}
                      for cell in cells]}
         path=self.root/'spend-plan.json';path.write_text(json.dumps(plan));return plan,path
 

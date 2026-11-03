@@ -36,6 +36,8 @@ def main() -> None:
 
     from macr.investigation.repair_entry import add_parser as add_repair_parser
     add_repair_parser(subparsers)
+    from macr.evals.repair_comparison_entry import add_parser as add_comparison_parser
+    add_comparison_parser(subparsers)
 
     mock_parser = subparsers.add_parser('mock-recovery', help='Synthetic recovery demo only; no production resume, real model, or tool execution.')
     mock_commands = mock_parser.add_subparsers(dest='mock_operation', required=True)
@@ -116,6 +118,9 @@ def main() -> None:
     if args.command == 'repair':
         from macr.investigation.repair_entry import run as run_repair
         raise SystemExit(run_repair(args))
+    if args.command == 'repair-comparison':
+        from macr.evals.repair_comparison_entry import run as run_comparison
+        raise SystemExit(run_comparison(args))
     if args.command == 'mock-recovery':
         from macr.investigation import mock_recovery
         command = [args.mock_operation, '--root=' + str(args.root)]
