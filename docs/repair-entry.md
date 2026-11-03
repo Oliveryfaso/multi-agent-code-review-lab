@@ -149,6 +149,35 @@ feedback view for three-arm comparisons. The third strategy requires v3; all
 three arms in a new comparison must share its digest. Old V1/V2 request bytes
 and saved comparisons are not rewritten.
 
+### Public failure diagnostics (explicit v4)
+
+`--proposal-contract v4` retains v3's proposal actions and budgets, and adds
+structured public-test diagnostics to subsequent model requests. A verifier
+observation may include `diagnostics`: up to eight objects with `test_id`,
+`kind` (`assertion` or `exception`), `message` (at most 1,024 UTF-8 bytes), and
+`frames` (up to three `{file, line}` locations). Each entry must belong to a
+failed public test in that exact source snapshot. Locations must reference a
+supplied source file and an existing line; empty frames or missing diagnostics
+remain explicit gaps. The loop does not open raw stdout references or hidden
+test records. Structured frame paths are limited to the supplied source;
+freeform messages are not redacted or authenticated by this validator. A future
+live producer must sanitize its messages before constructing observations; no
+such collector is enabled here. Invalid diagnostic structures stop verification
+before the next provider call.
+
+Both `api_test_feedback` and `api_debugger` receive the same public diagnostic
+view; `direct_api` continues to self-review without verification feedback.
+Saved receipts and serialized requests are rebound during local replay. A new
+three-arm comparison can bind v4's output-contract digest, uniformly across
+all cells; it cannot mix v3 and v4 records. V1–V3 defaults, requests and saved
+experiments remain unchanged.
+
+Messages are untrusted data. A valid source location proves neither the
+diagnosis nor the repair. The production verifier remains unavailable, and the
+default provider transport remains disabled. Deterministic intercepted-CLI
+tests demonstrate that an authored response can select its next edit location
+from this feedback; they do not establish model autonomy or quality gains.
+
 ## Source and scoring boundary
 
 The neutral task has exactly `schema`, `task_id`, `issue`, `source_files` (SHA256

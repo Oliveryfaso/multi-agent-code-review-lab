@@ -137,7 +137,8 @@ def compile_comparison(spec: dict) -> dict:
         'comparison_model_invalid')
     if three:
         from macr.investigation.repair_loop import output_contract, digest
-        _require(spec['model']['output_contract_sha256'] == digest(output_contract('v3')),
+        _require(any(spec['model']['output_contract_sha256'] == digest(output_contract(version))
+                     for version in ('v3','v4')),
                  'comparison_three_arm_output_contract')
     limits = spec['limits']
     _object(limits, {'max_requests', 'input_tokens', 'output_tokens', 'max_usd'},
@@ -332,9 +333,9 @@ def score_packet(plan: dict, cell_id: str, row: dict, *, original_files: dict,
     cell = next((c for c in plan['cells'] if c['cell_id'] == cell_id), None)
     _require(cell is not None, 'comparison_score_cell_missing')
     task = next(t for t in plan['spec']['tasks'] if t['task_id'] == cell['task_id'])
-    finalize_version = 'v3' if plan['spec']['schema']==SCHEMA_V2 else 'v2'
-    finalize_allowed = (plan['spec']['model']['output_contract_sha256'] ==
-                        digest(output_contract(finalize_version)))
+    finalize_versions = ('v3','v4') if plan['spec']['schema']==SCHEMA_V2 else ('v2',)
+    finalize_allowed = any(plan['spec']['model']['output_contract_sha256'] ==
+                           digest(output_contract(version)) for version in finalize_versions)
     _require(type(row) is dict and row.get('review') is None, 'comparison_score_review_must_be_separate')
     _row(row, task, plan['spec'])
     validate_files(original_files)

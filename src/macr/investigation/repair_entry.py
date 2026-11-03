@@ -17,9 +17,9 @@ def add_parser(subparsers):
     parser.add_argument('--model-config', required=True, type=Path, help='Nonsecret shared model, limits and declared price schedule.')
     parser.add_argument('--out', required=True, type=Path, help='New exclusive local record directory.')
     parser.add_argument('--strategy', choices=('direct_api','api_test_feedback','api_debugger'), default='api_debugger')
-    parser.add_argument('--proposal-contract', choices=('v1','v2','v3'), default='v1',
-                        help='v2 allows explicit retention; v3 shares public feedback with the test-feedback baseline.')
-    parser.add_argument('--enable-remote',action='store_true',help='Explicit official HTTP mode; requires v2/v3 and a durable spend plan/cell.')
+    parser.add_argument('--proposal-contract', choices=('v1','v2','v3','v4'), default='v1',
+                        help='v2 retains candidates; v3 shares public outcomes; v4 adds bounded public failure diagnostics.')
+    parser.add_argument('--enable-remote',action='store_true',help='Explicit official HTTP mode; requires v2/v3/v4 and a durable spend plan/cell.')
     parser.add_argument('--spend-plan',type=Path,help='Nonsecret frozen spend plan; never a credential file.')
     parser.add_argument('--spend-cell',help='One exact planned cell; replay in another output directory is forbidden.')
 
@@ -275,7 +275,7 @@ def run(args):
         complete=remote and getattr(args,'spend_plan',None) is not None and getattr(args,'spend_cell',None) is not None
         requested=remote or getattr(args,'spend_plan',None) is not None or getattr(args,'spend_cell',None) is not None
         repair_loop._validate_strategy(args.strategy,args.proposal_contract)
-        repair_loop._require(not requested or (complete and args.proposal_contract in ('v2','v3')),'repair_remote_scope_required')
+        repair_loop._require(not requested or (complete and args.proposal_contract in ('v2','v3','v4')),'repair_remote_scope_required')
         task = load_task(args.repo,args.task)
         config = validate_config(_json(args.model_config))
         if remote:

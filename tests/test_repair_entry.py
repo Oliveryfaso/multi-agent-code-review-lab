@@ -57,6 +57,121 @@ class InterceptedOfficialOpener:
 
 
 class RepairEntryTests(TestCase):
+    def failure_detail(self, test_id):
+        return {'test_id':test_id,'kind':'assertion','message':'Expected 2000; observed 2500.',
+                'frames':[{'file':'builder.py','line':3},{'file':'app.py','line':5}]}
+
+    def test_v4_public_diagnostic_reaches_next_cli_proposal_and_persisted_replay(self):
+        from macr.investigation.validation import ContractError
+        names=loop.test_manifest(self.files,['checks.py']);detail=self.failure_detail(names[0])
+        wrong=dict(self.files);wrong['builder.py']=wrong['builder.py'].replace(OLD.encode(),b'return subtotal + delivery_cents')
+        fixed=dict(self.files);fixed['builder.py']=fixed['builder.py'].replace(OLD.encode(),NEW.encode())
+        failed=self.observation(wrong,[names[0]]);failed['diagnostics']=[detail]
+        testcase=self
+        class FeedbackTransport(InterceptedTransport):
+            def post(self, endpoint, body, timeout_seconds, max_response_bytes):
+                if len(self.requests)==1:
+                    feedback=json.loads(json.loads(body)['messages'][1]['content'])['feedback']
+                    testcase.assertEqual(feedback['diagnostics'],[detail])
+                    testcase.assertEqual(feedback['source_id'],loop.source_id(wrong))
+                    reply=testcase.proposal(old='return subtotal + delivery_cents',new=NEW)
+                    reply['edits'][0]['file']=feedback['diagnostics'][0]['frames'][0]['file']
+                    self.replies.append(reply)
+                return super().post(endpoint,body,timeout_seconds,max_response_bytes)
+        transport=FeedbackTransport([self.proposal(new='return subtotal + delivery_cents')])
+        verifier=loop.ReplayVerifier([self.observation(self.files,[names[0]]),failed,self.observation(fixed)])
+        code,result=self.invoke('api_debugger',transport,verifier,proposal_contract='v4')
+        self.assertEqual((code,result['status'],result['provider_requests']),(0,'simulation_passed',2))
+        report=loop.verify_loop(self.out)
+        self.assertEqual(report['final_source_id'],loop.source_id(fixed))
+        self.assertFalse(report['target_code_executed']);self.assertFalse(report['repaired'])
+        self.assertTrue(report['checks_unchanged'])
+        self.assertIn('untrusted',transport.requests[1]['messages'][0]['content'])
+        record=deepcopy(report['checks'][1])
+        feedbacks=[]
+        for strategy in ('api_debugger','api_test_feedback','direct_api'):
+            request=loop._request(wrong,self.task['issue'],self.task['editable_paths'],['checks.py'],
+                record,2,strategy=strategy,bound=True,proposal_contract='v4')
+            feedbacks.append(json.loads(request.messages[1]['content'])['feedback'])
+        self.assertEqual(feedbacks[0],feedbacks[1])
+        self.assertNotIn(detail['message'],json.dumps(feedbacks[2]))
+        # Even rewriting local integrity hashes cannot change the feedback that was sent.
+        record['diagnostics'][0]['message']='A different assertion.'
+        record['observation']['diagnostics'][0]['message']='A different assertion.'
+        loop._write(self.out,'checks/1/receipt.json',record);report['checks'][1]=record
+        report['artifact_hashes']=loop._file_hashes(self.out,skip=('report.json',))
+        loop._write(self.out,'report.json',report)
+        with self.assertRaises(ContractError):loop.verify_loop(self.out)
+
+    def test_v4_diagnostic_boundaries_require_failed_public_test_and_current_source(self):
+        from macr.investigation.validation import ContractError
+        names=loop.test_manifest(self.files,['checks.py']);valid=self.failure_detail(names[0])
+        invalid=[]
+        for field,value in [('test_id','hidden.py::Secret.test_answer'),('kind','root_cause_proven'),
+                            ('message',''),('message','界'*342)]:
+            row=deepcopy(valid);row[field]=value;invalid.append(row)
+        for frame in ({'file':'/private/secret','line':1},{'file':'missing.py','line':1},
+                      {'file':'builder.py','line':0},{'file':'builder.py','line':999},
+                      {'file':'builder.py','line':True}):
+            row=deepcopy(valid);row['frames']=[frame];invalid.append(row)
+        row=deepcopy(valid);row['hidden']='answer';invalid.append(row)
+        row=deepcopy(valid);row['frames']=valid['frames']*2;invalid.append(row)
+        for detail in invalid:
+            raw=self.observation(self.files,[names[0]]);raw['diagnostics']=[detail]
+            with self.subTest(detail=detail),self.assertRaises(ContractError):
+                loop._observation(raw,self.files,names,loop._spec(0,['checks.py']),proposal_contract='v4')
+        for raw in (self.observation(self.files),
+                    {'source_id':loop.source_id(self.files),'execution_status':'timeout','outcomes':{}}):
+            raw['diagnostics']=[valid]
+            with self.assertRaises(ContractError):
+                loop._observation(raw,self.files,names,loop._spec(0,['checks.py']),proposal_contract='v4')
+        raw=self.observation(self.files,[names[0]]);raw['diagnostics']=[valid,valid]
+        with self.assertRaises(ContractError):
+            loop._observation(raw,self.files,names,loop._spec(0,['checks.py']),proposal_contract='v4')
+
+    def test_v4_invalid_diagnostic_stops_before_provider_and_missing_verifier_stays_unavailable(self):
+        names=loop.test_manifest(self.files,['checks.py'])
+        raw=self.observation(self.files,[names[0]]);raw['diagnostics']=[self.failure_detail('hidden::test')]
+        transport=InterceptedTransport([self.proposal()])
+        code,result=self.invoke('api_debugger',transport,loop.ReplayVerifier([raw]),proposal_contract='v4')
+        self.assertEqual((code,result['status'],len(transport.requests)),(2,'verification_invalid',0))
+        self.out=self.root/'unavailable-v4'
+        with patch.object(entry,'_read_runtime_credential',side_effect=AssertionError('no Key')):
+            code,result=self.invoke('api_debugger',proposal_contract='v4')
+        self.assertEqual((code,result['status'],result['provider_requests']),(2,'verification_unavailable',0))
+
+    def test_v4_diagnostic_utf8_boundary_and_absent_details_preserve_outcomes(self):
+        names=loop.test_manifest(self.files,['checks.py'])
+        raw=self.observation(self.files,[names[0]]);detail=self.failure_detail(names[0])
+        detail['message']='界'*340+'aaaa';detail['frames']=[];raw['diagnostics']=[detail]
+        self.assertEqual(len(detail['message'].encode()),1024)
+        result=loop._observation(raw,self.files,names,loop._spec(0,['checks.py']),proposal_contract='v4')
+        self.assertEqual(result.observed_status,'failed')
+        raw['diagnostics']=[]
+        self.assertEqual(loop._observation(raw,self.files,names,loop._spec(0,['checks.py']),
+            proposal_contract='v4').observed_status,'failed')
+        raw['diagnostics']=[detail]*9
+        from macr.investigation.validation import ContractError
+        with self.assertRaises(ContractError):
+            loop._observation(raw,self.files,names,loop._spec(0,['checks.py']),proposal_contract='v4')
+
+    def test_v3_request_bytes_stay_unchanged_with_diagnostics_available(self):
+        from dataclasses import asdict
+        expected={'direct_api':'5a1798bf5f67502f55f48f29f9615de83d2be2092c3f2c4210061acfb669dbfa',
+            'api_debugger':'3441c8efb2843cbf1411e78e0a9e12c0d57c30463c40b3dd73bd3f925691339a',
+            'api_test_feedback':'cc009d7e768d497f6845e1a1cac748283a1001d52e2abf96fd3a4a37d56966ca'}
+        names=loop.test_manifest(self.files,['checks.py'])
+        feedback={'source_id':loop.source_id(self.files),'origin':'synthetic_replay',
+            'result':{'execution_status':'completed','observed_status':'failed'},
+            'outcomes':{n:'failed' for n in names}}
+        self.assertEqual(loop.digest(loop.output_contract('v3')),
+            'c26507449d31951d824e500372a6f5f1d491cd3e08ab7e1dd6d5542b6961bdcc')
+        for strategy,wanted in expected.items():
+            request=loop._request(self.files,'Legacy diagnostic compatibility.',
+                ['app.py','builder.py','records.py'],['checks.py'],feedback,1,strategy=strategy,
+                bound=True,proposal_contract='v3')
+            self.assertEqual(loop.digest(asdict(request)),wanted)
+
     def test_v3_feedback_cli_continues_after_public_pass_and_retains_current(self):
         fixed=dict(self.files);fixed['builder.py']=fixed['builder.py'].replace(OLD.encode(),NEW.encode())
         names=loop.test_manifest(self.files,['checks.py'])
@@ -94,16 +209,16 @@ class RepairEntryTests(TestCase):
         from macr.evals.repair_comparison import compile_comparison
         fixed=dict(self.files);fixed['builder.py']=fixed['builder.py'].replace(OLD.encode(),NEW.encode())
         names=loop.test_manifest(self.files,['checks.py'])
-        for finalized in (False,True):
-            with self.subTest(finalized=finalized):
-                self.out=self.root/('v3-handoff-'+str(finalized))
+        for contract,finalized in (('v3',False),('v3',True),('v4',False),('v4',True)):
+            with self.subTest(contract=contract,finalized=finalized):
+                self.out=self.root/(contract+'-handoff-'+str(finalized))
                 self.config['limits']['max_requests']=3 if finalized else 1
                 self.config_file.write_text(json.dumps(self.config))
                 replies=[self.proposal()]
                 if finalized:replies.append({'status':'finalize_current','summary':'Retain.','edits':[]})
                 verifier=loop.ReplayVerifier([self.observation(self.files,names),self.observation(fixed)])
                 code,result=self.invoke('api_test_feedback',InterceptedTransport(replies),verifier,
-                                        proposal_contract='v3')
+                                        proposal_contract=contract)
                 self.assertEqual(code,0)
                 self.assertEqual(result['status'],'candidate_finalized' if finalized else 'candidate_unverified')
                 spec=json.loads((Path(__file__).resolve().parents[1]/'examples/repair_comparison_development.json').read_text())
@@ -113,7 +228,7 @@ class RepairEntryTests(TestCase):
                     'visible_tests_sha256':loop.source_id({'checks.py':self.files['checks.py']}),
                     'initial_context_sha256':entry.initial_context_id(self.files,self.task['issue'])}]
                 spec['model']['configuration_sha256']=loop.digest(self.config)
-                spec['model']['output_contract_sha256']=loop.digest(loop.output_contract('v3'))
+                spec['model']['output_contract_sha256']=loop.digest(loop.output_contract(contract))
                 limits=self.config['limits']
                 spec['limits']={'max_requests':limits['max_requests'],'input_tokens':limits['max_total_input_tokens'],
                     'output_tokens':limits['max_total_output_tokens'],'max_usd':limits['max_usd']}
