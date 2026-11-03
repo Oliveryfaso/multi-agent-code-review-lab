@@ -114,8 +114,8 @@ def score_handoff(record_root, plan, cell_id):
             and identity['model_state']=='validated' and identity['fingerprint_state']=='validated'
             and identity.get('identity_matches_config') is True else None)
         if answer:
-            chain = [loop.load_json(loop._read(root,f'rounds/{n}/response.json')['content'],
-                    max_bytes=65536,max_depth=8) for n in range(1,len(report['rounds'])+1)]
+            chain = [loop.parse_proposal_content(loop.read_proposal_response(root,n)['content'])
+                     for n in range(1,len(report['rounds'])+1)]
             final_output=chain[-1]
             row['verdict']='defect' if final_output['status']=='candidate' else 'unknown'
             row['final_output_sha256']=loop.digest(final_output)

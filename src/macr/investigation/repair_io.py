@@ -43,31 +43,50 @@ def encode_bounded(value, limit):
         raise ContractError(field='json_serialization') from None
 
 
-def bounded_json(value, *, max_bytes=128*1024, max_depth=32):
-    _require(type(max_bytes) is int and max_bytes > 0
-             and type(max_depth) is int and max_depth > 0, 'json_limit')
+def _json_shape(value, max_depth, *, utf8_bytes):
+    _require(type(max_depth) is int and max_depth > 0, 'json_limit')
     def check(item, depth=0):
         _require(depth <= max_depth, 'json_depth')
-        if item is None or type(item) in (str,bool,int): return
+        if type(item) is str:
+            if utf8_bytes: utf8_size(item)
+            return
+        if item is None or type(item) in (bool,int): return
         if type(item) is float and math.isfinite(item): return
         if type(item) is list:
             for child in item: check(child,depth+1)
             return
         if type(item) is dict and all(type(k) is str for k in item):
-            for child in item.values(): check(child,depth+1)
+            for key,child in item.items():
+                if utf8_bytes: utf8_size(key)
+                check(child,depth+1)
             return
         raise ContractError(field='json_type')
     check(value)
+    return value
+
+
+def bounded_json(value, *, max_bytes=128*1024, max_depth=32, utf8_bytes=False):
+    _require(type(max_bytes) is int and max_bytes > 0
+             and type(utf8_bytes) is bool, 'json_limit')
+    _json_shape(value, max_depth, utf8_bytes=utf8_bytes)
     # Preserve the reviewed JSON contract's ASCII/default-separator size rule;
-    # canonical storage separately uses compact UTF-8 in encode_bounded.
-    try: size=len(json.dumps(value,ensure_ascii=True,allow_nan=False).encode('utf-8'))
+    # parsed proposal objects explicitly opt into compact UTF-8 accounting.
+    try: size=len(json.dumps(value,ensure_ascii=not utf8_bytes,allow_nan=False,
+        **({'separators':(',', ':')} if utf8_bytes else {})).encode('utf-8'))
     except (TypeError,ValueError,UnicodeError,OverflowError,RecursionError):
         raise ContractError(field='json_serialization') from None
     _require(size <= max_bytes,'json_bytes')
     return value
 
 
-def load_json(text, *, max_bytes=128*1024, max_depth=32):
+def load_json(text, *, max_bytes=128*1024, max_depth=32, utf8_bytes=False):
+    """Parse strict JSON; opt-in proposal limits count the original UTF-8 wire.
+
+    The default additionally enforces the legacy ASCII-reserialized record size.
+    Both modes reject duplicate keys, nonfinite values and excessive depth.
+    """
+    _require(type(max_bytes) is int and max_bytes > 0
+             and type(utf8_bytes) is bool, 'json_limit')
     _require(type(text) is str and utf8_size(text) <= max_bytes, 'json_bytes')
     def pairs(items):
         result = {}
@@ -78,6 +97,8 @@ def load_json(text, *, max_bytes=128*1024, max_depth=32):
     try:
         value=json.loads(text,object_pairs_hook=pairs,
             parse_constant=lambda _: (_ for _ in ()).throw(ContractError(field='nonfinite')))
+        if utf8_bytes:
+            return _json_shape(value, max_depth, utf8_bytes=True)
         return bounded_json(value,max_bytes=max_bytes,max_depth=max_depth)
     except ContractError: raise
     except (ValueError,UnicodeError,RecursionError): raise ContractError(field='json') from None

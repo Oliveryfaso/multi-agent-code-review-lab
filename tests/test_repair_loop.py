@@ -16,6 +16,53 @@ from macr.providers.base import ProviderError
 
 
 class RepairLoopTests(TestCase):
+    def test_utf8_proposal_round_trip_uses_published_byte_contract(self):
+        original = SOURCES['builder.py'] + '#' + '文'*5300 + '\n'
+        changed = original.replace(OLD, NEW)
+        self.files['builder.py'] = original.encode('utf-8')
+        (self.repo/'builder.py').write_bytes(self.files['builder.py'])
+        fixed = dict(self.files, **{'builder.py':changed.encode('utf-8')})
+        reply = self.proposal(old=original, new=changed)
+        reply['summary'] = '说明'*340
+        result = self.run_loop([reply], [self.observation(self.files, self.tests[:1]),
+                                        self.observation(fixed)])
+        self.assertEqual(result['status'], 'simulation_passed')
+        content = json.loads((self.out/'rounds/1/response.json').read_text())['content']
+        self.assertLessEqual(len(content.encode('utf-8')), 65536)
+        self.assertGreater(len(json.dumps(json.loads(content), ensure_ascii=True).encode()), 65536)
+        request = json.loads((self.out/'rounds/1/intent.json').read_text())['request']
+        self.assertEqual(request, self.provider.requests[0])
+        self.assertEqual(json.loads(request['messages'][1]['content'])['files']['builder.py'], original)
+        self.assertIn('65536 UTF-8 bytes', request['messages'][0]['content'])
+        self.assertEqual(result, loop.verify_loop(self.out))
+        self.assertEqual((self.out/'sources/1/builder.py').read_bytes(), fixed['builder.py'])
+        self.assertEqual((self.repo/'builder.py').read_bytes(), self.files['builder.py'])
+        self.assertFalse(result['repaired']); self.assertFalse(result['target_code_executed'])
+
+    def test_proposal_parser_keeps_wire_edit_and_structure_limits(self):
+        from macr.providers.base import ModelResponse
+        request = loop._request(self.files, 'Public issue', ['builder.py'], ['checks.py'], {}, 1)
+        binding = json.loads(request.messages[1]['content'])
+        base = {key:binding[key] for key in ('base_content_id','hypothesis_id','evidence_ids')}
+        base.update(status='no_candidate', summary='No supported edit.', edits=[])
+        raw = json.dumps(base, ensure_ascii=False, separators=(',', ':'))
+        boundary = raw + ' '*(65536-len(raw.encode('utf-8')))
+        response = ModelResponse(content=boundary)
+        proposal, changed = loop._proposal(response, request, self.files, ['builder.py'])
+        self.assertEqual(proposal, base); self.assertIsNone(changed)
+        self.assertEqual(response.content, boundary)
+        too_large_edit = dict(base, status='candidate', edits=[{
+            'file':'builder.py', 'old':OLD, 'new':'x'*16385}])
+        deep = dict(base, summary=[[[[[[[[['too deep']]]]]]]]])
+        invalid = [boundary+' ', raw[:-1]+',"status":"candidate"}',
+            json.dumps(too_large_edit), json.dumps(deep),
+            json.dumps(dict(base, summary='\ud800')),
+            json.dumps(dict(base, status='candidate', edits=[{
+                'file':'checks.py', 'old':'import unittest', 'new':'pass'}]))]
+        for content in invalid:
+            with self.subTest(kind=len(content)), self.assertRaises(ContractError):
+                loop._proposal(ModelResponse(content=content), request, self.files, ['builder.py'])
+
     def setUp(self):
         self.files = {n: s.encode() for n, s in SOURCES.items()}
         self.repo = write_files(fixture_root(), SOURCES)

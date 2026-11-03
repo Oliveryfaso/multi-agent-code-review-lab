@@ -71,6 +71,17 @@ never imported/executed. This boundary cannot certify that a human custodian did
 not mistakenly include an answer in an authorized source file; role separation
 is not OS isolation or proof of no contamination.
 
+Multiple `test_paths` may be supplied in any order. New runs use the same sorted
+path order for the saved contract and every check, so a valid task can be
+reloaded regardless of the input list order; existing records are not rewritten.
+
+The 64 KiB proposal limit counts the supplied JSON's UTF-8 bytes, including
+whitespace. Proposal parsing and the pending scoring handoff accept non-ASCII
+text under that limit without ASCII expansion or truncation. Per-edit limits,
+duplicate-key rejection, nesting limits and generic record bounds still apply.
+The scoring proposal chain retains its separate 64 KiB aggregate limit; stored
+response envelopes retain their 256 KiB limit measured as written UTF-8 bytes.
+
 `repair_comparison.generation_view` strips the independent scoring contract.
 `repair_entry.score_handoff(record, plan, cell_id)` revalidates the application
 record, common input/model/output/budget commitments, complete multi-round
@@ -106,10 +117,10 @@ an exact fair freeze and a new bounded paid-run approval. No native backend or e
 
 ## Offline verification scope
 
-This integration passed 325 explicitly selected deterministic checks with no
+This integration passed 335 explicitly selected deterministic checks with no
 skips on Python 3.12. These exercise source/storage boundaries, existing APIs,
 the normal checkout entry, intercepted provider responses, budgeting and pending
-scoring records. They are software regression checks, not 325 model-evaluation
+scoring records. They are software regression checks, not 335 model-evaluation
 tasks, and establish no real repair or combination-quality gain.
 
 A separate set of 37 optional recovery checks remains unverified because its

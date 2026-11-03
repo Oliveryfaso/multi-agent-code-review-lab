@@ -294,7 +294,7 @@ def score_packet(plan: dict, cell_id: str, row: dict, *, original_files: dict,
         'comparison_score_source_binding')
     changed = None; last_applied = original_files
     if proposal_chain is not None:
-        bounded_json(proposal_chain, max_bytes=65536, max_depth=16)
+        bounded_json(proposal_chain, max_bytes=65536, max_depth=16, utf8_bytes=True)
         _require(edits is None and type(proposal_chain) is list
             and 1 <= len(proposal_chain) <= min(3, row['requests']),
                  'comparison_score_chain_contract')
@@ -324,7 +324,7 @@ def score_packet(plan: dict, cell_id: str, row: dict, *, original_files: dict,
             'comparison_score_candidate_binding')
     for value, key in ((final_output, 'final_output_sha256'),
                        (verification_receipt, 'verification_receipt_sha256')):
-        bounded_json(value, max_bytes=65536, max_depth=16)
+        bounded_json(value, max_bytes=65536, max_depth=16, utf8_bytes=key=='final_output_sha256')
         _require((value is None and row[key] is None)
             or (value is not None and result_digest(value) == row[key]),
             'comparison_score_artifact_binding')

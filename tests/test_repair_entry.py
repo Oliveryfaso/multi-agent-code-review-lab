@@ -18,7 +18,9 @@ from macr.providers.repair_binding import RepairProviderBinding, development_con
 
 
 class InterceptedTransport:
-    def __init__(self, replies): self.replies, self.requests = list(replies), []
+    def __init__(self, replies, *, ensure_ascii=True, finish_reason='stop'):
+        self.replies, self.requests, self.ensure_ascii = list(replies), [], ensure_ascii
+        self.finish_reason = finish_reason
     def post(self, endpoint, body, timeout_seconds, max_response_bytes):
         wire = json.loads(body); self.requests.append(wire)
         reply = self.replies.pop(0)
@@ -27,12 +29,137 @@ class InterceptedTransport:
         output = {key:payload[key] for key in ('base_content_id','hypothesis_id','evidence_ids')}
         output.update(reply)
         return {'id':'fake-request','model':wire['model'],'system_fingerprint':'fixture-fingerprint',
-            'choices':[{'finish_reason':'stop','message':{'role':'assistant','content':json.dumps(output),
+            'choices':[{'finish_reason':self.finish_reason,'message':{'role':'assistant','content':json.dumps(output,ensure_ascii=self.ensure_ascii),
                                                        'reasoning_content':'synthetic'}}],
             'usage':{'prompt_tokens':100,'completion_tokens':50,'total_tokens':150}}
 
 
 class RepairEntryTests(TestCase):
+    def large_utf8_envelope_fixture(self):
+        fixed = dict(self.files); edits = []
+        for name, old_number, new_number in (('a.py','1','3'), ('b.py','2','4')):
+            old = '#' + 'é'*7900 + '\nvalue = ' + old_number + '\n'
+            new = old.replace('value = '+old_number, 'value = '+new_number)
+            self.files[name] = old.encode('utf-8'); fixed[name] = new.encode('utf-8')
+            (self.repo/name).write_bytes(self.files[name])
+            self.task['editable_paths'].append(name)
+            edits.append({'file':name, 'old':old, 'new':new})
+        self.task['source_files'] = loop._hashes(self.files)
+        self.task_file.write_text(json.dumps(self.task))
+        self.config['limits']['max_input_per_request'] = 32768
+        self.config['limits']['max_total_input_tokens'] = 98304
+        self.config_file.write_text(json.dumps(self.config))
+        names = loop.test_manifest(self.files, ['checks.py'])
+        verifier = loop.ReplayVerifier([self.observation(self.files,names[:1]), self.observation(fixed)])
+        return {'status':'candidate', 'summary':'Synthetic encoding-boundary probe.', 'edits':edits}, verifier, fixed
+
+    def test_large_utf8_response_envelope_reloads_and_reaches_score_handoff(self):
+        from macr.evals.repair_comparison import compile_comparison
+        from pathlib import Path
+        reply, verifier, fixed = self.large_utf8_envelope_fixture()
+        transport = InterceptedTransport([reply], ensure_ascii=False)
+        code, result = self.invoke('api_debugger', transport, verifier)
+        self.assertEqual((code,result['status']), (0,'simulation_passed'))
+        report = loop.verify_loop(self.out)
+        envelope_bytes = (self.out/'rounds/1/response.json').read_bytes()
+        envelope = loop.read_proposal_response(self.out,1)
+        self.assertLessEqual(len(envelope['content'].encode()),65536)
+        self.assertLessEqual(len(envelope_bytes),loop.CAP)
+        self.assertGreater(len(json.dumps(envelope,ensure_ascii=True).encode()),loop.CAP)
+        spec = json.loads((Path(__file__).resolve().parents[1]/'examples/repair_comparison_development.json').read_text())
+        spec['tasks'] = [{'task_id':self.task['task_id'], 'snapshot_sha256':loop.source_id(self.files),
+            'issue_sha256':loop.digest(self.task['issue']),
+            'visible_tests_sha256':loop.source_id({'checks.py':self.files['checks.py']}),
+            'initial_context_sha256':entry.initial_context_id(self.files,self.task['issue'])}]
+        spec['model']['configuration_sha256'] = loop.digest(self.config)
+        spec['model']['output_contract_sha256'] = loop.digest(loop.OUTPUT_CONTRACT)
+        limits = self.config['limits']
+        spec['limits'] = {'max_requests':limits['max_requests'], 'input_tokens':limits['max_total_input_tokens'],
+            'output_tokens':limits['max_total_output_tokens'], 'max_usd':limits['max_usd']}
+        plan = compile_comparison(spec)
+        cell = next(c for c in plan['cells'] if c['arm']=='api_debugger')
+        packet = entry.score_handoff(self.out,plan,cell['cell_id'])
+        self.assertIsNone(packet['result']['review'])
+        for name in ('a.py','b.py'):
+            self.assertEqual(packet['candidate_files'][name].encode(),fixed[name])
+            self.assertEqual((self.repo/name).read_bytes(),self.files[name])
+        self.assertFalse(report['repaired']); self.assertFalse(report['target_code_executed'])
+
+    def test_large_utf8_failed_response_envelope_keeps_failure_and_outer_cap(self):
+        from macr.investigation.validation import ContractError
+        reply, verifier, _ = self.large_utf8_envelope_fixture()
+        transport = InterceptedTransport([reply], ensure_ascii=False, finish_reason='length')
+        code, result = self.invoke('api_debugger', transport, verifier)
+        self.assertEqual((code,result['status']), (2,'provider_response_rejected'))
+        report = loop.verify_loop(self.out)
+        self.assertEqual(verifier.calls,1)
+        self.assertEqual(loop.read_proposal_response(self.out,1)['finish_reason'],'length')
+        self.assertEqual(report['provider_requests'],1)
+        self.assertFalse(report['unknown_request_reservation'])
+        self.assertFalse(report['repaired']); self.assertFalse(report['target_code_executed'])
+        other = self.root/'outer-boundary'; (other/'rounds/1').mkdir(parents=True)
+        path = other/'rounds/1/response.json'
+        path.write_bytes(b'{}' + b' '*(loop.CAP-2))
+        self.assertEqual(loop.read_proposal_response(other,1),{})
+        path.write_bytes(b'{}' + b' '*(loop.CAP-1))
+        with self.assertRaises(ContractError): loop.read_proposal_response(other,1)
+
+    def test_utf8_wire_proposal_reloads_and_exports_without_ascii_rejection(self):
+        from macr.evals.repair_comparison import compile_comparison, score_packet
+        from macr.investigation.validation import ContractError
+        from pathlib import Path
+        original = SOURCES['builder.py'] + '#' + '文'*5300 + '\n'
+        changed = original.replace(OLD, NEW)
+        self.files['builder.py'] = original.encode('utf-8')
+        (self.repo/'builder.py').write_bytes(self.files['builder.py'])
+        self.task['source_files'] = loop._hashes(self.files)
+        self.task_file.write_text(json.dumps(self.task))
+        self.config['limits']['max_input_per_request'] = 32768
+        self.config['limits']['max_total_input_tokens'] = 98304
+        self.config_file.write_text(json.dumps(self.config))
+        fixed = dict(self.files, **{'builder.py':changed.encode('utf-8')})
+        names = loop.test_manifest(self.files, ['checks.py'])
+        verifier = loop.ReplayVerifier([self.observation(self.files, names[:1]), self.observation(fixed)])
+        reply = self.proposal(old=original, new=changed)
+        reply['summary'] = '说明'*340
+        transport = InterceptedTransport([reply], ensure_ascii=False)
+        code, result = self.invoke('api_debugger', transport, verifier)
+        self.assertEqual((code, result['status']), (0, 'simulation_passed'))
+        report = loop.verify_loop(self.out)
+        wire = transport.requests[0]
+        payload = json.loads(wire['messages'][1]['content'])
+        self.assertEqual(payload['files']['builder.py'], original)
+        self.assertIn('65536 UTF-8 bytes', wire['messages'][0]['content'])
+        content = loop._read(self.out, 'rounds/1/response.json')['content']
+        self.assertLessEqual(len(content.encode('utf-8')), 65536)
+        self.assertGreater(len(json.dumps(json.loads(content),ensure_ascii=True).encode()),65536)
+        spec = json.loads((Path(__file__).resolve().parents[1]/'examples/repair_comparison_development.json').read_text())
+        spec['tasks'] = [{'task_id':self.task['task_id'], 'snapshot_sha256':loop.source_id(self.files),
+            'issue_sha256':loop.digest(self.task['issue']),
+            'visible_tests_sha256':loop.source_id({'checks.py':self.files['checks.py']}),
+            'initial_context_sha256':entry.initial_context_id(self.files,self.task['issue'])}]
+        spec['model']['configuration_sha256'] = loop.digest(self.config)
+        spec['model']['output_contract_sha256'] = loop.digest(loop.OUTPUT_CONTRACT)
+        limits = self.config['limits']
+        spec['limits'] = {'max_requests':limits['max_requests'], 'input_tokens':limits['max_total_input_tokens'],
+            'output_tokens':limits['max_total_output_tokens'], 'max_usd':limits['max_usd']}
+        plan = compile_comparison(spec)
+        cell = next(c for c in plan['cells'] if c['arm']=='api_debugger')
+        packet = entry.score_handoff(self.out, plan, cell['cell_id'])
+        self.assertEqual(packet['candidate_files']['builder.py'].encode(), fixed['builder.py'])
+        self.assertIsNone(packet['result']['review'])
+        self.assertFalse(packet['semantic_truth_validated'])
+        self.assertFalse(report['repaired']); self.assertFalse(report['target_code_executed'])
+        oversized = packet['proposal_chain']*2
+        self.assertGreater(len(json.dumps(oversized,ensure_ascii=False,separators=(',',':')).encode()),65536)
+        row = dict(packet['result'], requests=2)
+        with self.assertRaises(ContractError) as raised:
+            score_packet(plan,cell['cell_id'],row,original_files=self.files,
+                editable_paths=self.task['editable_paths'],protected_paths=self.task['test_paths'],
+                final_output=packet['final_output'],verification_receipt=packet['verification_receipt'],
+                proposal_chain=oversized)
+        self.assertEqual(raised.exception.field, 'json_bytes')
+
     def setUp(self):
         self.root = fixture_root(); self.repo = write_files(self.root/'generation', SOURCES)
         self.files = {n:s.encode() for n,s in SOURCES.items()}
@@ -102,6 +229,55 @@ class RepairEntryTests(TestCase):
         code, result = self.invoke('api_debugger', transport)
         self.assertEqual(result['status'], 'verification_unavailable'); self.assertEqual(code,2)
         self.assertEqual(transport.requests, [])
+
+    def additional_test_file(self):
+        body = ('import unittest\nclass MoreChecks(unittest.TestCase):\n'
+                '    def test_secondary(self):\n        self.assertTrue(True)\n').encode()
+        self.files['more_checks.py'] = body
+        (self.repo/'more_checks.py').write_bytes(body)
+        self.task['source_files'] = loop._hashes(self.files)
+        self.task['test_paths'] = ['more_checks.py', 'checks.py']
+        self.task_file.write_text(json.dumps(self.task))
+        return loop.test_manifest(self.files, self.task['test_paths'])
+
+    def test_unsorted_test_paths_preserve_default_stops_and_reload(self):
+        names = self.additional_test_file()
+        for strategy, status in (('direct_api', 'provider_disabled'),
+                                 ('api_debugger', 'verification_unavailable')):
+            with self.subTest(strategy=strategy):
+                self.out = self.root/strategy
+                code, result = self.invoke(strategy)
+                self.assertEqual((code, result['status']), (2, status))
+                report = loop.verify_loop(self.out)
+                self.assertEqual(report['checks'][0]['spec']['selectors'], ['checks', 'more_checks'])
+                self.assertEqual(loop._read(self.out, 'claim.json')['config']['test_names'], names)
+                self.assertEqual(report['provider_requests'], 0)
+                self.assertFalse(report['target_code_executed'])
+
+    def test_unsorted_test_paths_stay_bound_through_candidate_feedback(self):
+        names = self.additional_test_file()
+        fixed = deepcopy(self.files)
+        fixed['builder.py'] = fixed['builder.py'].replace(OLD.encode(), NEW.encode())
+        def observed(files, failed=()):
+            return {'source_id':loop.source_id(files), 'execution_status':'completed',
+                    'outcomes':{name:'failed' if name in failed else 'passed' for name in names}}
+        verifier = loop.ReplayVerifier([observed(self.files, names[:1]), observed(fixed)])
+        transport = InterceptedTransport([self.proposal()])
+        code, result = self.invoke('api_debugger', transport, verifier)
+        self.assertEqual((code, result['status']), (0, 'simulation_passed'))
+        report = loop.verify_loop(self.out)
+        self.assertEqual(len(report['checks']), 2)
+        for check in report['checks']:
+            self.assertEqual(check['spec']['selectors'], ['checks', 'more_checks'])
+            self.assertEqual(set(check['outcomes']), set(names))
+        payload = json.loads(transport.requests[0]['messages'][1]['content'])
+        self.assertEqual(payload['protected_paths'], ['checks.py', 'more_checks.py'])
+        for path in self.task['test_paths']:
+            self.assertEqual(payload['files'][path], self.files[path].decode())
+            self.assertEqual((self.repo/path).read_bytes(), self.files[path])
+        self.assertEqual(report['provider_requests'], 1)
+        self.assertFalse(report['target_code_executed'])
+        self.assertFalse(report['repaired'])
 
     def test_direct_cli_uses_existing_provider_serialization_and_same_meter(self):
         transport = InterceptedTransport([self.proposal(),

@@ -16,6 +16,44 @@ from macr.memory.atomic_file import atomic_write
 
 
 class RepairIOTests(unittest.TestCase):
+    def test_raw_utf8_json_size_is_wire_bytes_and_keeps_ascii_default(self):
+        for value in ({'a':'文'}, {'a':'x'}):
+            raw = json.dumps(value, ensure_ascii=False, separators=(',', ':'))
+            limit = len(raw.encode('utf-8'))
+            with self.subTest(value=value):
+                with self.assertRaises(ContractError): repair_io.load_json(raw, max_bytes=limit)
+                self.assertEqual(repair_io.load_json(raw, max_bytes=limit, utf8_bytes=True), value)
+                with self.assertRaises(ContractError):
+                    repair_io.load_json(raw+' ', max_bytes=limit, utf8_bytes=True)
+
+    def test_raw_utf8_exact_64k_boundaries_and_invalid_shapes(self):
+        limit = 65536
+        for character in ('x', '文'):
+            count, remainder = divmod(limit-8, len(character.encode('utf-8')))
+            value = character*count + 'x'*remainder
+            raw = '{"a":"'+value+'"}'
+            self.assertEqual(len(raw.encode('utf-8')), limit)
+            self.assertEqual(repair_io.load_json(raw, max_bytes=limit, utf8_bytes=True), {'a':value})
+            with self.assertRaises(ContractError):
+                repair_io.load_json(raw+' ', max_bytes=limit, utf8_bytes=True)
+        for raw in ('{"a":1,"a":2}', '{"a":NaN}', '[1,]',
+                    '{"a":"\\ud800"}', '{"\\ud800":0}', '{"a":"\ud800"}'):
+            with self.subTest(raw=repr(raw)), self.assertRaises(ContractError):
+                repair_io.load_json(raw, utf8_bytes=True)
+        with self.assertRaises(ContractError):
+            repair_io.load_json('[[[0]]]', max_depth=1, utf8_bytes=True)
+
+    def test_utf8_object_budget_is_opt_in_and_remains_bounded(self):
+        value = {'a':'文'}
+        limit = len(json.dumps(value, ensure_ascii=False, separators=(',', ':')).encode('utf-8'))
+        with self.assertRaises(ContractError): repair_io.bounded_json(value, max_bytes=limit)
+        self.assertEqual(repair_io.bounded_json(value, max_bytes=limit, utf8_bytes=True), value)
+        with self.assertRaises(ContractError):
+            repair_io.bounded_json(value, max_bytes=limit-1, utf8_bytes=True)
+        for invalid in ({'a':'\ud800'}, {'\ud800':0}, {'a':float('inf')}):
+            with self.subTest(invalid=repr(invalid)), self.assertRaises(ContractError):
+                repair_io.bounded_json(invalid, utf8_bytes=True)
+
     def test_json_duplicate_nonfinite_depth_and_size_boundaries(self):
         self.assertEqual(repair_io.load_json('{"a":1}'), {'a':1})
         for raw in ('{"a":1,"a":2}', '{"a":NaN}', '[1,]'):

@@ -141,8 +141,15 @@ def _write(root, name, value):
     safe_write(root, name, value if type(value) is bytes else encode_bounded(value, CAP), limit=CAP)
 
 
-def _read(root, name):
-    return load_json(read_safe(root, name, CAP).decode(), max_bytes=CAP, max_depth=32)
+def _read(root, name, *, utf8_bytes=False):
+    return load_json(read_safe(root, name, CAP).decode(), max_bytes=CAP, max_depth=32,
+                     utf8_bytes=utf8_bytes)
+
+
+def read_proposal_response(root, number):
+    # The provider envelope can contain the proposal twice (content and replay
+    # assistant message). Match the bounded UTF-8 writer without raising CAP.
+    return _read(root, f'rounds/{number}/response.json', utf8_bytes=True)
 
 
 def _file_hashes(root, *, skip=()):
@@ -196,9 +203,14 @@ def _request(files, issue, editable, protected, feedback, number, *, strategy='a
     return request
 
 
+def parse_proposal_content(content):
+    """The published proposal limit is raw UTF-8, not ASCII re-encoding."""
+    return load_json(content, max_bytes=65536, max_depth=8, utf8_bytes=True)
+
+
 def _proposal(response, request, files, editable):
     _require(response.tool_calls == [] and response.finish_reason == 'stop', 'response_contract')
-    raw = load_json(response.content, max_bytes=65536, max_depth=8)
+    raw = parse_proposal_content(response.content)
     _require(type(raw) is dict and set(raw) == {'status', 'summary', 'base_content_id',
         'hypothesis_id', 'evidence_ids', 'edits'}, 'proposal_fields')
     payload = load_json(request.messages[1]['content'], max_bytes=CAP, max_depth=24)
@@ -340,7 +352,8 @@ def _run_loop(repo, issue, *, editable_paths, test_paths, provider, verifier, ou
         for name, body in files.items(): _write(out, f'sources/{number}/{name}', body)
         bundle = store.capture(out/f'sources/{number}',
                                RepositoryScope().inventory(out/f'sources/{number}', PROFILE))
-        spec = _spec(number, test_paths)
+        # Use the same frozen order that replay verification reconstructs.
+        spec = _spec(number, config['test_paths'])
         _write(out, f'checks/{number}/intent.json', {'snapshot': asdict(bundle.ref), 'spec': asdict(spec),
                                                   'origin': 'synthetic_replay' if verifier else 'unavailable'})
         raw = None; invalid = False
@@ -513,7 +526,7 @@ def verify_loop(out):
             and outputs + request.max_output_tokens <= config['max_total_output_tokens'], 'request_reservation')
         if row.get('provider_failure'):
             if row['response_sha256'] is not None:
-                raw = _read(out, f'rounds/{i}/response.json')
+                raw = read_proposal_response(out, i)
                 _require(digest(raw) == row['response_sha256'], 'failure_response_binding')
                 _response(raw)
             status = ('provider_dispatch_blocked' if bound and meter['requests'] < i else
@@ -522,7 +535,7 @@ def verify_loop(out):
         elif row['response_sha256'] is None:
             status = 'provider_outcome_unknown'
         else:
-            raw = _read(out, f'rounds/{i}/response.json')
+            raw = read_proposal_response(out, i)
             _require(digest(raw) == row['response_sha256'], 'response_binding')
             response = _response(raw)
             if bound:
