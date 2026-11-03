@@ -3,13 +3,15 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from copy import deepcopy
 from dataclasses import asdict
 from pathlib import Path
 from uuid import uuid4
 
 from .records import ActionUsage, CapturedFile, ContentManifest, ScopeManifest, SnapshotBundle, SnapshotRef
-from .scope import TEXT_SUFFIXES, exclusion, read_safe, resolve_allowed, walk_entries
+from .scope import TEXT_SUFFIXES, exclusion, open_directory, read_safe, resolve_allowed, safe_parent, validate_workspace_path, walk_entries
+from .repair_io import safe_write
 from .validation import ContractError, decode_record, validate_identifier, validate_relative
 
 
@@ -22,15 +24,19 @@ def canonical(manifest: ContentManifest) -> bytes:
 
 
 class SnapshotStore:
-    def __init__(self, root: Path | None = None):
-        self.allowed = (Path(__file__).resolve().parents[3] / "artifacts").resolve()
-        self.root = (root or self.allowed / "snapshots").resolve()
+    def __init__(self, root: Path | None = None, *, allowed_root: Path | None = None):
+        self.allowed = Path(allowed_root).absolute() if allowed_root is not None else (Path(__file__).resolve().parents[3] / "artifacts").absolute()
+        self.root = Path(root or self.allowed / "snapshots").absolute()
         if not self.root.is_relative_to(self.allowed):
             raise SnapshotError("forbidden_path", "snapshot_root")
+        validate_workspace_path(self.allowed,output=True)
+        validate_workspace_path(self.root,output=True)
+        with open_directory(self.allowed,create=True): pass
+        with open_directory(self.root,create=True): pass
         self.last_usage = ActionUsage()
 
     def _inventory_matches(self, root: Path, scope: ScopeManifest):
-        observed = {rel for rel, kind, size in walk_entries(root) if kind == "file" and not exclusion(rel, scope.profile)
+        observed = {rel for rel, kind, size in walk_entries(root, scope.profile) if kind == "file" and not exclusion(rel, scope.profile)
                     and Path(rel).suffix.lower() in TEXT_SUFFIXES and size <= scope.profile.max_file_bytes}
         known_unreadable = {f.path for f in scope.unreadable}
         if observed - known_unreadable != {f.path for f in scope.eligible}:
@@ -44,20 +50,24 @@ class SnapshotStore:
         snapshot_id = str(uuid4())
         folder = self.root / snapshot_id
         files_root = folder / "files"
-        files_root.mkdir(parents=True, exist_ok=False)
+        with safe_parent(self.root,snapshot_id) as (parent,leaf): os.mkdir(leaf,0o700,dir_fd=parent)
+        with safe_parent(folder,'files') as (parent,leaf): os.mkdir(leaf,0o700,dir_fd=parent)
         captured, manifest_files = {}, []
         usage = ActionUsage()
+        captured_bytes = python_lines = 0
         try:
             for entry in sorted(scope.eligible, key=lambda item: item.path):
                 resolve_allowed(root, entry.path, scope)
                 data = read_safe(root, entry.path, scope.profile.max_file_bytes)
                 usage.bytes_read += len(data)
                 entry.size_bytes, entry.lines = len(data), len(data.splitlines())
+                captured_bytes += len(data)
+                python_lines += entry.lines if entry.language == 'python' else 0
+                if captured_bytes > scope.profile.max_text_bytes or python_lines > scope.profile.max_python_lines:
+                    raise SnapshotError('scope_limit','captured_scope')
                 digest = hashlib.sha256(data).hexdigest()
                 captured[entry.path] = CapturedFile(entry, data, digest)
-                target = files_root / entry.path
-                target.parent.mkdir(parents=True, exist_ok=True)
-                target.write_bytes(data)
+                safe_write(files_root,entry.path,data,limit=scope.profile.max_file_bytes)
                 manifest_files.append({"path": entry.path, "kind": "file", "size_bytes": len(data), "sha256": digest,
                                        "language": entry.language, "mode_intent": "non_executable"})
             if sum(e.size_bytes for e in scope.eligible) > scope.profile.max_text_bytes or sum(e.lines or 0 for e in scope.eligible if e.language == "python") > scope.profile.max_python_lines:
@@ -79,8 +89,8 @@ class SnapshotStore:
         data = canonical(manifest)
         manifest_path = folder / "manifest.json"
         try:
-            manifest_path.write_bytes(data)
-            (folder / "scope.json").write_text(json.dumps(asdict(scope), sort_keys=True, allow_nan=False), encoding="utf-8")
+            safe_write(folder,'manifest.json',data,limit=4*1024*1024)
+            safe_write(folder,'scope.json',json.dumps(asdict(scope),sort_keys=True,allow_nan=False).encode(),limit=4*1024*1024)
         except OSError:
             raise SnapshotError("storage_unavailable", "snapshot_write") from None
         ref = SnapshotRef(snapshot_id, hashlib.sha256(data).hexdigest(), str(manifest_path), str(files_root), scope.scope_version)
@@ -89,7 +99,7 @@ class SnapshotStore:
     def _manifest(self, ref: SnapshotRef) -> ContentManifest:
         validate_identifier(ref.snapshot_id)
         folder = self.root / ref.snapshot_id
-        if Path(ref.root_ref).resolve() != (folder / "files").resolve() or Path(ref.content_manifest_ref).resolve() != (folder / "manifest.json").resolve():
+        if Path(ref.root_ref).absolute() != folder / "files" or Path(ref.content_manifest_ref).absolute() != folder / "manifest.json":
             raise SnapshotError("stale_snapshot", "snapshot_paths")
         if folder.is_symlink() or (folder / "files").is_symlink():
             raise SnapshotError("stale_snapshot", "snapshot_symlink")
@@ -139,15 +149,15 @@ class SnapshotStore:
             self._read_entry(ref, entries[relative])
 
     def export_verified(self, ref: SnapshotRef, destination: Path) -> ContentManifest:
-        destination = destination.resolve()
+        destination = Path(destination).absolute()
         if not destination.is_relative_to(self.allowed):
             raise SnapshotError("forbidden_path", "export_destination")
         self.verify(ref)
         manifest = self._manifest(ref)
-        destination.mkdir(parents=True, exist_ok=False)
+        validate_workspace_path(destination,output=True)
+        with safe_parent(self.allowed,destination.relative_to(self.allowed).as_posix(),create=True) as (parent,leaf):
+            os.mkdir(leaf,0o700,dir_fd=parent)
         for entry in manifest.files:
             data = self.read_verified(ref, entry["path"])
-            target = destination / entry["path"]
-            target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_bytes(data)
+            safe_write(destination,entry['path'],data,limit=entry['size_bytes'] or 1)
         return manifest

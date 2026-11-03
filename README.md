@@ -26,6 +26,12 @@ python3 -B scripts/run_offline_tests.py test_context_reader test_static_readers
 
 Each run has a 120-second deadline, a 64 MiB allocated-output monitoring threshold and at most 2 MiB of summary/diagnostic records. Successful runs remove only their newly created temporary fixtures; failures retain their directory and diagnostic. File allocation monitoring is not a hard quota. The allowlisted test guard blocks native process/network dispatch and redirects default snapshot, index and patch-check output. It is not an untrusted-code sandbox. Direct tests that require fixture storage reject an unmanaged fixture root; use the bounded entry instead of full discovery.
 
+The explicit `repair` command connects bound patch proposals, protected source edits, feedback and pending scoring records. It uses a shared model/budget path for direct self-review and Debugger strategies. The default has no model transport or execution backend; it stops honestly instead of reporting a repair. See [the repair entry](docs/repair-entry.md).
+
+```bash
+python3 -I -B cli/agent_review.py repair --help
+```
+
 `rules` and scripted `mock` providers are available. Explicit loopback HTTP profiles support externally managed local services; no model, runtime or service launcher is bundled. Token/usage fixtures do not prove deployed model readiness. Remote fallback is disabled by default.
 
 Dynamic checks require an approved execution backend and sanitized inputs. The public package contains backend contracts and result normalization, with host execution closed. Machine-specific VM/service orchestration and its private authorization/evidence are kept outside this public core. A citation hit or passing scripted fixture is not a repaired repository.

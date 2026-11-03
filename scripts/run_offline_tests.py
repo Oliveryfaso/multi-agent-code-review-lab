@@ -26,6 +26,10 @@ from debugger_fixtures import RUNS_ROOT, fixture_session
 
 MIB = 1024 * 1024
 OFFLINE_MODULES = frozenset({
+    'test_repair_io', 'test_repair_loop', 'test_repair_edits', 'test_repair_entry',
+    'test_repair_provider_binding', 'test_repair_scoring_flow', 'test_repair_comparison',
+    'test_deepseek_conversation', 'test_provider_billing_evidence',
+    'test_provider_identity_evidence', 'test_provider_failure_structure',
     'test_offline_tests', 'test_code_graph', 'test_repository_scope',
     'test_repository_snapshots', 'test_repository_index', 'test_context_reader',
     'test_static_readers', 'test_static_facts', 'test_contracts',
@@ -92,8 +96,13 @@ def offline_context(tmp):
     snapshot_init, index_init = SnapshotStore.__init__, RepositoryIndex.__init__
     verifier_init = PatchVerifierTool.__init__
 
-    def snapshots(self, root=None):
-        return snapshot_init(self, tmp / 'snapshots' if root is None else root)
+    def snapshots(self, root=None, *, allowed_root=None):
+        if allowed_root is not None:
+            allowed_root = Path(allowed_root).absolute()
+            if allowed_root != allowed_root.resolve() or not allowed_root.is_relative_to(tmp):
+                raise RuntimeError('fixture snapshot authority must stay inside managed output')
+        return snapshot_init(self, tmp / 'snapshots' if root is None else root,
+                             allowed_root=allowed_root)
 
     def indexes(self, store, cache_root=None):
         return index_init(self, store, tmp / 'index' if cache_root is None else cache_root)

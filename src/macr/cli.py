@@ -34,6 +34,9 @@ def main() -> None:
     parser = argparse.ArgumentParser(prog="agent-review")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
+    from macr.investigation.repair_entry import add_parser as add_repair_parser
+    add_repair_parser(subparsers)
+
     baseline_parser = subparsers.add_parser('static-baseline', help='Offline evaluation retrieval baseline; no model or source execution.')
     baseline_parser.add_argument('--input', required=True, type=Path)
     baseline_parser.add_argument('--out', required=True, type=Path)
@@ -101,6 +104,9 @@ def main() -> None:
     view_parser.add_argument("--patch-dir", default=Path("patches"), type=Path)
 
     args = parser.parse_args()
+    if args.command == 'repair':
+        from macr.investigation.repair_entry import run as run_repair
+        raise SystemExit(run_repair(args))
     if args.command == 'static-baseline':
         from macr.evals.static_baseline import run_baseline
         try:

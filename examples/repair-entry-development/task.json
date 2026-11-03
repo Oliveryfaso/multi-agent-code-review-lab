@@ -1,0 +1,19 @@
+{
+  "editable_paths": [
+    "app.py",
+    "builder.py",
+    "records.py"
+  ],
+  "issue": "Item discounts must not discount delivery charges. This is a public development report, not a captured execution.",
+  "schema": "macr.repair.task.v1",
+  "source_files": {
+    "app.py": "5438b492137a469c0d46a15ffafd0749f7f4c672b6384f3b8144779663897659",
+    "builder.py": "ac8c3f21012e805fe657629f48dea781819822376203ea240e0da2aec87aa67d",
+    "checks.py": "6aae3379aa71311a1335f77cb78e9050421a2c847dcdb052b08337cbe5534c05",
+    "records.py": "252d454f07f018e3b8b038c2e2f766f1c519a413812653bcc99a31072c467538"
+  },
+  "task_id": "public-invoice",
+  "test_paths": [
+    "checks.py"
+  ]
+}

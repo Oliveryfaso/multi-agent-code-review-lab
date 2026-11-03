@@ -127,8 +127,13 @@ class OfflineLifecycleTests(unittest.TestCase):
         runner = self.runner()
         base = fixtures.fixture_root()
         called = []
-        report = runner.run_suite(synthetic_suite(lambda case: called.append(True)),
-                                  runs_root=base / 'runs', max_allocated_bytes=1)
+        # Empty directories may have zero allocated blocks (e.g. APFS). Drive
+        # this pre-dispatch boundary with a controlled measurement instead of
+        # assuming the checkout filesystem charges at least one block.
+        with patch.object(runner, 'tree_usage', return_value={
+                'files': 0, 'logical_bytes': 0, 'allocated_bytes': 2}):
+            report = runner.run_suite(synthetic_suite(lambda case: called.append(True)),
+                                      runs_root=base / 'runs', max_allocated_bytes=1)
         self.assertEqual(report['status'], 'failed')
         self.assertEqual(report['error'], 'allocated_bytes_limit')
         self.assertFalse(called)
