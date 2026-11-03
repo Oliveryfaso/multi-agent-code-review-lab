@@ -28,6 +28,7 @@ class InterceptedTransport:
         if isinstance(reply, Exception): raise reply
         payload = json.loads(wire['messages'][1]['content'])
         output = {key:payload[key] for key in ('base_content_id','hypothesis_id','evidence_ids')}
+        if payload.get('proposal_contract') == 'v6': output['selected_content_id'] = None
         output.update(reply)
         return {'id':'fake-request','model':wire['model'],'system_fingerprint':'fixture-fingerprint',
             'choices':[{'finish_reason':self.finish_reason,'message':{'role':'assistant','content':json.dumps(output,ensure_ascii=self.ensure_ascii),
@@ -57,6 +58,153 @@ class InterceptedOfficialOpener:
 
 
 class RepairEntryTests(TestCase):
+    def test_v6_each_arm_can_select_its_accepted_candidate_without_new_verification(self):
+        names=loop.test_manifest(self.files,['checks.py'])
+        fixed=dict(self.files);fixed['builder.py']=fixed['builder.py'].replace(OLD.encode(),NEW.encode())
+        testcase=self;choices=[]
+        for strategy in ('direct_api','api_test_feedback','api_debugger'):
+            self.out=self.root/('selection-'+strategy)
+            class SelectingTransport(InterceptedTransport):
+                def post(self,endpoint,body,timeout_seconds,max_response_bytes):
+                    if len(self.requests)==2:
+                        payload=json.loads(json.loads(body)['messages'][1]['content'])
+                        candidates=[e['candidate_content_id'] for e in payload['attempt_history']['entries']]
+                        choices.append(candidates)
+                        self.replies.append({'status':'select_candidate','selected_content_id':candidates[0],
+                            'summary':'Retain the first accepted candidate; verification was not rerun.','edits':[]})
+                    return super().post(endpoint,body,timeout_seconds,max_response_bytes)
+            transport=SelectingTransport([self.proposal(),self.proposal(old=NEW,new=OLD)])
+            verifier=loop.ReplayVerifier([self.observation(self.files,names[:2]),
+                self.observation(fixed,names[1:2]),self.observation(self.files,names[:2])])
+            code,result=self.invoke(strategy,transport,verifier,proposal_contract='v6')
+            self.assertEqual((code,result['status'],result['provider_requests']),(0,'candidate_selected_unverified',3))
+            self.assertEqual(verifier.calls,0 if strategy=='direct_api' else 3)
+            report=loop.verify_loop(self.out)
+            self.assertEqual(report['final_source_id'],loop.source_id(fixed))
+            self.assertEqual(len(report['checks']),3)
+            self.assertEqual(report['final_selection']['accepted_round'],1)
+            self.assertEqual(report['final_selection']['task_id'],self.task['task_id'])
+            self.assertEqual(report['final_selection']['task_source_id'],loop.source_id(self.files))
+            self.assertEqual(report['final_selection']['verification_status'],'not_rerun')
+            self.assertEqual(result['selected_content_id'],loop.source_id(fixed))
+            self.assertEqual(result['verification_origin'],'unavailable')
+            self.assertEqual(result['final_verification_status'],'not_rerun')
+            contract=json.loads(transport.requests[0]['messages'][1]['content'])['output_contract']
+            self.assertIn('selected_content_id',contract['fields'])
+            self.assertIn('select_candidate',contract['statuses'])
+            self.assertFalse(report['repaired']);self.assertFalse(report['target_code_executed'])
+            self.assertEqual((self.repo/'builder.py').read_bytes(),self.files['builder.py'])
+        self.assertTrue(all(candidates==choices[0] for candidates in choices))
+
+    def test_v6_historical_pass_is_only_a_reference_in_pending_score_handoff(self):
+        from macr.evals.repair_comparison import compile_comparison
+        from macr.investigation.validation import ContractError
+        names=loop.test_manifest(self.files,['checks.py'])
+        fixed=dict(self.files);fixed['builder.py']=fixed['builder.py'].replace(OLD.encode(),NEW.encode())
+        transport=InterceptedTransport([self.proposal(),self.proposal(old=NEW,new=OLD),
+            {'status':'select_candidate','selected_content_id':loop.source_id(fixed),
+             'summary':'Select saved candidate without a fresh check.','edits':[]}])
+        code,result=self.invoke('api_test_feedback',transport,loop.ReplayVerifier([
+            self.observation(self.files,names[:1]),self.observation(fixed),
+            self.observation(self.files,names[:1])]),proposal_contract='v6')
+        self.assertEqual(code,0);report=loop.verify_loop(self.out)
+        self.assertEqual(report['checks'][1]['result']['observed_status'],'passed')
+        self.assertEqual(report['status'],'candidate_selected_unverified')
+        spec=json.loads((Path(__file__).resolve().parents[1]/'examples/repair_comparison_development.json').read_text())
+        spec.update(schema='macr.repair-comparison.spec.v2',contrast='feedback_and_public_pass_stop_policy')
+        spec['tasks']=[{'task_id':self.task['task_id'],'snapshot_sha256':loop.source_id(self.files),
+            'issue_sha256':loop.digest(self.task['issue']),
+            'visible_tests_sha256':loop.source_id({'checks.py':self.files['checks.py']}),
+            'initial_context_sha256':entry.initial_context_id(self.files,self.task['issue'])}]
+        spec['model']['configuration_sha256']=loop.digest(self.config)
+        spec['model']['output_contract_sha256']=loop.digest(loop.output_contract('v6'))
+        limits=self.config['limits'];spec['limits']={'max_requests':limits['max_requests'],
+            'input_tokens':limits['max_total_input_tokens'],'output_tokens':limits['max_total_output_tokens'],
+            'max_usd':limits['max_usd']}
+        plan=compile_comparison(spec);cell=next(c for c in plan['cells'] if c['arm']=='api_test_feedback')
+        packet=entry.score_handoff(self.out,plan,cell['cell_id'])
+        self.assertEqual(packet['candidate_files']['builder.py'].encode(),fixed['builder.py'])
+        self.assertEqual(packet['result']['verification_origin'],'unavailable')
+        self.assertEqual(packet['result']['feedback_validation_attempts'],3)
+        self.assertEqual(packet['verification_receipt']['execution_status'],'not_performed')
+        self.assertNotIn('outcomes',packet['verification_receipt'])
+        self.assertIsNone(packet['result']['review']);self.assertFalse(packet['semantic_truth_validated'])
+        selection=loop._read(self.out,'selection.json');selection['accepted_round']=2
+        loop._write(self.out,'selection.json',selection);report['final_selection']=selection
+        report['artifact_hashes']=loop._file_hashes(self.out,skip=('report.json',));loop._write(self.out,'report.json',report)
+        with self.assertRaises(ContractError):loop.verify_loop(self.out)
+
+    def test_v6_rejects_unaccepted_foreign_or_editing_selections(self):
+        names=loop.test_manifest(self.files,['checks.py'])
+        for number,reply in enumerate((
+            {'status':'select_candidate','selected_content_id':loop.source_id(self.files),'edits':[]},
+            {'status':'select_candidate','selected_content_id':'f'*64,'edits':[]},
+            {'status':'select_candidate','selected_content_id':'../../foreign','edits':[]},
+            {'status':'select_candidate','selected_content_id':None,'edits':[]},
+            {'status':'no_candidate','selected_content_id':'f'*64,'edits':[]})):
+            self.out=self.root/('bad-selection-'+str(number));reply['summary']='Invalid selection.'
+            code,result=self.invoke('api_test_feedback',InterceptedTransport([reply]),
+                loop.ReplayVerifier([self.observation(self.files,names[:1])]),proposal_contract='v6')
+            self.assertEqual((code,result['status'],result['provider_requests']),(2,'proposal_invalid',1))
+            self.assertEqual(loop.verify_loop(self.out)['final_source_id'],loop.source_id(self.files))
+        self.out=self.root/'selection-with-edits'
+        fixed=dict(self.files);fixed['builder.py']=fixed['builder.py'].replace(OLD.encode(),NEW.encode())
+        reply=self.proposal(old=NEW,new=OLD);reply.update(status='select_candidate',selected_content_id=loop.source_id(fixed))
+        code,result=self.invoke('api_test_feedback',InterceptedTransport([self.proposal(),reply]),
+            loop.ReplayVerifier([self.observation(self.files,names[:1]),self.observation(fixed)]),proposal_contract='v6')
+        self.assertEqual((code,result['status'],result['provider_requests']),(2,'proposal_invalid',2))
+        self.assertIsNone(loop.verify_loop(self.out)['final_selection'])
+
+    def test_v6_missing_selection_field_is_not_repaired_by_the_real_parser(self):
+        class MissingFieldTransport(InterceptedTransport):
+            def post(self,*args,**kwargs):
+                result=super().post(*args,**kwargs)
+                message=result['choices'][0]['message'];raw=json.loads(message['content'])
+                raw.pop('selected_content_id');message['content']=json.dumps(raw)
+                return result
+        code,result=self.invoke('direct_api',MissingFieldTransport([
+            {'status':'no_candidate','summary':'Intentionally malformed contract.','edits':[]}]),proposal_contract='v6')
+        self.assertEqual((code,result['status']),(2,'proposal_invalid'))
+
+    def test_v6_selection_has_no_free_request_after_the_common_round_budget(self):
+        self.config['limits']['max_requests']=2;self.config_file.write_text(json.dumps(self.config))
+        names=loop.test_manifest(self.files,['checks.py'])
+        fixed=dict(self.files);fixed['builder.py']=fixed['builder.py'].replace(OLD.encode(),NEW.encode())
+        transport=InterceptedTransport([self.proposal(),self.proposal(old=NEW,new=OLD),
+            {'status':'select_candidate','selected_content_id':loop.source_id(fixed),'summary':'Not dispatched.','edits':[]}])
+        code,result=self.invoke('api_test_feedback',transport,loop.ReplayVerifier([
+            self.observation(self.files,names[:2]),self.observation(fixed,names[1:2]),
+            self.observation(self.files,names[:2])]),proposal_contract='v6')
+        self.assertEqual((code,result['status'],len(transport.requests)),(0,'candidate_unverified',2))
+        self.assertEqual(len(transport.replies),1)
+        self.assertEqual(loop.verify_loop(self.out)['final_source_id'],loop.source_id(self.files))
+
+    def test_v5_request_bytes_with_history_remain_unchanged(self):
+        from dataclasses import asdict
+        # Captured from the audited 1dc164e project builder, never target code.
+        expected={'direct_api':'6d43fe78bb5e94a6da58aca7879adf8379cdd17248457a9fc35c2c501401704b',
+            'api_debugger':'cfa67c55c9ccbfec62c3ef665cfbeba7b31d70143a4dc1db1c48a553ebb3c854',
+            'api_test_feedback':'53a2dd2091177fb43fe9f048cbee1430e3936fb62c73a9c63d9be63b0a99fca5'}
+        names=loop.test_manifest(self.files,['checks.py'])
+        fixed=dict(self.files);fixed['builder.py']=fixed['builder.py'].replace(OLD.encode(),NEW.encode())
+        def record(bodies,failed):
+            return {'source_id':loop.source_id(bodies),'origin':'synthetic_replay','invalid':False,
+                'result':{'execution_status':'completed','observed_status':'failed'},
+                'outcomes':{n:'failed' if n in failed else 'passed' for n in names},'diagnostics':[]}
+        before=record(self.files,names[:2]);after=record(fixed,names[1:2])
+        proposal={'status':'candidate','summary':'Accepted development candidate.',
+            'base_content_id':loop.source_id(self.files),'hypothesis_id':'a'*64,
+            'evidence_ids':['issue-report'],'edits':[{'file':'builder.py','old':OLD,'new':NEW}]}
+        self.assertEqual(loop.digest(loop.output_contract('v5')),
+            'a5c13ee4827f55b4989e110c46bbc84f879fac1017b2236bbf5f996b114859b3')
+        for strategy,wanted in expected.items():
+            history=[loop._attempt_entry(1,proposal,loop.source_id(fixed),before,after,
+                feedback_enabled=strategy!='direct_api')]
+            request=loop._request(fixed,'Legacy saved selection compatibility.',
+                ['app.py','builder.py','records.py'],['checks.py'],after,2,
+                strategy=strategy,bound=True,proposal_contract='v5',attempt_history=history)
+            self.assertEqual(loop.digest(asdict(request)),wanted)
+
     def test_v5_history_distinguishes_regression_and_informs_the_third_edit(self):
         names=loop.test_manifest(self.files,['checks.py'])
         fixed=dict(self.files);fixed['builder.py']=fixed['builder.py'].replace(OLD.encode(),NEW.encode())

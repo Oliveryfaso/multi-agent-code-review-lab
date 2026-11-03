@@ -17,9 +17,9 @@ def add_parser(subparsers):
     parser.add_argument('--model-config', required=True, type=Path, help='Nonsecret shared model, limits and declared price schedule.')
     parser.add_argument('--out', required=True, type=Path, help='New exclusive local record directory.')
     parser.add_argument('--strategy', choices=('direct_api','api_test_feedback','api_debugger'), default='api_debugger')
-    parser.add_argument('--proposal-contract', choices=('v1','v2','v3','v4','v5'), default='v1',
-                        help='v2 retains candidates; v3 shares public outcomes; v4 adds public failure diagnostics; v5 adds bounded attempt history.')
-    parser.add_argument('--enable-remote',action='store_true',help='Explicit official HTTP mode; requires v2/v3/v4/v5 and a durable spend plan/cell.')
+    parser.add_argument('--proposal-contract', choices=('v1','v2','v3','v4','v5','v6'), default='v1',
+                        help='v2 retains candidates; v3 shares public outcomes; v4 adds public failure diagnostics; v5 adds history; v6 can select a saved candidate.')
+    parser.add_argument('--enable-remote',action='store_true',help='Explicit official HTTP mode; requires v2/v3/v4/v5/v6 and a durable spend plan/cell.')
     parser.add_argument('--spend-plan',type=Path,help='Nonsecret frozen spend plan; never a credential file.')
     parser.add_argument('--spend-cell',help='One exact planned cell; replay in another output directory is forbidden.')
 
@@ -156,7 +156,7 @@ def _run_durable(args,task,config,plan,binding,state):
                 if ledger.cell_id is not None:
                     status='stopped' if current['stopped'] or isinstance(failure,KeyboardInterrupt) else (
                         'failed' if failure is not None else 'budget_exhausted' if report['status']=='budget_exhausted'
-                        else 'completed' if report['status'] in ('candidate_unverified','candidate_finalized',
+                        else 'completed' if report['status'] in ('candidate_unverified','candidate_finalized','candidate_selected_unverified',
                             'no_candidate','insufficient_evidence') else 'failed')
                     ledger.finish_cell(status)
                 state['global_spend']=ledger.summary()
@@ -217,7 +217,7 @@ def score_handoff(record_root, plan, cell_id):
             or call['usage']['output_tokens'] > limits['max_output_per_request'])
             for call in meter['calls']))
     answer = not budget_failure and report['status'] in (
-        'simulation_passed','candidate_unverified','candidate_finalized','no_candidate','insufficient_evidence')
+        'simulation_passed','candidate_unverified','candidate_finalized','candidate_selected_unverified','no_candidate','insufficient_evidence')
     row['status'] = ('unknown' if report['unknown_request_reservation'] else
         'budget_exceeded' if budget_failure else 'answer_recorded' if answer else
         'verification_unavailable' if report['status']=='verification_unavailable' else
@@ -239,12 +239,19 @@ def score_handoff(record_root, plan, cell_id):
                                                  proposal_contract=proposal_contract)
                      for n in range(1,len(report['rounds'])+1)]
             final_output=chain[-1]
-            retained = final_output['status'] in ('candidate','finalize_current')
+            retained = final_output['status'] in ('candidate','finalize_current','select_candidate')
             row['verdict']='defect' if retained else 'unknown'
             row['final_output_sha256']=loop.digest(final_output)
             if retained: row['candidate_sha256']=report['final_source_id']
-        check=report['checks'][-1]
-        receipt={key:check[key] for key in ('source_id','spec','origin','outcomes','result')}
+        selection=report.get('final_selection')
+        if selection is not None:
+            row['verification_origin']='unavailable'
+            receipt={'source_id':selection['selected_source_id'],'origin':'unavailable',
+                'execution_status':'not_performed','selection':selection,
+                'historical_receipt_sha256':loop.digest(report['checks'][selection['accepted_round']])}
+        else:
+            check=report['checks'][-1]
+            receipt={key:check[key] for key in ('source_id','spec','origin','outcomes','result')}
         row['verification_receipt_sha256']=loop.digest(receipt)
     elif row['status']=='verification_unavailable':
         row['verification_origin']='unavailable'
@@ -275,7 +282,7 @@ def run(args):
         complete=remote and getattr(args,'spend_plan',None) is not None and getattr(args,'spend_cell',None) is not None
         requested=remote or getattr(args,'spend_plan',None) is not None or getattr(args,'spend_cell',None) is not None
         repair_loop._validate_strategy(args.strategy,args.proposal_contract)
-        repair_loop._require(not requested or (complete and args.proposal_contract in ('v2','v3','v4','v5')),'repair_remote_scope_required')
+        repair_loop._require(not requested or (complete and args.proposal_contract in ('v2','v3','v4','v5','v6')),'repair_remote_scope_required')
         task = load_task(args.repo,args.task)
         config = validate_config(_json(args.model_config))
         if remote:
@@ -300,10 +307,14 @@ def run(args):
             task_id=task['task_id'],strategy=args.strategy,remote_enabled=meter['remote_enabled'],
             model_configuration_sha256=meter['configuration_sha256'],
             cost_basis=meter['cost_basis'],total_seconds=report['total_seconds'])
+        if report.get('final_selection') is not None:
+            summary.update(selected_content_id=report['final_selection']['selected_source_id'],
+                           final_verification_status='not_rerun',verification_origin='unavailable',
+                           historical_verification_origin=report['verification_origin'])
         if remote:summary.update(global_spend=state['global_spend'],spend_status=state['spend_status'])
         print(json.dumps(summary))
         # No candidate or abstention here is declared a successful real repair.
-        return 0 if report['status'] in ('simulation_passed','candidate_unverified','candidate_finalized',
+        return 0 if report['status'] in ('simulation_passed','candidate_unverified','candidate_finalized','candidate_selected_unverified',
                                         'no_candidate','insufficient_evidence') else 2
     except (ContractError,ProviderError,OSError,ValueError,TypeError,KeyError,UnicodeError,RuntimeError,EOFError,KeyboardInterrupt) as error:
         provider=provider or state['provider']

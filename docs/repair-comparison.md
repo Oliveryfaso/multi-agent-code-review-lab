@@ -8,7 +8,7 @@ The explicit `macr.repair-comparison.spec.v2` contract compares three policies:
 | `api_test_feedback` | Same inputs plus public test feedback | Model may revise, finalize or withdraw after a pass |
 | `api_debugger` | Same inputs and same public test feedback | Coordinator stops on a public test pass |
 
-All three use the same explicit `--proposal-contract v3` (or v4/v5), model configuration,
+All three use the same explicit `--proposal-contract v3` (or v4/v5/v6), model configuration,
 initial source/issue/tests, edit permissions and per-cell request/token/dollar
 ceilings. A ceiling is an equal opportunity, not equal consumption. Reports retain
 actual calls, tokens, known local cost, unknown reserves and phase/total times.

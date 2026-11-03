@@ -25,6 +25,9 @@ class ThreeArmComparisonTests(unittest.TestCase):
                     repeats=repeats)
         contract = deepcopy(output_contract('v2'))
         contract['version'] = 'macr.repair.bound-proposal.'+proposal_contract
+        if proposal_contract == 'v6':
+            contract['fields'].append('selected_content_id')
+            contract['statuses'].append('select_candidate')
         spec['model']['output_contract_sha256'] = digest(contract)
         spec['tasks'] = [dict(task_id='case-'+str(n), **{key:comparison.result_digest([key,n])
             for key in ('snapshot_sha256','issue_sha256','visible_tests_sha256','initial_context_sha256')})
@@ -73,6 +76,15 @@ class ThreeArmComparisonTests(unittest.TestCase):
             '41c7806accb1f3f1b04423b4efe7cf8f2d67fc8c3c99b46a5afef6d8b9ddaf68')
         self.assertEqual(comparison.result_digest(comparison.generation_view(plan,spec['tasks'][0]['task_id'])),
             '709078ed4dbf5824b7c48a22d03b64448d387b14ce03263e99055103072b702b')
+
+    def test_v5_canonical_plan_report_and_generation_remain_unchanged(self):
+        spec=self.spec(proposal_contract='v5');plan=comparison.compile_comparison(spec)
+        self.assertEqual(comparison.result_digest(plan),
+            '359c54c7aac25b2fe58c1a2ae743638261eeda152ddcae607270660aae05308d')
+        self.assertEqual(comparison.result_digest(comparison.build_report(plan,{})),
+            '807bfa707e56145178cdf1c2b5a2579f7fa9e6741c10f8e00dc67192267d5697')
+        self.assertEqual(comparison.result_digest(comparison.generation_view(plan,spec['tasks'][0]['task_id'])),
+            '4b27cd90b5adc59ca2892917d7b273909be1cfbff655a39fa93f410d5449f056')
 
     def test_v2_three_arm_order_is_frozen_and_balanced_without_extra_authority(self):
         for tasks in (1,2,3,5,6,8):
@@ -163,6 +175,114 @@ class ThreeArmComparisonTests(unittest.TestCase):
     def test_v5_finalize_chain_keeps_current_candidate_in_unscored_handoff(self):
         self.finalize_chain('v5')
 
+    def selection_inputs(self, version='v6'):
+        from macr.investigation.repair_loop import source_id
+        files={'app.py':b'def value():\n    return 1\n',
+            'checks.py':b'import unittest\nclass Checks(unittest.TestCase):\n'
+                b'    def test_value(self):\n        self.assertTrue(True)\n'}
+        chosen=dict(files);chosen['app.py']=b'def value():\n    return 2\n'
+        last=dict(files);last['app.py']=b'def value():\n    return 3\n'
+        spec=self.spec(tasks=1,proposal_contract=version)
+        spec['tasks'][0].update(snapshot_sha256=source_id(files),
+            visible_tests_sha256=source_id({'checks.py':files['checks.py']}))
+        try:plan=comparison.compile_comparison(spec)
+        except ValueError as error:self.fail('explicit '+version+' selection plan should compile: '+str(error))
+        cell=plan['cells'][0]
+        def proposal(status, base, edits, selected=None):
+            return {'status':status,'summary':'Authored selection fixture, not a model repair.',
+                'base_content_id':base,'hypothesis_id':'1'*64,'evidence_ids':['issue-report'],
+                'edits':edits,'selected_content_id':selected}
+        first=proposal('candidate',source_id(files),[{'file':'app.py','old':'return 1','new':'return 2'}])
+        second=proposal('candidate',source_id(chosen),[{'file':'app.py','old':'return 2','new':'return 3'}])
+        selected=proposal('select_candidate',source_id(last),[],source_id(chosen))
+        receipt={'source_id':source_id(chosen),'origin':'unavailable','execution_status':'not_performed'}
+        row=self.row(spec,cell,reviewed=False)
+        row.update(candidate_origin='simulation',verification_origin='unavailable',requests=3,
+            candidate_sha256=source_id(chosen),final_output_sha256=comparison.result_digest(selected),
+            verification_receipt_sha256=comparison.result_digest(receipt))
+        return {'plan':plan,'cell_id':cell['cell_id'],'row':row,'original_files':files,
+            'editable_paths':['app.py'],'protected_paths':['checks.py'],
+            'proposal_chain':[first,second,selected],'final_output':selected,'verification_receipt':receipt}
+
+    def test_v6_selects_earlier_candidate_without_reapplying_or_granting_score(self):
+        from macr.investigation.repair_loop import source_id
+        from macr.investigation.repair_edits import apply_edits
+        from unittest.mock import patch
+        args=self.selection_inputs()
+        with patch('macr.investigation.repair_edits.apply_edits',wraps=apply_edits) as applied:
+            packet=comparison.score_packet(**args)
+        self.assertEqual(applied.call_count,2)
+        self.assertEqual(packet['candidate_files']['app.py'],'def value():\n    return 2\n')
+        self.assertEqual(packet['candidate_files']['checks.py'].encode(),args['original_files']['checks.py'])
+        last=dict(args['original_files']);last['app.py']=b'def value():\n    return 3\n'
+        self.assertEqual(packet['last_applied_source_id'],source_id(last))
+        self.assertNotEqual(packet['result']['candidate_sha256'],packet['last_applied_source_id'])
+        self.assertFalse(packet['semantic_truth_validated']);self.assertFalse(packet['provenance_authenticated'])
+        report=comparison.build_report(args['plan'],{args['cell_id']:packet['result']})
+        self.assertEqual(report['arms'][args['plan']['cells'][0]['arm']]['scored'],0)
+        self.assertEqual(report['planned_cells'],3)
+        legacy=self.selection_inputs('v5')
+        for current,wrong in ((args,legacy),(legacy,args)):
+            row=deepcopy(current['row'])
+            row['output_contract_sha256']=wrong['row']['output_contract_sha256']
+            with self.assertRaisesRegex(ValueError,'comparison_model_or_contract_mismatch'):
+                comparison.build_report(current['plan'],{current['cell_id']:row})
+
+    def test_v6_selection_rejects_unaccepted_missing_wrong_and_nonterminal_ids(self):
+        from macr.investigation.repair_loop import source_id
+        original_id=source_id(self.selection_inputs()['original_files'])
+        for selected in (None,'','f'*64,'not-a-digest',original_id):
+            args=self.selection_inputs();args['final_output']['selected_content_id']=selected
+            args['row']['final_output_sha256']=comparison.result_digest(args['final_output'])
+            with self.subTest(selected=selected),self.assertRaisesRegex(ValueError,'comparison_score_selection_contract'):
+                comparison.score_packet(**args)
+        args=self.selection_inputs();args['proposal_chain']=[args['final_output']]
+        args['final_output']['base_content_id']=source_id(args['original_files'])
+        args['row']['final_output_sha256']=comparison.result_digest(args['final_output'])
+        with self.assertRaisesRegex(ValueError,'comparison_score_selection_contract'):comparison.score_packet(**args)
+        args=self.selection_inputs();args['final_output']['edits']=[{'file':'app.py','old':'return 3','new':'return 2'}]
+        args['row']['final_output_sha256']=comparison.result_digest(args['final_output'])
+        with self.assertRaisesRegex(ValueError,'comparison_score_selection_contract'):comparison.score_packet(**args)
+        args=self.selection_inputs();args['proposal_chain'].insert(1,args['proposal_chain'].pop())
+        args['proposal_chain'][1]['base_content_id']=args['proposal_chain'][2]['base_content_id']
+        args['final_output']=args['proposal_chain'][-1]
+        args['row']['final_output_sha256']=comparison.result_digest(args['final_output'])
+        with self.assertRaisesRegex(ValueError,'comparison_score_selection_contract'):comparison.score_packet(**args)
+
+    def test_v6_selection_field_is_required_and_null_on_nonselection(self):
+        for status in ('candidate','no_candidate','insufficient_evidence','finalize_current'):
+            for missing in (False,True):
+                args=self.selection_inputs();item=args['proposal_chain'][0];item['status']=status
+                if missing:item.pop('selected_content_id')
+                else:item['selected_content_id']='f'*64
+                with self.subTest(status=status,missing=missing),self.assertRaisesRegex(
+                        ValueError,'comparison_score_selection_field'):comparison.score_packet(**args)
+        args=self.selection_inputs();args['row']['candidate_sha256']='f'*64
+        with self.assertRaisesRegex(ValueError,'comparison_score_candidate_binding'):comparison.score_packet(**args)
+        args=self.selection_inputs();args.pop('proposal_chain');args['edits']=[{'file':'app.py','old':'return 1','new':'return 2'}]
+        with self.assertRaisesRegex(ValueError,'comparison_score_selection_chain_required'):comparison.score_packet(**args)
+        args=self.selection_inputs('v5')
+        with self.assertRaisesRegex(ValueError,'comparison_score_selection_chain_required'):comparison.score_packet(**args)
+
+    def test_v6_can_select_current_or_a_later_accepted_baseline_snapshot(self):
+        from macr.investigation.repair_loop import source_id
+        for baseline in (False,True):
+            args=self.selection_inputs();final=args['final_output']
+            chosen=dict(args['original_files'])
+            if baseline:
+                args['proposal_chain'][1]['edits'][0]['new']='return 1'
+            else:chosen['app.py']=b'def value():\n    return 3\n'
+            final['base_content_id']=final['selected_content_id']=source_id(chosen)
+            args['row']['candidate_sha256']=source_id(chosen)
+            args['row']['final_output_sha256']=comparison.result_digest(final)
+            args['verification_receipt']['source_id']=source_id(chosen)
+            args['row']['verification_receipt_sha256']=comparison.result_digest(args['verification_receipt'])
+            packet=comparison.score_packet(**args)
+            self.assertEqual(packet['candidate_files']['app.py'].encode(),chosen['app.py'])
+
+    def test_v6_finalize_current_keeps_null_selection_and_current_candidate(self):
+        self.finalize_chain('v6')
+
     def finalize_chain(self, version):
         from macr.investigation.repair_edits import apply_edits
         from macr.investigation.repair_loop import source_id
@@ -179,6 +299,7 @@ class ThreeArmComparisonTests(unittest.TestCase):
         cell=plan['cells'][0]
         first={'status':'candidate','base_content_id':source_id(files),'edits':edits}
         final={'status':'finalize_current','base_content_id':source_id(changed),'edits':[]}
+        if version == 'v6':first['selected_content_id']=final['selected_content_id']=None
         receipt={'origin':'simulation','target_code_executed':False}
         row=self.row(spec,cell,reviewed=False)
         row.update(candidate_origin='simulation',verification_origin='simulation',requests=2,

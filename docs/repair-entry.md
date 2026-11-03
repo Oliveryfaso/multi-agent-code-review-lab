@@ -204,6 +204,30 @@ difference is automatic stopping on a public pass. This change does not add
 model calls, select an earlier candidate, enable verification, or demonstrate
 combination gains. `finalize_current` always retains the current candidate.
 
+### Select an accepted source (explicit v6)
+
+`--proposal-contract v6` adds `select_candidate` as a terminal model action.
+Every v6 response includes `selected_content_id`: `null` for ordinary statuses,
+or an accepted `candidate_content_id` from this task's attempt history when
+selecting. Selection requires empty edits. Unknown IDs, candidates from other
+runs, and the initial source unless it was later accepted as a candidate are
+rejected. No model-supplied filesystem path is opened.
+
+All three strategies have the same action and source choices under their
+existing budgets. Choosing consumes a normal model request; no selection is
+dispatched after the round limit. The coordinator retrieves the exact saved
+source and protected tests, records the task and accepted round, and ends with
+`candidate_selected_unverified`. It does not apply another patch, run another
+check, automatically rank candidates, or mutate the original repository.
+
+Earlier checks remain historical records. The final CLI and pending score
+packet explicitly say verification was not rerun; a historical public pass is
+not copied into a fresh pass or repair claim. All previous attempts, failures,
+calls and costs remain recorded. Independent final scoring must verify the
+chosen source. V1–V5 behavior and request bytes remain unchanged; a comparison
+must uniformly bind v6 to use this action. Real-model repair gains and runtime
+verification remain untested.
+
 ## Source and scoring boundary
 
 The neutral task has exactly `schema`, `task_id`, `issue`, `source_files` (SHA256

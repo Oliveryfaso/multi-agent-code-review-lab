@@ -138,7 +138,7 @@ def compile_comparison(spec: dict) -> dict:
     if three:
         from macr.investigation.repair_loop import output_contract, digest
         _require(any(spec['model']['output_contract_sha256'] == digest(output_contract(version))
-                     for version in ('v3','v4','v5')),
+                     for version in ('v3','v4','v5','v6')),
                  'comparison_three_arm_output_contract')
     limits = spec['limits']
     _object(limits, {'max_requests', 'input_tokens', 'output_tokens', 'max_usd'},
@@ -333,9 +333,19 @@ def score_packet(plan: dict, cell_id: str, row: dict, *, original_files: dict,
     cell = next((c for c in plan['cells'] if c['cell_id'] == cell_id), None)
     _require(cell is not None, 'comparison_score_cell_missing')
     task = next(t for t in plan['spec']['tasks'] if t['task_id'] == cell['task_id'])
-    finalize_versions = ('v3','v4','v5') if plan['spec']['schema']==SCHEMA_V2 else ('v2',)
+    finalize_versions = ('v3','v4','v5','v6') if plan['spec']['schema']==SCHEMA_V2 else ('v2',)
     finalize_allowed = any(plan['spec']['model']['output_contract_sha256'] ==
                            digest(output_contract(version)) for version in finalize_versions)
+    selection_allowed = (plan['spec']['schema']==SCHEMA_V2 and
+        plan['spec']['model']['output_contract_sha256']==digest(output_contract('v6')))
+    if type(final_output) is dict:
+        if final_output.get('status') == 'select_candidate':
+            _require(selection_allowed and proposal_chain is not None,
+                     'comparison_score_selection_chain_required')
+        if selection_allowed:
+            _require('selected_content_id' in final_output and
+                (final_output.get('status') == 'select_candidate' or final_output['selected_content_id'] is None),
+                'comparison_score_selection_field')
     _require(type(row) is dict and row.get('review') is None, 'comparison_score_review_must_be_separate')
     _row(row, task, plan['spec'])
     validate_files(original_files)
@@ -349,7 +359,7 @@ def score_packet(plan: dict, cell_id: str, row: dict, *, original_files: dict,
     _require(source_id(original_files) == task['snapshot_sha256']
         and source_id({p:original_files[p] for p in protected_paths}) == task['visible_tests_sha256'],
         'comparison_score_source_binding')
-    changed = None; last_applied = original_files; has_candidate = False
+    changed = None; last_applied = original_files; has_candidate = False; accepted = {}
     if proposal_chain is not None:
         bounded_json(proposal_chain, max_bytes=65536, max_depth=16, utf8_bytes=True)
         _require(edits is None and type(proposal_chain) is list
@@ -357,14 +367,24 @@ def score_packet(plan: dict, cell_id: str, row: dict, *, original_files: dict,
                  'comparison_score_chain_contract')
         for index, proposal in enumerate(proposal_chain):
             _require(type(proposal) is dict and proposal.get('base_content_id') == source_id(last_applied)
-                and proposal.get('status') in ('candidate', 'no_candidate', 'insufficient_evidence',
-                                               'finalize_current')
+                and proposal.get('status') in (('candidate', 'no_candidate', 'insufficient_evidence',
+                                               'finalize_current', 'select_candidate') if selection_allowed else
+                                              ('candidate', 'no_candidate', 'insufficient_evidence','finalize_current'))
                 and type(proposal.get('edits')) is list, 'comparison_score_chain_binding')
+            if selection_allowed:
+                _require('selected_content_id' in proposal and (proposal['status'] == 'select_candidate'
+                    or proposal['selected_content_id'] is None), 'comparison_score_selection_field')
             if proposal['status'] == 'candidate':
                 last_applied = apply_edits(last_applied, proposal['edits'], editable_paths=editable_paths)
                 _require(all(last_applied[p] == original_files[p] for p in protected_paths),
                          'comparison_score_chain_protected')
                 has_candidate = True
+                accepted[source_id(last_applied)] = last_applied
+            elif proposal['status'] == 'select_candidate':
+                selected = proposal['selected_content_id']
+                _require(index == len(proposal_chain)-1 and proposal['edits'] == []
+                    and _hash(selected) and selected in accepted, 'comparison_score_selection_contract')
+                changed = accepted[selected]
             elif proposal['status'] == 'finalize_current':
                 _require(finalize_allowed and has_candidate and index == len(proposal_chain)-1
                     and proposal['edits'] == [], 'comparison_score_finalize_contract')
@@ -392,14 +412,16 @@ def score_packet(plan: dict, cell_id: str, row: dict, *, original_files: dict,
             'comparison_score_artifact_binding')
     if row['status'] == 'answer_recorded':
         _require(type(final_output) is dict and final_output.get('status') in
-            ('candidate', 'no_candidate', 'insufficient_evidence', 'finalize_current')
+            (('candidate', 'no_candidate', 'insufficient_evidence', 'finalize_current','select_candidate')
+             if selection_allowed else ('candidate', 'no_candidate', 'insufficient_evidence','finalize_current'))
             and type(final_output.get('edits')) is list, 'comparison_score_proposal_contract')
         finalized = final_output['status'] == 'finalize_current'
+        selected = final_output['status'] == 'select_candidate'
         _require(not finalized or (finalize_allowed and proposal_chain is not None),
                  'comparison_score_finalize_chain_required')
         if changed is not None:
             expected_edits = proposal_chain[-1]['edits'] if proposal_chain is not None else edits
-            _require((final_output['status'] == 'candidate' or finalized)
+            _require((final_output['status'] == 'candidate' or finalized or selected)
                 and final_output['edits'] == expected_edits,
                      'comparison_score_proposal_candidate_mismatch')
         else:
