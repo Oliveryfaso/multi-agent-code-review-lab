@@ -123,9 +123,10 @@ the normal checkout entry, intercepted provider responses, budgeting and pending
 scoring records. They are software regression checks, not 335 model-evaluation
 tasks, and establish no real repair or combination-quality gain.
 
-A separate set of 37 optional recovery checks remains unverified because its
-locked LangGraph/SQLite/LangSmith environment is unavailable. No dependency was
-installed and no affected test was deleted or skipped to claim a complete pass.
-That optional implementation is not a dependency of this default-disabled repair
-entry. The installed global console script, live services and target execution
-were not tested; the repository's documented checkout wrapper was.
+A separate set of 37 optional recovery checks also passed with zero skips in
+the exact 41-package hash-locked Python 3.12 macOS arm64 environment. These use
+native LangGraph/SQLite checkpoints and a fixed mock provider; they do not prove
+production recovery or exactly-once external effects. That optional command is
+not a dependency of this default-disabled repair entry. The installed global
+console script, live services and target execution were not tested; the
+repository's documented checkout wrapper was.
