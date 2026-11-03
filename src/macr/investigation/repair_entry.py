@@ -1,4 +1,4 @@
-"""Normal CLI boundary for a neutral, bounded repair task. No live transport."""
+"""Normal repair CLI; official HTTP requires an explicit bounded spend plan."""
 from __future__ import annotations
 
 import json
@@ -19,6 +19,9 @@ def add_parser(subparsers):
     parser.add_argument('--strategy', choices=('direct_api','api_debugger'), default='api_debugger')
     parser.add_argument('--proposal-contract', choices=('v1','v2'), default='v1',
                         help='v2 explicitly allows retaining the current candidate; legacy v1 is unchanged.')
+    parser.add_argument('--enable-remote',action='store_true',help='Explicit official HTTP mode; requires v2 and a durable spend plan/cell.')
+    parser.add_argument('--spend-plan',type=Path,help='Nonsecret frozen spend plan; never a credential file.')
+    parser.add_argument('--spend-cell',help='One exact planned cell; replay in another output directory is forbidden.')
 
 
 def _json(path):
@@ -59,9 +62,111 @@ def load_task(repo, task_path):
 
 
 def _make_provider(config):
-    # No Key lookup, socket transport or remote enable flag is reachable here.
+    # The default application path still has no credential reader or transport.
     from macr.providers.repair_binding import RepairProviderBinding
     return RepairProviderBinding(config)
+
+
+def spend_binding_sha256(task,strategy,config,*,proposal_contract='v2'):
+    """Bind neutral data and common limits, independently of an output path."""
+    from . import repair_loop as loop
+    from macr.providers.repair_binding import validate_config
+    loop._require(type(task) is dict and set(task)==_TASK_FIELDS,'neutral_task_contract')
+    loop._require(strategy in ('direct_api','api_debugger'),'strategy')
+    return loop.digest({'task':task,'strategy':strategy,
+        'configuration_sha256':loop.digest(validate_config(config)),
+        'output_contract_sha256':loop.digest(loop.output_contract(proposal_contract))})
+
+
+def _read_runtime_credential():
+    """One temporary terminal input; no discovery, echo fallback or logging."""
+    import getpass,sys,warnings
+    from macr.providers.base import ProviderError
+    value=None;failed=False
+    try:
+        if not sys.stdin.isatty():failed=True
+        else:
+            with warnings.catch_warnings():
+                warnings.simplefilter('error',getpass.GetPassWarning)
+                value=getpass.getpass('DeepSeek API Key (hidden): ')
+    except (Exception,KeyboardInterrupt):failed=True
+    if failed or not (type(value) is str and 0<len(value)<=4096
+                      and all(33<=ord(c)<=126 for c in value)):
+        value=None
+        raise ProviderError('repair_credential_input_unavailable')
+    return value
+
+
+def _make_runtime_provider(config,ledger,*,credential_reader):
+    from macr.providers.repair_binding import RepairProviderBinding
+    from macr.providers.repair_transport import OfficialRepairTransport
+    return RepairProviderBinding(config,spend_ledger=ledger,
+        transport=OfficialRepairTransport(credential_reader,allow_remote=True))
+
+
+def _runtime_plan(args,task,config):
+    import time
+    from macr.providers.repair_spend import validate_spend_plan
+    from . import repair_loop as loop
+    from .scope import validate_workspace_path
+    plan=validate_spend_plan(_json(args.spend_plan))
+    binding=spend_binding_sha256(task,args.strategy,config,proposal_contract=args.proposal_contract)
+    loop._require(plan['configuration_sha256']==loop.digest(config)
+        and plan['output_contract_sha256']==loop.digest(loop.output_contract(args.proposal_contract))
+        and any(c=={'cell_id':args.spend_cell,'binding_sha256':binding} for c in plan['cells']),
+        'repair_spend_scope_mismatch')
+    loop._require(time.time()<plan['expires_at'],'repair_spend_expired')
+    ledger_root=Path(plan['ledger_root']);out=Path(args.out).absolute();repo=Path(args.repo).absolute()
+    validate_workspace_path(ledger_root,output=True);validate_workspace_path(out,output=True)
+    for a,b in ((ledger_root,out),(ledger_root,repo),(repo,out)):
+        loop._require(not(a==b or a.is_relative_to(b) or b.is_relative_to(a)),'repair_spend_output_overlap')
+    loop._require(out==out.resolve() and not out.exists(),'output_exists_no_resume')
+    loop._root(out.parent)
+    return plan,binding
+
+
+def _run_report(args,task,provider,verifier):
+    from . import repair_loop as loop
+    return loop.run_repair_loop(args.repo,task['issue'],editable_paths=task['editable_paths'],
+        test_paths=task['test_paths'],task_id=task['task_id'],strategy=args.strategy,provider=provider,
+        proposal_contract=args.proposal_contract,verifier=verifier,out=args.out,
+        expected_source_files=task['source_files'])
+
+
+def _run_durable(args,task,config,plan,binding,state):
+    from . import repair_loop as loop
+    from macr.providers.repair_spend import RepairSpendLedger
+    box={};failure=None;report=None
+    try:
+        with RepairSpendLedger(Path(plan['ledger_root']),plan,config) as ledger:
+            state['global_spend']=ledger.summary()
+            try:
+                loop._require(not state['global_spend']['stopped'],'repair_spend_stopped')
+                ledger.claim_cell(args.spend_cell,binding)
+                box['credential']=_read_runtime_credential()
+                provider=_make_runtime_provider(config,ledger,credential_reader=lambda:box['credential'])
+                state['provider']=provider
+                loop._require(provider.config==config,'provider_config_binding')
+                report=_run_report(args,task,provider,None)
+            except BaseException as error:
+                failure=error
+            finally:
+                box.clear()
+                current=ledger.summary()
+                if ledger.cell_id is not None:
+                    status='stopped' if current['stopped'] or isinstance(failure,KeyboardInterrupt) else (
+                        'failed' if failure is not None else 'budget_exhausted' if report['status']=='budget_exhausted'
+                        else 'completed' if report['status'] in ('candidate_unverified','candidate_finalized',
+                            'no_candidate','insufficient_evidence') else 'failed')
+                    ledger.finish_cell(status)
+                state['global_spend']=ledger.summary()
+        state['spend_status']='reconciled'
+    except BaseException:
+        state['global_spend']=None;state['spend_status']='unreconciled'
+        raise
+    finally:box.clear()
+    if failure is not None:raise failure
+    return report
 
 
 def _verification_backend():
@@ -120,7 +225,7 @@ def score_handoff(record_root, plan, cell_id):
         'not_attempted' if meter['requests']==0 else 'contract_failed')
     final_output = None; chain = None; receipt = None
     if meter['requests']:
-        row.update(candidate_origin='simulation',verification_origin=(
+        row.update(candidate_origin=('provider_unattested' if 'provider_runtime' in config else 'simulation'),verification_origin=(
             'simulation' if report['verification_origin']=='synthetic_replay' else 'unavailable'),
             requests=meter['requests'],input_tokens=report['input_tokens'],output_tokens=report['output_tokens'],
             known_usd=meter['known_usd'],unknown_reserved_usd=meter['unknown_reserved_usd'],
@@ -164,32 +269,49 @@ def run(args):
     from . import repair_loop
     from .validation import ContractError
     provider = None
+    state={'provider':None,'global_spend':None,'spend_status':'unreconciled'}
+    remote=getattr(args,'enable_remote',False)
     try:
+        complete=remote and getattr(args,'spend_plan',None) is not None and getattr(args,'spend_cell',None) is not None
+        requested=remote or getattr(args,'spend_plan',None) is not None or getattr(args,'spend_cell',None) is not None
+        repair_loop._require(not requested or (complete and args.proposal_contract=='v2'),'repair_remote_scope_required')
         task = load_task(args.repo,args.task)
         config = validate_config(_json(args.model_config))
-        provider = _make_provider(config)
-        repair_loop._require(provider.config == config, 'provider_config_binding')
-        report = repair_loop.run_repair_loop(args.repo,task['issue'],
-            editable_paths=task['editable_paths'],test_paths=task['test_paths'],
-            task_id=task['task_id'],strategy=args.strategy,provider=provider,
-            proposal_contract=args.proposal_contract,
-            verifier=_verification_backend(),out=args.out,expected_source_files=task['source_files'])
+        if remote:
+            plan,binding=_runtime_plan(args,task,config)
+            if args.strategy=='api_debugger':
+                # No supported real verifier exists. A synthetic replay is not
+                # authority to consume a live cell or read a credential.
+                state['spend_status']='not_opened_no_verifier'
+                provider=_make_provider(config)
+                repair_loop._require(provider.config==config,'provider_config_binding')
+                report=_run_report(args,task,provider,None)
+            else:
+                report=_run_durable(args,task,config,plan,binding,state);provider=state['provider']
+        else:
+            provider=_make_provider(config)
+            repair_loop._require(provider.config==config,'provider_config_binding')
+            report=_run_report(args,task,provider,_verification_backend())
         meter = report['provider_accounting']
         summary = {key:report[key] for key in ('status','simulation','proposal_requests','provider_requests',
             'candidate_origin','verification_origin','repaired','target_code_executed','input_tokens','output_tokens')}
         summary.update(known_usd=meter['known_usd'],unknown_reserved_usd=meter['unknown_reserved_usd'],
-            task_id=task['task_id'],strategy=args.strategy,remote_enabled=False,
+            task_id=task['task_id'],strategy=args.strategy,remote_enabled=meter['remote_enabled'],
             model_configuration_sha256=meter['configuration_sha256'],
             cost_basis=meter['cost_basis'],total_seconds=report['total_seconds'])
+        if remote:summary.update(global_spend=state['global_spend'],spend_status=state['spend_status'])
         print(json.dumps(summary))
         # No candidate or abstention here is declared a successful real repair.
         return 0 if report['status'] in ('simulation_passed','candidate_unverified','candidate_finalized',
                                         'no_candidate','insufficient_evidence') else 2
-    except (ContractError,ProviderError,OSError,ValueError,TypeError,KeyError,UnicodeError) as error:
+    except (ContractError,ProviderError,OSError,ValueError,TypeError,KeyError,UnicodeError,RuntimeError,EOFError,KeyboardInterrupt) as error:
+        provider=provider or state['provider']
         meter = provider.snapshot() if provider is not None else None
-        print(json.dumps({'status':'rejected','error':getattr(error,'code','repair_input_invalid'),
+        summary={'status':'rejected','error':getattr(error,'code','repair_input_invalid'),
             'provider_requests':meter['requests'] if meter else 0,
             'known_usd':meter['known_usd'] if meter else '0.000000',
             'unknown_reserved_usd':meter['unknown_reserved_usd'] if meter else '0.000000',
-            'target_code_executed':False,'remote_enabled':False}))
+            'target_code_executed':False,'remote_enabled':meter['remote_enabled'] if meter else False}
+        if remote:summary.update(global_spend=state['global_spend'],spend_status=state['spend_status'])
+        print(json.dumps(summary))
         return 2

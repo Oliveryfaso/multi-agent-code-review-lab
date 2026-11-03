@@ -28,6 +28,7 @@ MIB = 1024 * 1024
 OFFLINE_MODULES = frozenset({
     'test_repair_io', 'test_repair_loop', 'test_repair_edits', 'test_repair_entry',
     'test_repair_provider_binding', 'test_repair_scoring_flow', 'test_repair_comparison',
+    'test_repair_transport', 'test_repair_spend', 'test_repair_runtime_binding',
     'test_deepseek_conversation', 'test_provider_billing_evidence',
     'test_provider_identity_evidence', 'test_provider_failure_structure',
     'test_offline_tests', 'test_code_graph', 'test_repository_scope',

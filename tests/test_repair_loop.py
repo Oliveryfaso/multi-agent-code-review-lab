@@ -16,6 +16,22 @@ from macr.providers.base import ProviderError
 
 
 class RepairLoopTests(TestCase):
+    def test_legacy_record_cannot_claim_configured_http_provenance(self):
+        self.run_loop([], [self.observation(self.files)])
+        original=loop._read(self.out,'report.json')
+        changed=deepcopy(original);changed['simulation']=False
+        changed['candidate_origin']='official_https_output_unattested'
+        loop._write(self.out,'report.json',changed)
+        with self.assertRaises(ContractError):loop.verify_loop(self.out)
+        claim=loop._read(self.out,'claim.json')
+        claim['config']['provider_runtime']={'spend_commitment':{'plan_sha256':'0'*64,'cell_id':'fake'},
+                                            'remote_enabled':True}
+        loop._write(self.out,'claim.json',claim)
+        changed['config_sha256']=loop.digest(claim['config'])
+        changed['artifact_hashes']=loop._file_hashes(self.out,skip=('report.json',))
+        loop._write(self.out,'report.json',changed)
+        with self.assertRaises(ContractError):loop.verify_loop(self.out)
+
     def versioned_loop(self, replies, *, strategy='api_debugger', proposal_contract='v2'):
         fixed = dict(self.files)
         fixed['builder.py'] = fixed['builder.py'].replace(OLD.encode(), NEW.encode())

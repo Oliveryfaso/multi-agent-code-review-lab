@@ -1,9 +1,10 @@
-"""Shared repair-model contract and in-memory meter, with no network activation.
+"""Shared repair-model contract; durable HTTP mode is explicitly opt-in.
 
 The normal provider encoder/parser is reused with an injected transport. Local
 prices and input envelopes are declared engineering assumptions, not a verified
 current tariff or supplier-enforced spending cap. No credential input exists.
-This meter is not a durable multi-process ledger or live-run authorization.
+The default meter is in-memory. An explicit durable binding shares the existing
+HTTP adapter and a locked spend ledger; neither is operator/model attestation.
 """
 from __future__ import annotations
 
@@ -114,9 +115,25 @@ class RepairProviderBinding:
     """
     name = 'repair_deepseek_binding'
 
-    def __init__(self, config, *, transport=None):
+    def __init__(self, config, *, transport=None, spend_ledger=None):
         self._config = validate_config(config)
         self._transport = transport
+        self._spend = spend_ledger
+        self._spend_ref = None
+        self._durable_stop = False
+        self._official_http = False
+        from .repair_transport import OfficialRepairTransport
+        if spend_ledger is not None:
+            from .repair_spend import RepairSpendLedger
+            _require(type(spend_ledger) is RepairSpendLedger, 'repair_durable_claim_required')
+            ref = spend_ledger.ref(); state = spend_ledger.summary()
+            _require(type(ref['cell_id']) is str and ref['cell_id']
+                and state['configuration_sha256'] == sha256(encode_bounded(self._config,8192)).hexdigest()
+                and not state['stopped'], 'repair_durable_claim_required')
+            self._spend_ref = deepcopy(ref)
+        if type(transport) is OfficialRepairTransport:
+            _require(spend_ledger is not None and transport.enabled, 'repair_durable_claim_required')
+            self._official_http = True
         self._requests = self._inputs = self._outputs = self._known = self._reserved = 0
         self._stopped = False
         self._fingerprint = self._config['expected_fingerprint']
@@ -190,9 +207,13 @@ class RepairProviderBinding:
         _require(self._transport is not None, 'remote_disabled')
         _require(self._lock.acquire(blocking=False), 'repair_binding_busy')
         before = self._requests
+        completed = None
+        failure = None
         try:
-            return self._complete(request)
-        except BaseException:
+            completed = self._complete(request)
+            return completed
+        except BaseException as error:
+            failure = error
             # Once an invocation has a dispatch intent, interruption is not
             # proof of remote cancellation. Never leave this object reusable.
             if self._requests > before:
@@ -202,7 +223,26 @@ class RepairProviderBinding:
                     call['status'] = 'outcome_unknown' if call['reservation_retained'] else 'processing_failed'
             raise
         finally:
-            self._lock.release()
+            try:
+                if self._spend is not None and self._requests > before:
+                    try:
+                        state = self._spend.settle(self._calls[-1])
+                    except BaseException as error:
+                        self._stopped = self._durable_stop = True
+                        if not isinstance(error, Exception): raise
+                        if failure is not None and not isinstance(failure, Exception): raise failure
+                        original = failure if isinstance(failure, ProviderError) else None
+                        raise ProviderError('repair_durable_settlement_unknown',
+                            response=completed if completed is not None else original.response if original else None,
+                            diagnostic=original.diagnostic if original else None,
+                            billing_evidence=original.billing_evidence if original else None,
+                            identity_evidence=original.identity_evidence if original else None) from None
+                    if state['stopped']:
+                        self._stopped = self._durable_stop = True
+                        if completed is not None:
+                            raise ProviderError('repair_durable_stopped',response=completed)
+            finally:
+                self._lock.release()
 
     def _complete(self, request):
         _require(not self._stopped,'repair_binding_stopped')
@@ -230,6 +270,15 @@ class RepairProviderBinding:
             'reservation_retained':True,'known_micro_usd':0,'usage':{},'identity':None,
             'billing_evidence':None,'identity_evidence':None,
             'diagnostic':None,'status':'dispatch_intent','provider_seconds':0.0}
+        if self._spend is not None:
+            try:
+                _require(self._spend.ref() == self._spend_ref, 'repair_durable_claim_changed')
+                # The durable, cross-cell reservation must exist before I/O or
+                # the in-memory invocation count can advance.
+                self._spend.reserve(call)
+            except Exception:
+                self._stopped = self._durable_stop = True
+                raise ProviderError('repair_durable_reservation_failed') from None
         self._requests+=1; self._reserved+=reserve
         self._calls.append(call); started=perf_counter()
         try:
@@ -270,7 +319,7 @@ class RepairProviderBinding:
         return response
 
     def snapshot(self):
-        return deepcopy({'schema':'macr.repair.provider-meter.v1','requests':self._requests,
+        snapshot = {'schema':'macr.repair.provider-meter.v1','requests':self._requests,
             'attempted_calls':self._requests,'enabled':self.enabled,
             'status':'stopped' if self._stopped else 'in_flight' if self._calls and self._calls[-1]['status']=='dispatch_intent'
                 else 'ready' if self.enabled else 'disabled',
@@ -282,7 +331,14 @@ class RepairProviderBinding:
             'remote_enabled':False,'transport_origin':'injected_unverified' if self._transport is not None else 'disabled',
             'cost_basis':'caller_schedule_all_input_miss_rounded_up_not_supplier_invoice',
             'identity_authenticated':False,'durable_cross_process_ledger':False,
-            'automatic_retry_allowed':False})
+            'automatic_retry_allowed':False}
+        if self._spend is not None:
+            snapshot.update(schema='macr.repair.provider-meter.v2',
+                spend_commitment=self._spend_ref, durable_stop=self._durable_stop,
+                durable_cross_process_ledger=True, remote_enabled=self._official_http,
+                transport_origin=('official_https_configured_unattested' if self._official_http
+                                  else 'injected_unverified' if self.enabled else 'disabled'))
+        return deepcopy(snapshot)
 
 
 def validate_meter(config, snapshot, request_digests):
@@ -294,8 +350,19 @@ def validate_meter(config, snapshot, request_digests):
     """
     try:
         binding=RepairProviderBinding(config)
+        durable = type(snapshot) is dict and snapshot.get('schema') == 'macr.repair.provider-meter.v2'
         fields=set(binding.snapshot())
+        if durable:
+            fields |= {'spend_commitment','durable_stop'}
         _require(type(snapshot) is dict and set(snapshot)==fields,'repair_meter_invalid')
+        if durable:
+            ref = snapshot['spend_commitment']
+            _require(type(ref) is dict and set(ref) == {'plan_sha256','cell_id'}
+                and type(ref['plan_sha256']) is str and re.fullmatch('[0-9a-f]{64}',ref['plan_sha256'])
+                and type(ref['cell_id']) is str and re.fullmatch('[A-Za-z0-9][A-Za-z0-9_.-]{0,95}',ref['cell_id'])
+                and type(snapshot['durable_stop']) is bool and type(snapshot['remote_enabled']) is bool
+                and snapshot['durable_cross_process_ledger'] is True
+                and (not snapshot['remote_enabled'] or snapshot['enabled'] is True),'repair_meter_invalid')
         _require(all(type(snapshot[key]) is int and snapshot[key]>=0 for key in
             ('requests','attempted_calls','input_tokens','output_tokens')),'repair_meter_invalid')
         _require(type(request_digests) is list and len(request_digests)<=16
@@ -395,6 +462,7 @@ def validate_meter(config, snapshot, request_digests):
                 terminal=True
             else:
                 _require(index==len(calls),'repair_meter_invalid')
+        if durable: terminal = terminal or snapshot['durable_stop']
         _require(type(snapshot['enabled']) is bool and type(snapshot['stopped']) is bool
             and snapshot['stopped']==terminal,'repair_meter_invalid')
         expected_status='stopped' if terminal else 'in_flight' if calls and calls[-1]['status']=='dispatch_intent' \
@@ -405,6 +473,13 @@ def validate_meter(config, snapshot, request_digests):
             stopped=terminal,expected_fingerprint=expected_fingerprint,calls=deepcopy(calls),
             enabled=snapshot['enabled'],status=expected_status,
             transport_origin='injected_unverified' if snapshot['enabled'] else 'disabled')
+        if durable:
+            expected.update(schema='macr.repair.provider-meter.v2',
+                spend_commitment=deepcopy(snapshot['spend_commitment']),
+                durable_stop=snapshot['durable_stop'],durable_cross_process_ledger=True,
+                remote_enabled=snapshot['remote_enabled'],
+                transport_origin=('official_https_configured_unattested' if snapshot['remote_enabled']
+                    else 'injected_unverified' if snapshot['enabled'] else 'disabled'))
         _require(snapshot==expected and (snapshot['enabled'] or not calls),'repair_meter_invalid')
         return deepcopy(snapshot)
     except (ProviderError,ValueError,TypeError,KeyError,OverflowError,RecursionError,AttributeError):

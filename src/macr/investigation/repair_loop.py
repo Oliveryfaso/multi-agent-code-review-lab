@@ -1,7 +1,8 @@
-"""Bounded repair feedback, with deliberately simulation-only dispatch adapters.
+"""Bounded repair feedback with explicit, unattested provider provenance.
 
 Repository text is parsed and snapshotted, never imported or executed. This path
-cannot enter native backends or remote providers. Synthetic passes remain data.
+cannot enter native execution backends. Configured HTTP is separately admitted
+by the CLI/ledger; injected responses and synthetic checks do not attest repair.
 """
 from __future__ import annotations
 
@@ -161,6 +162,27 @@ def read_proposal_response(root, number):
     return _read(root, f'rounds/{number}/response.json', utf8_bytes=True)
 
 
+def _runtime_reference(config):
+    if 'provider_runtime' not in config:return None
+    runtime=config['provider_runtime']
+    _require(type(runtime) is dict and set(runtime)=={'spend_commitment','remote_enabled'}
+        and type(runtime['remote_enabled']) is bool,'provider_runtime_binding')
+    ref=runtime['spend_commitment']
+    _require(type(ref) is dict and set(ref)=={'plan_sha256','cell_id'}
+        and type(ref['plan_sha256']) is str and len(ref['plan_sha256'])==64
+        and all(c in '0123456789abcdef' for c in ref['plan_sha256'])
+        and type(ref['cell_id']) is str and 0<len(ref['cell_id'])<=96,'provider_runtime_binding')
+    return runtime
+
+
+def _claim_mode(config,bound):
+    runtime=_runtime_reference(config)
+    if runtime is not None:
+        _require(bound,'provider_runtime_binding')
+        return 'bound_official_https_configured' if runtime['remote_enabled'] else 'bound_durable_unattested'
+    return 'bound_no_native_transport' if bound else 'simulation_only'
+
+
 def _file_hashes(root, *, skip=()):
     result = {}
     for count, (name, kind, size) in enumerate(walk_entries(root), 1):
@@ -299,7 +321,7 @@ def run_simulated_loop(repo, issue, *, editable_paths, test_paths, provider=None
 def run_repair_loop(repo, issue, *, editable_paths, test_paths, provider, out,
                     strategy='api_debugger', task_id='repair', verifier=None, expected_source_files=None,
                     proposal_contract='v1'):
-    """Normal application route; the shared binding has no native network transport.
+    """Normal route; configured HTTP still has no approved real validator.
 
     Real validation remains unavailable. Tests may inject the existing explicit
     replay seam, which stays synthetic. Direct self-review never receives it.
@@ -344,16 +366,19 @@ def _run_loop(repo, issue, *, editable_paths, test_paths, provider, verifier, ou
               max_rounds, max_total_input_tokens, max_total_output_tokens,
               strategy='api_debugger', task_id='development', expected_source_files=None,
               proposal_contract='v1'):
-    """Exercise the actual repair control flow using explicitly scripted adapters.
+    """Exercise the shared control flow with explicit provider provenance.
 
     Exclusive output directory is the no-resume claim. Partial sessions are never
-    restarted; inspect their intent files instead. No live implementation exists.
+    restarted; inspect their intent files instead. No real verifier is enabled.
     """
     started = time.monotonic()
     output_contract(proposal_contract)
     from macr.providers.repair_binding import RepairProviderBinding
     bound = type(provider) is RepairProviderBinding
     _require(provider is None or type(provider) is ScriptedPatchProvider or bound, 'provider_binding_required')
+    initial_meter=provider.snapshot() if bound else None
+    if initial_meter is not None and initial_meter.get('remote_enabled') is True:
+        _require(proposal_contract=='v2','remote_proposal_contract_required')
     _require(strategy in ('direct_api', 'api_debugger'), 'strategy')
     _require(type(task_id) is str and 0 < len(task_id) <= 128, 'task_id')
     _require(verifier is None or type(verifier) is ReplayVerifier, 'simulation_verifier_only')
@@ -383,7 +408,11 @@ def _run_loop(repo, issue, *, editable_paths, test_paths, provider, verifier, ou
         'strategy':strategy, 'task_id':task_id, 'provider_config':deepcopy(provider.config) if bound else None,
         'provider_enabled':provider.enabled if bound else provider is not None}
     if proposal_contract == 'v2': config['proposal_contract'] = 'v2'
-    _write(out, 'claim.json', {'mode': 'bound_no_native_transport' if bound else 'simulation_only', 'config': config})
+    if bound:
+        if initial_meter['schema']=='macr.repair.provider-meter.v2':
+            config['provider_runtime']={'spend_commitment':deepcopy(initial_meter['spend_commitment']),
+                                       'remote_enabled':initial_meter['remote_enabled']}
+    _write(out, 'claim.json', {'mode':_claim_mode(config,bound), 'config': config})
     store = SnapshotStore(out/'snapshots', allowed_root=out)
     checks = []; rounds = []; inputs = outputs = attempts = accepted_candidates = 0
     provider_seconds = validation_seconds = 0.0
@@ -476,8 +505,10 @@ def _run_loop(repo, issue, *, editable_paths, test_paths, provider, verifier, ou
     meter = provider.snapshot() if bound else None
     if meter is not None: _write(out, 'provider-accounting.json', meter)
     total_seconds = time.monotonic()-started
-    report = {'schema': config['schema'], 'status': status, 'simulation': True,
-        'candidate_origin': 'provider_output_unattested' if bound else 'scripted_provider',
+    runtime=_runtime_reference(config)
+    official=runtime is not None and runtime['remote_enabled']
+    report = {'schema': config['schema'], 'status': status, 'simulation': not official,
+        'candidate_origin': 'official_https_output_unattested' if official else 'provider_output_unattested' if bound else 'scripted_provider',
         'verification_origin': 'synthetic_replay' if verifier else 'unavailable',
         'proposal_requests': attempts, 'real_model_calls': None if bound and meter['requests'] else 0,
         'paid_requests': None if bound and meter['requests'] else 0,
@@ -496,7 +527,8 @@ def _run_loop(repo, issue, *, editable_paths, test_paths, provider, verifier, ou
         'provider_accounting':meter,
         'limitations': ['Synthetic outcomes do not prove failure reproduction, repair, model autonomy or isolation.',
                         'Declared unittest names do not attest collection or test adequacy.',
-                        'No live dispatch or resume adapter exists; unavailable and unknown stop the loop.'],
+                        ('Configured HTTP and local hashes do not authenticate the producer; no resume or real verifier is enabled.'
+                         if runtime is not None else 'No live dispatch or resume adapter exists; unavailable and unknown stop the loop.')],
         'artifact_hashes': _file_hashes(out)}
     _write(out, 'report.json', report)
     return verify_loop(out)
@@ -508,13 +540,15 @@ def verify_loop(out):
     config = claim['config']
     output_contract(config.get('proposal_contract','v1'))
     bound = config.get('provider_config') is not None
+    runtime=_runtime_reference(config)
+    official=runtime is not None and runtime['remote_enabled']
     _require(report['artifact_hashes'] == _file_hashes(out, skip=('report.json',))
-        and report['config_sha256'] == digest(config) and claim['mode'] == (
-            'bound_no_native_transport' if bound else 'simulation_only'), 'artifact_binding')
-    _require(report['simulation'] is True and report['repaired'] is False
+        and report['config_sha256'] == digest(config) and claim['mode']==_claim_mode(config,bound), 'artifact_binding')
+    _require(report['simulation'] is (not official) and report['repaired'] is False
         and report['target_code_executed'] is False and report['execution_authorized'] is False
         and report['real_model_calls'] == report['paid_requests'] == (None if bound and report['provider_requests'] else 0)
-        and report['candidate_origin'] == ('provider_output_unattested' if bound else 'scripted_provider'), 'simulation_boundary')
+        and report['candidate_origin'] == ('official_https_output_unattested' if official else
+            'provider_output_unattested' if bound else 'scripted_provider'), 'simulation_boundary')
     files = _files(out/'sources/0'); original = files
     _require(_hashes(files) == config['original_hashes']
         and test_manifest(files, config['test_paths']) == config['test_names'], 'original_binding')
@@ -551,6 +585,13 @@ def verify_loop(out):
         from macr.providers.repair_binding import validate_meter
         _require(meter == _read(out, 'provider-accounting.json'), 'provider_meter_binding')
         validate_meter(config['provider_config'],meter,[r['request_sha256'] for r in report['rounds']])
+        if runtime is not None:
+            _require(meter['schema']=='macr.repair.provider-meter.v2'
+                and meter['spend_commitment']==runtime['spend_commitment']
+                and meter['remote_enabled'] is runtime['remote_enabled']
+                and meter['durable_cross_process_ledger'] is True,'provider_runtime_binding')
+        else:
+            _require(meter['schema']=='macr.repair.provider-meter.v1','provider_runtime_binding')
     for i, row in enumerate(report['rounds'], 1):
         _require(status is None and config['provider_available'], 'dispatch_after_stop')
         _require(row == _read(out, f'rounds/{i}/event.json') and row['number'] == i

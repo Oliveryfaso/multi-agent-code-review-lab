@@ -190,7 +190,7 @@ def _empty(task, spec):
 def _row(row, task, spec):
     _object(row, _ROW_FIELDS, 'comparison_result_fields')
     _require(row['status'] in STATUSES and row['candidate_origin'] in
-        {'none', 'model', 'human', 'simulation'} and row['verification_origin'] in
+        {'none', 'model', 'human', 'simulation', 'provider_unattested'} and row['verification_origin'] in
         {'none', 'simulation', 'unavailable', 'isolated_execution'} and
         row['verdict'] in {None, 'defect', 'healthy', 'unknown'}, 'comparison_result_invalid')
     _require(row['initial_context_sha256'] == task['initial_context_sha256'],

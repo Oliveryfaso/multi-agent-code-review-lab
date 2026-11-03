@@ -91,6 +91,15 @@ class RepairComparisonTests(unittest.TestCase):
         forged = self.row(right); forged['verification_origin'] = 'simulation'
         with self.assertRaises(ValueError): comparison.build_report(plan, {right['cell_id']: forged})
 
+    def test_configured_http_is_unattested_and_cannot_earn_locked_success_credit(self):
+        plan=self.plan();cell=plan['cells'][0]
+        row=self.row(cell);row.update(candidate_origin='provider_unattested',review=None)
+        report=comparison.build_report(plan,{cell['cell_id']:row})
+        self.assertEqual(report['arms'][cell['arm']]['scored'],0)
+        self.assertEqual(report['arms'][cell['arm']]['unscored'],1)
+        row['review']=self.row(cell)['review']
+        with self.assertRaises(ValueError):comparison.build_report(plan,{cell['cell_id']:row})
+
     def test_cost_tokens_and_times_report_actual_use_rather_than_equal_ceiling(self):
         plan = self.plan(); left, right = plan['cells']
         one, three = self.row(left), self.row(right)

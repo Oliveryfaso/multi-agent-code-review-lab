@@ -4,6 +4,7 @@ import io
 import json
 import re
 import runpy
+from pathlib import Path
 from contextlib import redirect_stdout
 from unittest import TestCase
 from unittest.mock import patch
@@ -34,7 +35,61 @@ class InterceptedTransport:
             'usage':{'prompt_tokens':100,'completion_tokens':50,'total_tokens':150}}
 
 
+class InterceptedOfficialOpener:
+    """Exercise the real HTTP adapter with an opener that cannot use sockets."""
+    def __init__(self,replies,*,fingerprint='fixture-fingerprint',escape_content_hyphens=False):
+        self.transport=InterceptedTransport(replies);self.fingerprint=fingerprint;self.requests=[]
+        self.escape_content_hyphens=escape_content_hyphens
+    def open(self,request,timeout):
+        self.requests.append(request)
+        payload=self.transport.post(request.full_url,request.data,timeout,1048576)
+        payload['system_fingerprint']=self.fingerprint
+        if self.escape_content_hyphens:
+            message=payload['choices'][0]['message']
+            message['content']=message['content'].replace('-',r'\u002d')
+        data=json.dumps(payload,ensure_ascii=False).encode()
+        class Response:
+            status=200;headers={'x-request-id':'DUMMY-HTTP-RECEIPT'}
+            def __enter__(self):return self
+            def __exit__(self,*args):pass
+            def read(self,limit):return data[:limit]
+        return Response()
+
+
 class RepairEntryTests(TestCase):
+    def test_official_response_credential_echo_stops_without_persisting_raw_response(self):
+        key='DUMMY-ACTIVE-KEY-FIXTURE'
+        for escaped in (False,True):
+            with self.subTest(escaped=escaped):
+                plan,path=self.spend_plan()
+                plan['ledger_root']=str(self.root/('echo-ledger-'+str(escaped)))
+                path.write_text(json.dumps(plan));self.out=self.root/('echo-out-'+str(escaped))
+                opener=InterceptedOfficialOpener([{'status':'no_candidate','summary':key,'edits':[]}],
+                    escape_content_hyphens=escaped)
+                with patch.object(entry,'_read_runtime_credential',return_value=key), \
+                     patch('urllib.request.build_opener',return_value=opener):
+                    code,result=self.invoke(enable_remote=True,spend_plan=path,spend_cell='one',proposal_contract='v2')
+                self.assertEqual((code,result['status']),(2,'provider_outcome_unknown'))
+                self.assertEqual(len(opener.requests),1)
+                self.assertEqual(opener.requests[0].get_header('Authorization'),'Bearer '+key)
+                self.assertFalse((self.out/'rounds/1/response.json').exists())
+                held=result['global_spend']['unknown_reserved_usd']
+                self.assertNotEqual(held,'0.000000');self.assertTrue(result['global_spend']['stopped'])
+                needles=(key.encode(),key.replace('-',r'\u002d').encode(),
+                    json.dumps(key.replace('-',r'\u002d'))[1:-1].encode())
+                for directory in (self.out,Path(plan['ledger_root'])):
+                    for retained in directory.rglob('*'):
+                        if retained.is_file():
+                            data=retained.read_bytes()
+                            for needle in needles:self.assertNotIn(needle,data)
+                self.out=self.root/('echo-next-'+str(escaped))
+                with patch.object(entry,'_read_runtime_credential',side_effect=AssertionError('no Key retry')), \
+                     patch('urllib.request.build_opener',side_effect=AssertionError('no HTTP retry')):
+                    code,result=self.invoke(enable_remote=True,spend_plan=path,spend_cell='two',proposal_contract='v2')
+                self.assertEqual((code,result['status']),(2,'rejected'))
+                self.assertEqual(result['global_spend']['unknown_reserved_usd'],held)
+                self.assertFalse(self.out.exists())
+
     def large_utf8_envelope_fixture(self):
         fixed = dict(self.files); edits = []
         for name, old_number, new_number in (('a.py','1','3'), ('b.py','2','4')):
@@ -175,16 +230,194 @@ class RepairEntryTests(TestCase):
         self.process_guard = patch('subprocess.Popen', side_effect=AssertionError('no target or VM'))
         self.process_guard.start(); self.addCleanup(self.process_guard.stop)
 
-    def invoke(self, strategy='direct_api', transport=None, verifier=None, *, proposal_contract='v1'):
+    def invoke(self, strategy='direct_api', transport=None, verifier=None, *, proposal_contract='v1',
+               enable_remote=False,spend_plan=None,spend_cell=None):
         output = io.StringIO(); provider = RepairProviderBinding(self.config, transport=transport)
         self.provider = provider
         args = ['agent-review','repair','--repo',str(self.repo),'--task',str(self.task_file),
                 '--model-config',str(self.config_file),'--out',str(self.out),'--strategy',strategy]
         if proposal_contract != 'v1': args.extend(['--proposal-contract',proposal_contract])
+        if enable_remote:args.append('--enable-remote')
+        if spend_plan is not None:args.extend(['--spend-plan',str(spend_plan)])
+        if spend_cell is not None:args.extend(['--spend-cell',spend_cell])
         with patch('sys.argv', args), patch.object(entry, '_make_provider', return_value=provider), \
              patch.object(entry, '_verification_backend', return_value=verifier), redirect_stdout(output):
             with self.assertRaises(SystemExit) as exited: cli.main()
+        self.assertTrue(output.getvalue(),'Repair CLI must return a structured boundary result.')
         return exited.exception.code, json.loads(output.getvalue())
+
+    def spend_plan(self,*,strategy='direct_api',cells=('one','two')):
+        import time
+        plan={'schema':'macr.repair.spend-plan.v1','run_id':'public-runtime-fixture',
+            'ledger_root':str(self.root/'durable-spend'),'configuration_sha256':loop.digest(self.config),
+            'output_contract_sha256':loop.digest(loop.output_contract('v2')),
+            'max_requests':6,'max_usd':'2.000000','max_total_input_tokens':49152,
+            'max_total_output_tokens':6144,'expires_at':int(time.time())+600,
+            'cells':[{'cell_id':cell,'binding_sha256':entry.spend_binding_sha256(self.task,strategy,self.config)}
+                     for cell in cells]}
+        path=self.root/'spend-plan.json';path.write_text(json.dumps(plan));return plan,path
+
+    def test_remote_scope_is_explicit_and_incomplete_flags_never_read_key(self):
+        from contextlib import redirect_stderr
+        for enabled,plan,cell in ((True,None,None),(False,self.root/'absent.json','one')):
+            with self.subTest(enabled=enabled),patch.object(entry,'_read_runtime_credential',
+                    side_effect=AssertionError('no Key'),create=True),redirect_stderr(io.StringIO()):
+                code,result=self.invoke(enable_remote=enabled,spend_plan=plan,spend_cell=cell,proposal_contract='v2')
+                self.assertEqual((code,result['status']),(2,'rejected'));self.assertFalse(self.out.exists())
+
+    def test_official_cli_uses_real_ledger_and_one_dummy_key_per_cell(self):
+        plan,path=self.spend_plan()
+        opener=InterceptedOfficialOpener([self.proposal(),{'status':'finalize_current','summary':'Retain.','edits':[]}])
+        with patch.object(entry,'_read_runtime_credential',return_value='DUMMY-NOT-A-REAL-KEY') as reader, \
+             patch('urllib.request.build_opener',return_value=opener):
+            code,result=self.invoke(enable_remote=True,spend_plan=path,spend_cell='one',proposal_contract='v2')
+        self.assertEqual((code,result['status']),(0,'candidate_finalized'))
+        self.assertEqual((reader.call_count,len(opener.requests)),(1,2))
+        self.assertFalse(result['simulation']);self.assertTrue(result['remote_enabled'])
+        self.assertEqual(result['candidate_origin'],'official_https_output_unattested')
+        self.assertEqual(result['global_spend']['requests'],2)
+        self.assertEqual(result['global_spend']['unknown_reserved_usd'],'0.000000')
+        self.assertEqual(result['global_spend']['finished_cells'],1)
+        report=loop.verify_loop(self.out)
+        self.assertIsNone(report['real_model_calls']);self.assertIsNone(report['paid_requests'])
+        self.assertFalse(report['target_code_executed']);self.assertFalse(report['repaired'])
+        self.assertEqual(report['provider_accounting']['schema'],'macr.repair.provider-meter.v2')
+        self.assertEqual(loop._read(self.out,'claim.json')['config']['provider_runtime']['spend_commitment']['cell_id'],'one')
+        for data in (json.dumps(result),(self.out/'report.json').read_text(),(self.out/'claim.json').read_text()):
+            self.assertNotIn('DUMMY-NOT-A-REAL-KEY',data)
+        self.assertTrue((Path(plan['ledger_root'])/'cell-001.finish.json').is_file())
+        from macr.investigation.validation import ContractError
+        forged=deepcopy(report);forged['simulation']=True
+        loop._write(self.out,'report.json',forged)
+        with self.assertRaises(ContractError):loop.verify_loop(self.out)
+        loop._write(self.out,'report.json',report)
+        from macr.evals.repair_comparison import compile_comparison,build_report
+        spec=json.loads((Path(__file__).resolve().parents[1]/'examples/repair_comparison_development.json').read_text())
+        spec['tasks']=[{'task_id':self.task['task_id'],'snapshot_sha256':loop.source_id(self.files),
+            'issue_sha256':loop.digest(self.task['issue']),
+            'visible_tests_sha256':loop.source_id({'checks.py':self.files['checks.py']}),
+            'initial_context_sha256':entry.initial_context_id(self.files,self.task['issue'])}]
+        spec['model']['configuration_sha256']=loop.digest(self.config)
+        spec['model']['output_contract_sha256']=loop.digest(loop.output_contract('v2'))
+        limits=self.config['limits']
+        spec['limits']={'max_requests':limits['max_requests'],'input_tokens':limits['max_total_input_tokens'],
+            'output_tokens':limits['max_total_output_tokens'],'max_usd':limits['max_usd']}
+        comparison=compile_comparison(spec)
+        cell=next(c for c in comparison['cells'] if c['arm']=='direct_api')
+        packet=entry.score_handoff(self.out,comparison,cell['cell_id'])
+        self.assertEqual(packet['result']['candidate_origin'],'provider_unattested')
+        self.assertIsNone(packet['result']['review'])
+        self.assertEqual(build_report(comparison,{cell['cell_id']:packet['result']})['arms']['direct_api']['scored'],0)
+
+    def test_remote_debugger_without_real_verifier_never_consumes_ledger_or_key(self):
+        plan,path=self.spend_plan(strategy='api_debugger',cells=('debugger',))
+        fake=loop.ReplayVerifier([self.observation(self.files,loop.test_manifest(self.files,['checks.py']))])
+        with patch.object(entry,'_read_runtime_credential',side_effect=AssertionError('no Key')), \
+             patch('urllib.request.build_opener',side_effect=AssertionError('no HTTP')):
+            code,result=self.invoke('api_debugger',enable_remote=True,spend_plan=path,
+                spend_cell='debugger',proposal_contract='v2',verifier=fake)
+        self.assertEqual((code,result['status']),(2,'verification_unavailable'))
+        self.assertEqual(result['provider_requests'],0);self.assertFalse(result['remote_enabled'])
+        self.assertIsNone(result['global_spend']);self.assertEqual(result['spend_status'],'not_opened_no_verifier')
+        self.assertFalse(Path(plan['ledger_root']).exists())
+
+    def test_invalid_runtime_plan_rejects_before_claim_or_credential(self):
+        plan,path=self.spend_plan()
+        for key,value in (('configuration_sha256','0'*64),('output_contract_sha256','0'*64),
+                          ('expires_at',1),('ledger_root',str(self.out/'spend')),
+                          ('ledger_root',str(self.repo/'spend')),
+                          ('cells',[{'cell_id':'one','binding_sha256':'0'*64}])):
+            bad=deepcopy(plan);bad[key]=value;path.write_text(json.dumps(bad))
+            with self.subTest(key=key),patch.object(entry,'_read_runtime_credential',side_effect=AssertionError('no Key')):
+                code,result=self.invoke(enable_remote=True,spend_plan=path,spend_cell='one',proposal_contract='v2')
+                self.assertEqual((code,result['status']),(2,'rejected'))
+                self.assertFalse(Path(plan['ledger_root']).exists());self.assertFalse(self.out.exists())
+
+    def test_runtime_credential_failure_finishes_claim_without_request_reserve(self):
+        plan,path=self.spend_plan()
+        with patch.object(entry,'_read_runtime_credential',side_effect=ProviderError('repair_credential_input_unavailable')), \
+             patch('urllib.request.build_opener',side_effect=AssertionError('no HTTP')):
+            code,result=self.invoke(enable_remote=True,spend_plan=path,spend_cell='one',proposal_contract='v2')
+        self.assertEqual((code,result['status']),(2,'rejected'))
+        self.assertEqual(result['global_spend']['requests'],0)
+        self.assertEqual(result['global_spend']['unknown_reserved_usd'],'0.000000')
+        self.assertEqual(result['global_spend']['finished_cells'],1)
+        self.assertFalse(self.out.exists())
+
+    def test_unreconciled_global_ledger_never_looks_like_zero_spend(self):
+        plan,path=self.spend_plan()
+        opener=InterceptedOfficialOpener([{'status':'no_candidate','summary':'No edit.','edits':[]}])
+        with patch.object(entry,'_read_runtime_credential',return_value='DUMMY-KEY'), \
+             patch('urllib.request.build_opener',return_value=opener):
+            code,result=self.invoke(enable_remote=True,spend_plan=path,spend_cell='one',proposal_contract='v2')
+        self.assertEqual(code,0)
+        (Path(plan['ledger_root'])/'plan.json').write_text('{}')
+        self.out=self.root/'unreconciled'
+        with patch.object(entry,'_read_runtime_credential',side_effect=AssertionError('no Key')):
+            code,result=self.invoke(enable_remote=True,spend_plan=path,spend_cell='two',proposal_contract='v2')
+        self.assertEqual((code,result['status']),(2,'rejected'))
+        self.assertIsNone(result['global_spend'])
+        self.assertEqual(result['spend_status'],'unreconciled')
+        self.assertFalse(self.out.exists())
+
+    def test_runtime_timeout_preserves_global_reserve_and_stops_next_cell(self):
+        plan,path=self.spend_plan();opener=InterceptedOfficialOpener([TimeoutError()])
+        with patch.object(entry,'_read_runtime_credential',return_value='DUMMY-KEY'), \
+             patch('urllib.request.build_opener',return_value=opener):
+            code,result=self.invoke(enable_remote=True,spend_plan=path,spend_cell='one',proposal_contract='v2')
+        self.assertEqual((code,result['status']),(2,'provider_outcome_unknown'))
+        held=result['global_spend']['unknown_reserved_usd'];self.assertNotEqual(held,'0.000000')
+        self.out=self.root/'second'
+        with patch.object(entry,'_read_runtime_credential',side_effect=AssertionError('no retry Key')), \
+             patch('urllib.request.build_opener',side_effect=AssertionError('no retry HTTP')):
+            code,result=self.invoke(enable_remote=True,spend_plan=path,spend_cell='two',proposal_contract='v2')
+        self.assertEqual((code,result['status']),(2,'rejected'))
+        self.assertEqual(result['provider_requests'],0)
+        self.assertEqual(result['global_spend']['unknown_reserved_usd'],held)
+        self.assertTrue(result['global_spend']['stopped']);self.assertFalse(self.out.exists())
+
+    def test_failed_durable_settlement_keeps_global_reserve_even_with_local_usage(self):
+        plan,path=self.spend_plan()
+        opener=InterceptedOfficialOpener([{'status':'no_candidate','summary':'No edit.','edits':[]}])
+        with patch.object(entry,'_read_runtime_credential',return_value='DUMMY-KEY'), \
+             patch('urllib.request.build_opener',return_value=opener), \
+             patch('macr.providers.repair_spend.RepairSpendLedger.settle',side_effect=OSError('DUMMY write failure')):
+            code,result=self.invoke(enable_remote=True,spend_plan=path,spend_cell='one',proposal_contract='v2')
+        self.assertEqual(code,2)
+        self.assertNotEqual(result['known_usd'],'0.000000')
+        self.assertEqual(result['global_spend']['known_usd'],'0.000000')
+        self.assertNotEqual(result['global_spend']['unknown_reserved_usd'],'0.000000')
+        self.assertTrue(result['global_spend']['stopped'])
+
+    def test_duplicate_cell_and_global_identity_cannot_reset_in_new_output(self):
+        plan,path=self.spend_plan();reply={'status':'no_candidate','summary':'No edit.','edits':[]}
+        opener=InterceptedOfficialOpener([reply],fingerprint='first-fingerprint')
+        with patch.object(entry,'_read_runtime_credential',return_value='DUMMY-KEY'), \
+             patch('urllib.request.build_opener',return_value=opener):
+            code,result=self.invoke(enable_remote=True,spend_plan=path,spend_cell='one',proposal_contract='v2')
+        self.assertEqual(code,0);known=result['global_spend']['known_usd'];self.out=self.root/'duplicate'
+        with patch.object(entry,'_read_runtime_credential',side_effect=AssertionError('no repeat Key')):
+            code,result=self.invoke(enable_remote=True,spend_plan=path,spend_cell='one',proposal_contract='v2')
+        self.assertEqual(code,2);self.assertEqual(result['global_spend']['known_usd'],known)
+        self.assertFalse(self.out.exists());self.out=self.root/'identity-drift'
+        opener=InterceptedOfficialOpener([reply],fingerprint='second-fingerprint')
+        with patch.object(entry,'_read_runtime_credential',return_value='DUMMY-KEY'), \
+             patch('urllib.request.build_opener',return_value=opener):
+            code,result=self.invoke(enable_remote=True,spend_plan=path,spend_cell='two',proposal_contract='v2')
+        self.assertEqual(code,2);self.assertTrue(result['global_spend']['stopped'])
+        self.assertEqual(result['global_spend']['requests'],2)
+        self.assertNotEqual(result['global_spend']['known_usd'],known)
+
+    def test_credential_reader_fails_before_echo_fallback_or_non_tty_read(self):
+        import getpass,warnings
+        consumed=[]
+        def warning_reader(*args,**kwargs):
+            warnings.warn('DUMMY echo warning',getpass.GetPassWarning);consumed.append(True);return 'DUMMY-KEY'
+        with patch('sys.stdin.isatty',return_value=False),patch('getpass.getpass',side_effect=AssertionError('no read')):
+            with self.assertRaises(ProviderError):entry._read_runtime_credential()
+        with patch('sys.stdin.isatty',return_value=True),patch('getpass.getpass',side_effect=warning_reader):
+            with self.assertRaises(ProviderError):entry._read_runtime_credential()
+        self.assertEqual(consumed,[])
 
     def proposal(self, old=OLD, new=NEW):
         return {'status':'candidate','summary':'Intercepted response, not a real model.',
