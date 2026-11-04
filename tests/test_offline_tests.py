@@ -1,9 +1,13 @@
 """Lifecycle checks using only this run's newly created synthetic files."""
 from contextvars import ContextVar
+from contextlib import nullcontext
 import importlib
 import json
 from pathlib import Path
+import signal
+import stat
 import time
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
@@ -153,6 +157,74 @@ class OfflineLifecycleTests(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             output.write('x' * 32)
         self.assertLessEqual(len(output.getvalue().encode('utf-8')), 16)
+
+    def test_resource_meter_counts_links_without_following_their_targets(self):
+        runner = self.runner()
+        root, outside = fixtures.fixture_root(), fixtures.fixture_root()
+        (root / 'tiny.txt').write_bytes(b'tiny')
+        (outside / 'unmetered.txt').write_bytes(b'x' * 8192)
+        links = [root / name for name in ('file-link', 'directory-link', 'cycle-a', 'cycle-b')]
+        links[0].symlink_to(outside / 'unmetered.txt')
+        links[1].symlink_to(outside, target_is_directory=True)
+        links[2].symlink_to(links[3]); links[3].symlink_to(links[2])
+        try:
+            usage = runner.tree_usage(root)
+            self.assertEqual(usage['files'], 1)
+            self.assertEqual(usage['logical_bytes'], 4)
+            self.assertEqual(usage['allocated_bytes'], sum(
+                path.lstat().st_blocks * 512 for path in [root, root / 'tiny.txt', *links]))
+        finally:
+            for link in links: link.unlink()
+
+    def test_timer_meter_allows_a_live_negative_symlink_fixture(self):
+        runner = self.runner()
+        base = fixtures.fixture_root()
+
+        def action(case):
+            root = fixtures.fixture_root()
+            a, b = root / 'cycle-a', root / 'cycle-b'
+            a.symlink_to(b); b.symlink_to(a)
+            try:
+                # Force the production timer callback while the links exist,
+                # rather than depending on host speed or an arbitrary sleep.
+                signal.raise_signal(signal.SIGALRM)
+                case.assertTrue(a.is_symlink() and b.is_symlink())
+            finally:
+                a.unlink(); b.unlink()
+
+        report = runner.run_suite(synthetic_suite(action), runs_root=base / 'runs')
+        self.assertEqual(report['status'], 'passed')
+        self.assertEqual(report['cleanup'], 'removed_owned_tmp')
+
+    def test_resource_meter_still_rejects_a_link_root(self):
+        runner = self.runner()
+        root, parent = fixtures.fixture_root(), fixtures.fixture_root()
+        alias = parent / 'root-link'; alias.symlink_to(root, target_is_directory=True)
+        try:
+            with self.assertRaisesRegex(RuntimeError, 'unexpected_fixture_entry'):
+                runner.tree_usage(alias)
+        finally:
+            alias.unlink()
+
+    def test_resource_meter_rejects_special_entry_metadata(self):
+        runner = self.runner()
+        # No real FIFO exists for the outer timer to encounter. Only the
+        # explicit inner scan sees this synthetic, nonexistent directory.
+        sentinel = fixtures.fixture_root() / 'metadata-only-not-created'
+        real_lstat, real_scandir = Path.lstat, runner.os.scandir
+        directory = SimpleNamespace(st_mode=stat.S_IFDIR, st_blocks=0)
+        special = SimpleNamespace(stat=lambda *, follow_symlinks:
+                                  SimpleNamespace(st_mode=stat.S_IFIFO, st_blocks=0))
+
+        def lstat(path, *args, **kwargs):
+            return directory if path == sentinel else real_lstat(path, *args, **kwargs)
+
+        def scandir(path):
+            return nullcontext(iter([special])) if path == sentinel else real_scandir(path)
+
+        with patch.object(Path, 'lstat', lstat), patch.object(runner.os, 'scandir', scandir):
+            with self.assertRaisesRegex(RuntimeError, 'unexpected_fixture_entry'):
+                runner.tree_usage(sentinel)
 
 
 if __name__ == '__main__':

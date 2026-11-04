@@ -80,19 +80,29 @@ class BoundedOutput(io.StringIO):
 
 
 def tree_usage(root):
-    """Count only this run, including directories and AppleDouble allocation."""
-    usage = {'files': 0, 'logical_bytes': 0, 'allocated_bytes': 0}
-    for directory, directories, files in os.walk(root, followlinks=False):
-        for path in [Path(directory)] + [Path(directory) / name for name in files]:
-            entry = path.lstat()
-            if not (stat.S_ISDIR(entry.st_mode) or stat.S_ISREG(entry.st_mode)):
-                raise RuntimeError('unexpected_fixture_entry')
-            usage['allocated_bytes'] += entry.st_blocks * 512
-            if stat.S_ISREG(entry.st_mode):
-                usage['files'] += 1
-                usage['logical_bytes'] += entry.st_size
-        if any((Path(directory) / name).is_symlink() for name in directories):
-            raise RuntimeError('unexpected_fixture_link')
+    """Meter owned fixtures, including links used by negative reader tests.
+
+    Count link storage without looking up targets or descending through links.
+    This fixture accounting is not an execution sandbox or source-read grant.
+    """
+    root = Path(root)
+    info = root.lstat()
+    if not stat.S_ISDIR(info.st_mode):
+        raise RuntimeError('unexpected_fixture_entry')
+    usage = {'files': 0, 'logical_bytes': 0, 'allocated_bytes': info.st_blocks * 512}
+    pending = [root]
+    while pending:
+        with os.scandir(pending.pop()) as entries:
+            for entry in entries:
+                info = entry.stat(follow_symlinks=False)
+                if stat.S_ISDIR(info.st_mode):
+                    pending.append(Path(entry.path))
+                elif stat.S_ISREG(info.st_mode):
+                    usage['files'] += 1
+                    usage['logical_bytes'] += info.st_size
+                elif not stat.S_ISLNK(info.st_mode):
+                    raise RuntimeError('unexpected_fixture_entry')
+                usage['allocated_bytes'] += info.st_blocks * 512
     return usage
 
 
