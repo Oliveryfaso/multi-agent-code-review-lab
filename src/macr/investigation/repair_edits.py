@@ -1,6 +1,6 @@
 """Pure, bounded source edits; parsing/compilation never executes source."""
 from .repair_io import _syntax
-from .repair_windows import _physical_lines, project_source_windows, validate_visible_edits
+from .repair_windows import _physical_lines, project_source_windows, resolve_visible_edits
 from .validation import ContractError, validate_relative
 
 
@@ -86,13 +86,17 @@ def apply_edits(files: dict[str, bytes], edits: list[dict], *,
             _require(_utf8_size(value) <= text_limit and value.strip(),
                      'edit_text')
         _require(edit['old'] != edit['new'], 'edit_noop')
-    if full_originals: validate_visible_edits(files, edits, source_windows)
+    spans = resolve_visible_edits(files, edits, source_windows) if full_originals else None
     result = dict(files)
     for edit in edits:
         name = edit['file']
-        text = result[name].decode('utf-8')
-        _require(text.count(edit['old']) == 1, 'edit_match')
-        result[name] = text.replace(edit['old'], edit['new'], 1).encode('utf-8')
+        if full_originals:
+            start, end = spans[name]
+            result[name] = result[name][:start] + edit['new'].encode('utf-8') + result[name][end:]
+        else:
+            text = result[name].decode('utf-8')
+            _require(text.count(edit['old']) == 1, 'edit_match')
+            result[name] = text.replace(edit['old'], edit['new'], 1).encode('utf-8')
         validate_files(result, full_originals=full_originals)
     if full_originals: project_source_windows(result, source_windows)
     return result

@@ -103,6 +103,28 @@ class WindowedRepairEntryTests(unittest.TestCase):
         changed=self.files['module.py'].replace(b'return value + 1',new.encode())
         self.assertEqual(second['source_windows']['files']['module.py']['sha256'],sha256(changed).hexdigest())
 
+    def test_normal_cli_v2_edits_visible_duplicate_instead_of_hidden_first_match(self):
+        original = self.files['module.py']
+        hidden = b'#    return value + 1\n'
+        self.files['module.py'] = hidden + original
+        (self.repo/'module.py').write_bytes(self.files['module.py'])
+        self.task = window_task(self.files)
+        self.task['source_windows']['schema'] = 'macr.repair.source-windows.v2'
+        self.task['source_windows']['files']['module.py'] = [{'start_line':3,'end_line':3}]
+        old, new = '    return value + 1\n', '    return value + 2\n'
+        code,result,transport = self.invoke([self.proposal(old=old,new=new),
+            {'status':'finalize_current','summary':'Retain authored bytes, not a verified repair.','edits':[]}])
+        self.assertEqual((code,result['status']),(0,'candidate_finalized'))
+        expected = hidden + original.replace(old.encode(),new.encode(),1)
+        self.assertEqual((self.out/'sources/1/module.py').read_bytes(),expected)
+        self.assertEqual((self.repo/'module.py').read_bytes(),hidden+original)
+        first,second = [json.loads(w['messages'][1]['content']) for w in transport.requests]
+        self.assertEqual(first['source_windows']['edit_policy'],'unique_shown_span')
+        self.assertEqual(first['source_windows']['files']['module.py']['windows'][0]['text'],old)
+        self.assertEqual(second['source_windows']['files']['module.py']['windows'][0]['text'],new)
+        self.assertNotIn('OMITTED_SENTINEL',json.dumps(transport.requests))
+        self.assertFalse(loop.verify_loop(self.out)['repaired'])
+
     def test_unshown_edit_fails_and_never_materializes_a_candidate(self):
         reply=self.proposal(old='OMITTED_SENTINEL = "unshown original bytes"',new='OMITTED_SENTINEL = "changed"')
         code,result,transport=self.invoke([reply])
@@ -166,8 +188,12 @@ class WindowedRepairEntryTests(unittest.TestCase):
         with self.assertRaises(ContractError):loop.verify_loop(self.out)
 
     def test_missing_verifier_remains_an_honest_stop_with_full_sources_retained(self):
-        code,result,transport=self.invoke([],arm='api_debugger')
-        self.assertEqual((code,result['status'],result['provider_requests']),(2,'verification_unavailable',0))
-        self.assertEqual(transport.requests,[])
-        self.assertEqual((self.out/'sources/0/module.py').read_bytes(),self.files['module.py'])
-        self.assertFalse(loop.verify_loop(self.out)['repaired'])
+        for version in ('v1','v2'):
+            with self.subTest(version=version):
+                self.out=self.root/('missing-verifier-'+version)
+                self.task['source_windows']['schema']='macr.repair.source-windows.'+version
+                code,result,transport=self.invoke([],arm='api_debugger')
+                self.assertEqual((code,result['status'],result['provider_requests']),(2,'verification_unavailable',0))
+                self.assertEqual(transport.requests,[])
+                self.assertEqual((self.out/'sources/0/module.py').read_bytes(),self.files['module.py'])
+                self.assertFalse(loop.verify_loop(self.out)['repaired'])

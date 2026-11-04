@@ -345,13 +345,24 @@ def _request(files, issue, editable, protected, feedback, number, *, strategy='a
             'It selects that exact saved source and ends this run without a new test or success claim. '
             'Historical observations are not a fresh verification of the selected candidate.')
     if full_originals:
-        request.metadata['source_window_contract']='macr.repair.source-windows.v1'
+        from .repair_windows import SELECTION_SCHEMA, VISIBLE_SELECTION_SCHEMA
+        request.metadata['source_window_contract']=source_windows['schema']
+        if source_windows['schema'] == VISIBLE_SELECTION_SCHEMA:
+            old = 'old must occur exactly once in the original file.'
+            _require(old in request.messages[0]['content'], 'source_window_prompt_binding')
+            request.messages[0]['content'] = request.messages[0]['content'].replace(
+                old, 'old must match exactly one complete shown span in the current source windows.', 1)
+            request.metadata['prompt_version']='debugger-bound-repair-visible-window-v1'
         request.messages[0]['content'] += (
             ' files is empty because complete originals are retained locally, not sent. '
             'source_windows contains explicitly partial CURRENT snapshot views with full-file hashes, '
             'exact unprefixed text, inclusive current line numbers and omitted ranges. '
             'Do not infer omitted content. Each old edit must fit wholly inside one shown window '
-            'and occur exactly once in the complete current file. Edits apply to complete bytes. '
+            + ('and occur exactly once in the complete current file. '
+               if source_windows['schema'] == SELECTION_SCHEMA else
+               'and have exactly one wholly contained occurrence across this file\'s separate shown windows. '
+               'Overlapping matches are ambiguous; omitted duplicates do not change the chosen visible span. ')
+            + 'Edits apply to complete bytes. '
             'Frozen line-number selections are reprojected on each current snapshot; '
             'edits that invalidate their bounds or view budget are rejected. No automatic context expansion.')
     _require(len(encode_bounded(asdict(request), CAP)) <= 98304, 'request_size')
@@ -465,11 +476,19 @@ def _proposal(response, request, files, editable):
         return raw, None
     windows=payload.get('source_windows')
     if windows is not None:
-        _require(request.metadata.get('source_window_contract')=='macr.repair.source-windows.v1', 'source_window_binding')
+        from .repair_windows import project_source_windows, PROJECTION_SELECTION_SCHEMAS
+        _require(type(windows) is dict and type(windows.get('schema')) is str
+                 and windows['schema'] in PROJECTION_SELECTION_SCHEMAS,
+                 'source_window_binding')
+        schema = PROJECTION_SELECTION_SCHEMAS[windows['schema']]
+        _require(request.metadata.get('source_window_contract')==schema, 'source_window_binding')
+        _require(type(windows.get('files')) is dict and all(type(item) is dict
+            and type(item.get('windows')) is list and all(type(w) is dict
+                and 'start_line' in w and 'end_line' in w for w in item['windows'])
+            for item in windows['files'].values()), 'source_window_binding')
         # The actual selection is reconstructed from the displayed ranges;
         # replay/scoring separately bind it to the frozen task selection.
-        from .repair_windows import project_source_windows
-        selection={'schema':'macr.repair.source-windows.v1','files':{
+        selection={'schema':schema,'files':{
             path:[{'start_line':w['start_line'],'end_line':w['end_line']} for w in item['windows']]
             for path,item in windows['files'].items() if item['windows']}}
         _require(windows==project_source_windows(files,selection,protected_paths=payload['protected_paths']), 'source_window_binding')

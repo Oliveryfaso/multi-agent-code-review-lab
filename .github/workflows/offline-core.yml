@@ -104,6 +104,7 @@ jobs:
         run: >-
           python -I -S -B scripts/run_offline_tests.py
           test_repair_windows test_repair_windows_entry test_repair_windows_scoring
+          test_repair_visible_matches
           test_repo_map
 
       - name: Bounded kernel loopback lifecycle fixtures

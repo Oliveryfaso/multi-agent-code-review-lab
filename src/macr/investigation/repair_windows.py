@@ -15,6 +15,11 @@ from .validation import ContractError, validate_relative
 
 SELECTION_SCHEMA = 'macr.repair.source-windows.v1'
 PROJECTION_SCHEMA = 'macr.repair.source-window-projection.v1'
+VISIBLE_SELECTION_SCHEMA = 'macr.repair.source-windows.v2'
+VISIBLE_PROJECTION_SCHEMA = 'macr.repair.source-window-projection.v2'
+VISIBLE_EDIT_POLICY = 'unique_shown_span'
+PROJECTION_SELECTION_SCHEMAS = {PROJECTION_SCHEMA: SELECTION_SCHEMA,
+                                VISIBLE_PROJECTION_SCHEMA: VISIBLE_SELECTION_SCHEMA}
 MAX_WINDOWS = 32
 MAX_WINDOWS_PER_FILE = 8
 MAX_SHOWN_LINES = 256
@@ -54,7 +59,7 @@ def _full_files(files):
 def validate_selection_shape(selection, expected_paths=None):
     """Validate canonical inclusive current-line ranges, never normalize them."""
     _require(type(selection) is dict and set(selection) == {'schema', 'files'}
-             and selection['schema'] == SELECTION_SCHEMA, 'selection_shape')
+             and selection['schema'] in (SELECTION_SCHEMA, VISIBLE_SELECTION_SCHEMA), 'selection_shape')
     chosen = selection['files']
     _require(type(chosen) is dict and 1 <= len(chosen) <= 32, 'selection_files')
     expected = None
@@ -113,14 +118,16 @@ def project_source_windows(files, selection, protected_paths=()):
         _require(path not in protected or not omitted, 'protected_file_visibility')
         result[path] = {'sha256': sha256(body).hexdigest(), 'bytes': len(body),
             'line_count': len(lines), 'windows': windows, 'omitted_ranges': omitted}
+    if selection['schema'] == VISIBLE_SELECTION_SCHEMA:
+        return {'schema': VISIBLE_PROJECTION_SCHEMA, 'edit_policy': VISIBLE_EDIT_POLICY, 'files': result}
     return {'schema': PROJECTION_SCHEMA, 'files': result}
 
 
-def validate_visible_edits(files, edits, selection):
-    """Require each old span in one window and uniquely in the complete file."""
+def resolve_visible_edits(files, edits, selection):
+    """Validate edits and return their unique current full-source byte spans."""
     projection = project_source_windows(files, selection)
     _require(type(edits) is list and 1 <= len(edits) <= 3, 'edit_count')
-    seen = set()
+    seen = set(); spans = {}
     for edit in edits:
         _require(type(edit) is dict and set(edit) == {'file', 'old', 'new'}, 'edit_shape')
         path = _path(edit['file'])
@@ -130,12 +137,34 @@ def validate_visible_edits(files, edits, selection):
             value = edit[key]
             _require(type(value) is str and bool(value.strip())
                      and utf8_size(value) <= 16384, 'edit_text')
-        old = edit['old']; text = files[path].decode('utf-8')
-        first = text.find(old)
-        _require(first >= 0 and first == text.rfind(old), 'edit_match')
-        _require(old != edit['new'], 'edit_noop')
-        _require(any(old in window['text'] for window in projection['files'][path]['windows']),
-                 'edit_visibility')
+        old = edit['old']; needle = old.encode('utf-8')
+        if selection['schema'] == SELECTION_SCHEMA:
+            text = files[path].decode('utf-8'); first = text.find(old)
+            _require(first >= 0 and first == text.rfind(old), 'edit_match')
+            _require(old != edit['new'], 'edit_noop')
+            _require(any(old in window['text'] for window in projection['files'][path]['windows']),
+                     'edit_visibility')
+            start = len(text[:first].encode('utf-8'))
+            spans[path] = (start, start + len(needle))
+        else:
+            _require(old != edit['new'], 'edit_noop')
+            lines = _physical_lines(files[path]); matches = []
+            for window in projection['files'][path]['windows']:
+                base = sum(len(line) for line in lines[:window['start_line'] - 1])
+                raw = window['text'].encode('utf-8'); offset = raw.find(needle)
+                while offset >= 0:
+                    matches.append((base + offset, base + offset + len(needle)))
+                    _require(len(matches) <= 1, 'edit_match')
+                    # Overlapping matches are ambiguous too.
+                    offset = raw.find(needle, offset + 1)
+            _require(len(matches) == 1, 'edit_match')
+            spans[path] = matches[0]
+    return spans
+
+
+def validate_visible_edits(files, edits, selection):
+    """Validate the explicitly selected matching policy without applying edits."""
+    resolve_visible_edits(files, edits, selection)
 
 
 def windowed_context_id(files, issue_sha256, selection, source_scope='declared_files', test_plan=None):

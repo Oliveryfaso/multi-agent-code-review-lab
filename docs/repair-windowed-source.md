@@ -45,13 +45,41 @@ complete source inventory still determines `base_content_id`; snapshots,
 accepted candidates, saved-candidate selection and scoring use complete bytes.
 
 The existing proposal contract and `{file, old, new}` edits remain in force.
-Each `old` must fit entirely within one shown window and be unique in the
-complete current file. The 16 KiB old/new text limit does **not** expand with
+With `source-windows.v1`, each `old` must fit entirely within one shown window
+and be unique in the complete current file. The 16 KiB old/new text limit does **not** expand with
 the original-file limit. Replacements apply to complete files; all other bytes
 and protected tests remain intact. The complete changed source must compile,
 and the next current-line projection must remain valid and within its budget.
 No range is silently moved, clamped or expanded after an insertion/deletion.
 This checks local integrity and syntax, not semantic repair correctness.
+
+## Opt-in matching of a unique displayed occurrence
+
+Task v4 can explicitly select `macr.repair.source-windows.v2` in the nested
+`source_windows.schema`, keeping the same strict `schema`/`files` fields and
+range budgets. This selects a different edit-matching policy; ordinary v1
+selections, advisory preparation defaults and existing requests stay unchanged.
+
+V2 exposes `macr.repair.source-window-projection.v2` with the fixed
+`edit_policy: unique_shown_span`. An `old` is accepted only if it has exactly
+one wholly contained occurrence across that file's separate displayed windows.
+Overlapping or multiple displayed matches are rejected. A span crossing an
+omitted boundary is not an eligible match, and windows are never concatenated.
+Copies in omitted source do not make an otherwise unique displayed match
+ambiguous. The editor derives the exact byte span from the current raw physical
+lines and replaces only that span in the complete committed file, preserving
+hidden copies and all other bytes. All normal edit authority, syntax, public
+test protection and next-projection checks still apply.
+
+This helps when the entire usable displayed context is duplicated elsewhere;
+many shorter duplicate snippets can already be disambiguated in v1 by including
+more unique context within the shown window. V2 does not infer which occurrence
+is a bug or reveal missing context. Its policy and schema are bound into the
+projection/context, task/spend scope, serialized request and replay/scoring.
+An old scope cannot be relabelled as v2. All comparison arms use the same
+explicitly selected matching policy and model budgets. No new model call,
+source access or execution authority is granted, and no semantic quality gain
+is established by deterministic patch application.
 
 All three comparison arms receive the same initial issue, window projection,
 complete-source identity and model/call/token/money limits. The context/spend
