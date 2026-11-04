@@ -158,6 +158,42 @@ class RepairLocalizeTests(unittest.TestCase):
         self.assertEqual(proof['term'], mention)
         self.assertEqual(proof['issue_sha256'], sha256(issue.encode()).hexdigest())
 
+    def test_posix_traceback_suffix_has_priority_and_preserves_original_issue_span(self):
+        mention = '/srv/build/pkg/target.py'
+        issue = 'Straße preview\n  File "' + mention + '", line 7\ncache "entry expired"'
+        body = 'def ordinary(): pass\n'
+        result = self.propose({'pkg/target.py': body,
+            'noise.py': 'def preview_cache(): return "entry expired"\n'}, issue)
+        self.assertEqual(result['candidates'][0]['path'], 'pkg/target.py')
+        proof = next(e for e in result['candidates'][0]['evidence'] if e['kind'] == 'explicit_path')
+        self.assertEqual(proof['resolution'], 'posix_suffix')
+        self.assertEqual((proof['line'], proof['column'], proof['position_basis']), (2, 9, 'issue'))
+        self.assertEqual(proof['issue_span'], {'start': 23, 'end': 47})
+        self.assertEqual(issue[23:47], mention)
+        self.assertEqual(proof['term'], mention)
+        self.assertEqual(proof['issue_sha256'], sha256(issue.encode()).hexdigest())
+        self.assertEqual(proof['source_sha256'], sha256(body.encode()).hexdigest())
+
+    def test_ambiguous_posix_suffix_never_chooses_a_snapshot_path(self):
+        result = self.propose({'pkg/target.py': 'def ordinary(): pass\n',
+            'repo/pkg/target.py': 'def ordinary(): pass\n',
+            'noise.py': 'def preview_cache(): return "entry expired"\n'},
+            '/srv/repo/pkg/target.py preview cache "entry expired"')
+        self.assertEqual(result['candidates'][0]['path'], 'noise.py')
+        self.assertFalse(any(e['kind'] == 'explicit_path' for row in result['candidates'] for e in row['evidence']))
+        gap = next(g for g in result['gaps'] if g['code'] == 'ambiguous_path_suffix')
+        self.assertEqual((gap['count'], gap['paths']), (2, ['pkg/target.py', 'repo/pkg/target.py']))
+
+    def test_absolute_suffixes_do_not_guess_a_captured_bare_basename(self):
+        files = {'target.py': 'def ordinary(): pass\n',
+                 'noise.py': 'def preview_cache(): return "entry expired"\n'}
+        for mention in ('/srv/target.py', r'C:\work\target.py'):
+            with self.subTest(mention=mention):
+                result = self.propose(files, mention + ' preview cache "entry expired"')
+                self.assertEqual(result['candidates'][0]['path'], 'noise.py')
+                self.assertFalse(any(e['kind'] == 'explicit_path'
+                    for row in result['candidates'] for e in row['evidence']))
+
     def test_issue_path_positions_handle_crlf_and_lone_cr_without_rewriting_spans(self):
         for newline, start, end in (('\r\n', 10, 23), ('\r', 9, 22)):
             with self.subTest(newline=repr(newline)):
@@ -183,7 +219,8 @@ class RepairLocalizeTests(unittest.TestCase):
         files = {'pkg/target.py': 'def ordinary(): pass\n',
                  'noise.py': 'def preview_cache(): return "expired"\n'}
         for mention in ('target.pyc', 'target.pyx', 'target.py.bak', '../pkg/target.py',
-                        'pkg/../target.py', r'..\pkg\target.py', 'pkg/Target.py', 'x-pkg/target.py'):
+                        'pkg/../target.py', r'..\pkg\target.py', 'pkg/Target.py', 'x-pkg/target.py',
+                        '/other/target.py', '/srv/pkg/../target.py', '/srv/pkg/target.pyc'):
             with self.subTest(mention=mention):
                 result = self.propose(files, mention + ' preview cache "expired"')
                 self.assertEqual(result['candidates'][0]['path'], 'noise.py')
@@ -192,7 +229,7 @@ class RepairLocalizeTests(unittest.TestCase):
     def test_path_repetitions_and_alternate_spellings_do_not_inflate_score(self):
         files = {'pkg/target.py': 'def ordinary(): pass\n'}
         single = self.propose(files, 'pkg/target.py')
-        repeated = self.propose(files, 'pkg/target.py target.py ' + r'pkg\target.py ' * 10)
+        repeated = self.propose(files, 'pkg/target.py target.py /srv/pkg/target.py ' + r'pkg\target.py ' * 10)
         self.assertEqual(single['candidates'][0]['score'], repeated['candidates'][0]['score'])
         self.assertEqual(sum(e['kind'] == 'explicit_path' for e in repeated['candidates'][0]['evidence']), 1)
 
@@ -205,7 +242,7 @@ class RepairLocalizeTests(unittest.TestCase):
             return read(ref, path)
         with patch.object(index.store, 'read_verified', side_effect=bounded_read):
             result = localize.propose_repair_sources(bundle, index,
-                'pkg/target.py secrets/private.py ../../outside.py')
+                'pkg/target.py secrets/private.py ../../outside.py /srv/secrets/private.py /srv/outside.py')
         self.assertEqual(set(result['source_files']), {'pkg/target.py'})
         proofs = [e for row in result['candidates'] for e in row['evidence'] if e['kind'] == 'explicit_path']
         self.assertEqual([e['file'] for e in proofs], ['pkg/target.py'])

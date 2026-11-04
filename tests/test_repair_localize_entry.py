@@ -77,6 +77,22 @@ class RepairLocateEntryTests(unittest.TestCase):
         self.assertEqual(proposal['candidates'],[])
         self.assertIsNone(proposal['source_files'])
 
+    def test_normal_cli_serializes_posix_suffix_evidence_from_captured_source_only(self):
+        body = 'raise RuntimeError("discovery must not execute")\ndef ordinary(): pass\n'
+        write_files(self.repo, {'pkg/target.py': body})
+        self.issue.write_text('File "/srv/build/pkg/target.py", line 2\n'
+                              '"preview cache entry expired" /srv/oracles/hidden.py')
+        code, result = self.invoke()
+        self.assertEqual(code, 0)
+        proposal = json.loads((self.out / 'proposal.json').read_text())
+        self.assertEqual(proposal['candidate_algorithm'], 'lexical-static-path-anchor-v3')
+        self.assertEqual(proposal['candidates'][0]['path'], 'pkg/target.py')
+        proofs = [e for row in proposal['candidates'] for e in row['evidence'] if e['kind'] == 'explicit_path']
+        self.assertEqual([(e['file'], e['resolution']) for e in proofs], [('pkg/target.py', 'posix_suffix')])
+        self.assertEqual(proofs[0]['source_sha256'], sha256(body.encode()).hexdigest())
+        self.assertFalse(result['target_code_executed']); self.assertEqual(result['model_calls'], 0)
+        self.assertNotIn('HIDDEN_MUST_NOT_READ', json.dumps(proposal))
+
     def test_explicit_windowed_preparation_preserves_large_original_without_claiming_task_readiness(self):
         from macr.investigation.repair_windows import project_source_windows
         large=SOURCES['cache.py']+'# authored padding, never executed\n'*800

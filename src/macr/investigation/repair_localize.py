@@ -157,9 +157,9 @@ def propose_repair_sources(bundle, index, issue, *, max_candidates=8):
             matches = basenames[normalized]; resolution = 'unique_basename'
         elif normalized in contents:
             matches = [normalized]; resolution = 'repository_relative'
-        elif '\\' in match.group():
+        elif '\\' in match.group() or match.group().startswith('/'):
             matches = sorted(path for path in contents if '/' in path and normalized.endswith('/' + path))
-            resolution = 'windows_suffix'
+            resolution = 'windows_suffix' if '\\' in match.group() else 'posix_suffix'
         else: continue
         if not matches: continue
         prefix_lines = re.split(r'\r\n|\r|\n', issue[:match.start()])
@@ -282,7 +282,7 @@ def propose_repair_sources(bundle, index, issue, *, max_candidates=8):
     index.store.verify(bundle.ref)
     _require(index.content_id == bundle.ref.content_id, 'snapshot_index_binding')
     return {'schema': 'macr.repair.source-proposal.v1', 'status': status, 'candidates': selected,
-        'candidate_algorithm': 'lexical-static-path-anchor-v2',
+        'candidate_algorithm': 'lexical-static-path-anchor-v3',
         'source_files': source_files, 'terms': terms, 'quoted_phrases': phrases, 'coverage': coverage, 'gaps': gaps,
         'snapshot_content_id': bundle.ref.content_id, 'issue_sha256': issue_sha256,
         'limits': {'max_candidates': max_candidates, 'max_terms': 24, 'max_phrases': 8, 'max_call_hops': 1},

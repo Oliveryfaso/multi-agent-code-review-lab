@@ -35,12 +35,15 @@ relations can add candidates; unresolved references are not treated as calls
 that ran. No learned semantics, embedding service, old benchmark-specific
 translation table or alphabetical fallback is used.
 
-`candidate_algorithm: lexical-static-path-anchor-v2` also recognizes case-sensitive
+`candidate_algorithm: lexical-static-path-anchor-v3` also recognizes case-sensitive
 `.py` path mentions made from word characters, dots and hyphens, with `/` or `\`
 separators. Exact captured relative paths and unique bare basenames receive one
 per-file boost above the bounded term/phrase score. Windows paths containing `\`
-may match a unique captured relative suffix containing a directory; POSIX prefixes
-are not stripped. Qualified unknown paths never fall back to a basename.
+and absolute POSIX paths beginning with `/` may match a unique complete captured
+relative suffix containing a directory. A suffix never resolves a captured bare
+basename alone. Qualified unknown relative paths never fall back to a basename.
+Version v3 adds the POSIX suffix form; prior v2 outputs keep their original
+algorithm identity and are not retroactively reinterpreted.
 Traversal components and extension continuations such as `.pyc` are rejected.
 Ambiguous basenames/suffixes expose gaps without a boost. Repetition and alternate
 spellings do not multiply the boost. Each anchor records the original issue text,
