@@ -36,8 +36,19 @@ def main() -> None:
 
     from macr.investigation.repair_entry import add_parser as add_repair_parser
     add_repair_parser(subparsers)
+    from macr.investigation.repair_localize_entry import add_parser as add_localize_parser
+    add_localize_parser(subparsers)
     from macr.evals.repair_comparison_entry import add_parser as add_comparison_parser
     add_comparison_parser(subparsers)
+
+    inventory_parser = subparsers.add_parser('repair-benchmark-inventory',
+        help='Inventory every BugsInPy metadata entry and optionally check neutral repair inputs; no execution.')
+    inventory_parser.add_argument('--index', required=True, type=Path,
+        help='Local pinned GitHub recursive tree JSON; no patch or benchmark checkout execution.')
+    inventory_parser.add_argument('--revision', required=True, help='Exact upstream commit, distinct from the tree object SHA.')
+    inventory_parser.add_argument('--task-map', type=Path,
+        help='Optional JSON mapping project/bug to explicit neutral repo/task paths.')
+    inventory_parser.add_argument('--out', required=True, type=Path, help='New exclusive local JSON report file.')
 
     mock_parser = subparsers.add_parser('mock-recovery', help='Synthetic recovery demo only; no production resume, real model, or tool execution.')
     mock_commands = mock_parser.add_subparsers(dest='mock_operation', required=True)
@@ -118,9 +129,15 @@ def main() -> None:
     if args.command == 'repair':
         from macr.investigation.repair_entry import run as run_repair
         raise SystemExit(run_repair(args))
+    if args.command == 'repair-locate':
+        from macr.investigation.repair_localize_entry import run as run_localize
+        raise SystemExit(run_localize(args))
     if args.command == 'repair-comparison':
         from macr.evals.repair_comparison_entry import run as run_comparison
         raise SystemExit(run_comparison(args))
+    if args.command == 'repair-benchmark-inventory':
+        from macr.evals.bugsinpy_inventory import run as run_inventory
+        raise SystemExit(run_inventory(args))
     if args.command == 'mock-recovery':
         from macr.investigation import mock_recovery
         command = [args.mock_operation, '--root=' + str(args.root)]

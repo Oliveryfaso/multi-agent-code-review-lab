@@ -18,6 +18,15 @@ SECRET_PATTERNS = (".env*", "*.pem", "*.key", "id_rsa*", "id_ed25519*", "*creden
 PRIVATE_DIRS = {'.git', '.hg', '.aws', '.ssh', '.codex', '.agents', 'secrets', 'credentials', 'oracles', 'oracle'}
 
 
+def paths_overlap(left: Path, right: Path):
+    """Conservative resolved-path overlap across case/Unicode-insensitive volumes."""
+    from unicodedata import normalize
+    def parts(path):
+        return tuple(normalize('NFC',part).casefold() for part in path.parts)
+    left,right=parts(left),parts(right)
+    return left[:len(right)]==right or right[:len(left)]==left
+
+
 def validate_workspace_path(path: Path, *, output=False):
     """Explicit artifact roots may be read, but never private/secret ancestry."""
     excluded = PRIVATE_DIRS if output else EXCLUDED_DIRS

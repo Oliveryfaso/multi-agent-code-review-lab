@@ -30,6 +30,12 @@ OFFLINE_MODULES = frozenset({
     'test_repair_provider_binding', 'test_repair_scoring_flow', 'test_repair_comparison',
     'test_repair_transport', 'test_repair_spend', 'test_repair_runtime_binding',
     'test_repair_comparison_entry',
+    'test_bugsinpy_inventory',
+    'test_repair_test_plan', 'test_repair_pytest_entry',
+    'test_repair_scoring_overlay', 'test_repair_scoring_stage',
+    'test_repair_sources', 'test_repair_source_scope_entry',
+    'test_repair_localize', 'test_repair_localize_entry',
+    'test_repair_windows', 'test_repair_windows_entry', 'test_repair_windows_scoring',
     'test_deepseek_conversation', 'test_provider_billing_evidence',
     'test_provider_identity_evidence', 'test_provider_failure_structure',
     'test_offline_tests', 'test_code_graph', 'test_repository_scope',
@@ -106,7 +112,12 @@ def offline_context(tmp):
         return snapshot_init(self, tmp / 'snapshots' if root is None else root,
                              allowed_root=allowed_root)
 
-    def indexes(self, store, cache_root=None):
+    def indexes(self, store, cache_root=None, *, allowed_root=None):
+        if allowed_root is not None:
+            allowed_root=Path(allowed_root).absolute()
+            if allowed_root != allowed_root.resolve() or not allowed_root.is_relative_to(tmp):
+                raise RuntimeError('fixture index authority must stay inside managed output')
+            return index_init(self,store,cache_root,allowed_root=allowed_root)
         return index_init(self, store, tmp / 'index' if cache_root is None else cache_root)
 
     def verifier(self, profile=None, artifact_root=None):

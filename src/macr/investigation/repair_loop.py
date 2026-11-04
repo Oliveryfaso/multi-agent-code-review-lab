@@ -20,9 +20,9 @@ from macr.tools.test_runner import TestRunnerTool
 from .repair_io import bounded_json, load_json
 from .repair_io import encode_bounded, safe_write
 from .records import BackendCapabilities, CheckSpec, Limits, ScopeProfile
-from .repair_edits import apply_edits, validate_files
+from .repair_edits import MAX_TOTAL_LINES, apply_edits, validate_files
 from .repair_io import _hashes, _root, _test_names
-from .scope import read_safe, safe_parent, validate_workspace_path, walk_entries
+from .scope import read_safe, safe_parent, validate_workspace_path, walk_entries, paths_overlap
 from .snapshots import SnapshotStore
 from .scope import RepositoryScope
 from .validation import ContractError, validate_relative, decode_record
@@ -34,7 +34,7 @@ OUTPUT_CONTRACT = {'version':'macr.repair.bound-proposal.v1',
     'statuses':['candidate','no_candidate','insufficient_evidence'],
     'summary_utf8_bytes':2048,'max_edits':3,'edit_utf8_bytes':16384,
     'evidence_count':[1,2],'exact_once_replacements':True,'test_edits':False}
-PROFILE = ScopeProfile(max_python_files=32, max_python_lines=4096,
+PROFILE = ScopeProfile(max_python_files=32, max_python_lines=MAX_TOTAL_LINES,
                        max_file_bytes=16384, max_text_bytes=65536)
 
 
@@ -59,13 +59,16 @@ def digest(value):
     return sha256(encode_bounded(value, CAP)).hexdigest()
 
 
-def source_id(files):
-    validate_files(files)
+def source_id(files, *, full_originals=False):
+    validate_files(files, full_originals=full_originals)
     return digest(_hashes(files))
 
 
-def test_manifest(files, test_paths):
-    validate_files(files)
+def test_manifest(files, test_paths, *, test_plan=None, full_originals=False):
+    validate_files(files, full_originals=full_originals)
+    if test_plan is not None:
+        from .repair_test_plan import test_names
+        return test_names(files,test_paths,test_plan)
     _require(type(test_paths) is list and 1 <= len(test_paths) <= 8
              and len(set(test_paths)) == len(test_paths), 'test_paths')
     names = []
@@ -143,12 +146,12 @@ def _public_diagnostics(raw, files, names):
     return sorted(result, key=lambda row: row['test_id'])
 
 
-def _observation(raw, files, names, spec, *, proposal_contract='v1'):
+def _observation(raw, files, names, spec, *, proposal_contract='v1', full_originals=False):
     bounded_json(raw, max_bytes=32768, max_depth=8)
     fields = {'source_id', 'execution_status', 'outcomes'}
     _require(type(raw) is dict and (set(raw) == fields or
              proposal_contract in ('v4','v5','v6') and set(raw) == fields | {'diagnostics'})
-             and raw['source_id'] == source_id(files), 'verification_binding')
+             and raw['source_id'] == source_id(files,full_originals=full_originals), 'verification_binding')
     status, outcomes = raw['execution_status'], raw['outcomes']
     _require(status in ('completed', 'blocked', 'error', 'timeout', 'outcome_unknown')
              and type(outcomes) is dict, 'verification_contract')
@@ -227,26 +230,41 @@ def _file_hashes(root, *, skip=()):
     return result
 
 
-def _files(root, expected_files=None):
-    entries = list(walk_entries(root, PROFILE))
+def _source_profile(full_originals=False):
+    _require(type(full_originals) is bool,'full_original_profile')
+    if not full_originals: return PROFILE
+    from .repair_edits import MAX_FULL_FILE_BYTES, MAX_FULL_TOTAL_BYTES, MAX_FULL_TOTAL_LINES
+    return ScopeProfile(profile_id='repair-full-originals-v1',max_python_files=32,
+        max_file_bytes=MAX_FULL_FILE_BYTES,max_text_bytes=MAX_FULL_TOTAL_BYTES,max_python_lines=MAX_FULL_TOTAL_LINES)
+
+
+def _files(root, expected_files=None, *, source_scope=None, full_originals=False):
+    if source_scope is not None:
+        from .repair_sources import read_committed_sources, source_view
+        source_view(source_scope)
+        return read_committed_sources(root,expected_files,full_originals=full_originals)
+    profile=_source_profile(full_originals)
+    entries = list(walk_entries(root, profile))
     _require(len(entries) <= 64 and all(kind in ('file', 'directory') for _, kind, _ in entries), 'inventory')
     if expected_files is not None:
         _require({n for n,k,_ in entries if k == 'file'} == set(expected_files), 'source_inventory_mismatch')
-    files = {n: read_safe(root, n, 16384) for n, kind, _ in entries if kind == 'file'}
-    validate_files(files)
+    files = {n: read_safe(root, n, profile.max_file_bytes) for n, kind, _ in entries if kind == 'file'}
+    validate_files(files,full_originals=full_originals)
     _require(expected_files is None or _hashes(files) == expected_files, 'task_source_changed_before_capture')
     return files
 
 
 def _request(files, issue, editable, protected, feedback, number, *, strategy='api_debugger', bound=False,
-             proposal_contract='v1', attempt_history=None):
+             proposal_contract='v1', attempt_history=None, test_plan=None, source_scope=None, source_windows=None):
     contract = output_contract(proposal_contract)
-    identity = source_id(files)
+    full_originals=source_windows is not None
+    _require(not full_originals or source_scope=='declared_files','windowed_source_scope')
+    identity = source_id(files,full_originals=full_originals)
     if strategy == 'direct_api':
         feedback = {'source_id': identity, 'verification':'not_performed',
                     'revision':'Self-review the current candidate against the original issue and visible tests.'}
     elif proposal_contract in ('v3','v4','v5','v6'):
-        feedback = _public_feedback(feedback, test_manifest(files, protected),
+        feedback = _public_feedback(feedback, test_manifest(files, protected,test_plan=test_plan,full_originals=full_originals),
                                    files=files if proposal_contract in ('v4','v5','v6') else None)
         _require(feedback['source_id'] == identity, 'feedback_source_binding')
     binding = {'base_content_id': identity, 'hypothesis_id': digest({'issue': issue}),
@@ -254,6 +272,15 @@ def _request(files, issue, editable, protected, feedback, number, *, strategy='a
         'editable_paths': editable, 'protected_paths': protected,
         'feedback': deepcopy(feedback), 'round': number,
         'provenance': 'provider_output_unattested' if bound else 'scripted_simulation_not_observed_execution'}
+    if test_plan is not None:
+        from .repair_test_plan import validate_test_plan
+        binding['test_plan']=validate_test_plan(files,protected,test_plan)
+    if source_scope is not None:
+        from .repair_sources import source_view
+        binding['source_view']=source_view(source_scope)
+    if full_originals:
+        from .repair_windows import project_source_windows
+        binding['source_windows']=project_source_windows(files,source_windows,protected_paths=protected)
     if proposal_contract in ('v5','v6'):
         history = [] if attempt_history is None else attempt_history
         _require(type(history) is list and len(history) == number-1 <= 2
@@ -264,7 +291,7 @@ def _request(files, issue, editable, protected, feedback, number, *, strategy='a
         binding.update(proposal_contract=proposal_contract, output_contract=contract)
     # Persist/reload must produce byte-identical request content, including nested feedback.
     binding = load_json(encode_bounded(binding, CAP).decode(), max_bytes=CAP, max_depth=24)
-    request = PatchAgent.bound_request({p: b.decode() for p, b in sorted(files.items())}, binding)
+    request = PatchAgent.bound_request({} if full_originals else {p: b.decode() for p, b in sorted(files.items())}, binding)
     request.max_input_tokens = 8192
     request.max_output_tokens = 1024
     request.metadata = {'prompt_version': 'debugger-bound-repair-feedback-v1', 'simulation': True}
@@ -276,6 +303,10 @@ def _request(files, issue, editable, protected, feedback, number, *, strategy='a
         'Use 1 to 2 unique supplied evidence IDs. Candidate edits: 1 to 3 distinct editable files; '
         'old/new are nonblank, unequal, at most 16384 UTF-8 bytes each. '
         'Non-candidate statuses require empty edits. The complete JSON response is at most 65536 UTF-8 bytes.')
+    if source_scope is not None:
+        request.messages[0]['content'] += (
+            ' Supplied files are a declared partial repository view. Unlisted files were not read; '
+            'do not infer that they are absent or that dependency context is complete.')
     if bound:
         request.metadata = {'prompt_version':'debugger-bound-repair-feedback-v2', 'strategy':strategy}
     if proposal_contract in ('v2','v3','v4','v5','v6'):
@@ -313,6 +344,16 @@ def _request(files, issue, editable, protected, feedback, number, *, strategy='a
             'select_candidate requires empty edits and a candidate_content_id from your accepted attempt history. '
             'It selects that exact saved source and ends this run without a new test or success claim. '
             'Historical observations are not a fresh verification of the selected candidate.')
+    if full_originals:
+        request.metadata['source_window_contract']='macr.repair.source-windows.v1'
+        request.messages[0]['content'] += (
+            ' files is empty because complete originals are retained locally, not sent. '
+            'source_windows contains explicitly partial CURRENT snapshot views with full-file hashes, '
+            'exact unprefixed text, inclusive current line numbers and omitted ranges. '
+            'Do not infer omitted content. Each old edit must fit wholly inside one shown window '
+            'and occur exactly once in the complete current file. Edits apply to complete bytes. '
+            'Frozen line-number selections are reprojected on each current snapshot; '
+            'edits that invalidate their bounds or view budget are rejected. No automatic context expansion.')
     _require(len(encode_bounded(asdict(request), CAP)) <= 98304, 'request_size')
     return request
 
@@ -422,7 +463,19 @@ def _proposal(response, request, files, editable):
     if raw['status'] != 'candidate':
         _require(raw['edits'] == [], 'abstention_edits')
         return raw, None
-    return raw, apply_edits(files, raw['edits'], editable_paths=editable)
+    windows=payload.get('source_windows')
+    if windows is not None:
+        _require(request.metadata.get('source_window_contract')=='macr.repair.source-windows.v1', 'source_window_binding')
+        # The actual selection is reconstructed from the displayed ranges;
+        # replay/scoring separately bind it to the frozen task selection.
+        from .repair_windows import project_source_windows
+        selection={'schema':'macr.repair.source-windows.v1','files':{
+            path:[{'start_line':w['start_line'],'end_line':w['end_line']} for w in item['windows']]
+            for path,item in windows['files'].items() if item['windows']}}
+        _require(windows==project_source_windows(files,selection,protected_paths=payload['protected_paths']), 'source_window_binding')
+    else: selection=None
+    return raw, apply_edits(files, raw['edits'], editable_paths=editable,
+        full_originals=windows is not None,source_windows=selection)
 
 
 def _proposal_terminal_status(proposal, accepted_candidates):
@@ -436,13 +489,14 @@ def _proposal_terminal_status(proposal, accepted_candidates):
 
 
 def _select_saved(config, proposal, current, candidates):
+    full_originals=config.get('source_windows') is not None
     choice = proposal['selected_content_id']
     _require(choice in candidates, 'selection_not_accepted')
     number, selected = candidates[choice]
-    _require(source_id(selected) == choice and all(sha256(selected[p]).hexdigest() ==
+    _require(source_id(selected,full_originals=full_originals) == choice and all(sha256(selected[p]).hexdigest() ==
         config['original_hashes'][p] for p in config['test_paths']), 'selection_source_binding')
     receipt = {'task_id':config['task_id'],'task_source_id':digest(config['original_hashes']),
-        'previous_source_id':source_id(current),'selected_source_id':choice,
+        'previous_source_id':source_id(current,full_originals=full_originals),'selected_source_id':choice,
         'accepted_round':number,'verification_status':'not_rerun'}
     return dict(selected), receipt
 
@@ -458,7 +512,12 @@ def _check_stop(record, baseline=False):
     return None
 
 
-def _spec(number, test_paths):
+def _spec(number, test_paths, test_plan=None):
+    if test_plan is not None:
+        from .repair_test_plan import validate_plan_shape
+        plan=validate_plan_shape(test_plan)
+        return CheckSpec(f'repair-{number}',argv_profile='pytest',selectors=list(plan['nodeids']),
+                         limits=Limits(1,512*1024*1024,32,60,1024*1024))
     return CheckSpec(f'repair-{number}', selectors=[p[:-3].replace('/', '.') for p in test_paths],
                      limits=Limits(1, 512*1024*1024, 32, 60, 1024*1024))
 
@@ -473,17 +532,17 @@ def _usage_valid(response, request):
 def run_simulated_loop(repo, issue, *, editable_paths, test_paths, provider=None,
                        verifier=None, out, max_rounds=3,
                        max_total_input_tokens=24576, max_total_output_tokens=3072,
-                       proposal_contract='v1'):
+                       proposal_contract='v1', test_plan=None):
     _require(provider is None or type(provider) is ScriptedPatchProvider, 'simulation_provider_only')
     return _run_loop(repo, issue, editable_paths=editable_paths, test_paths=test_paths,
         provider=provider, verifier=verifier, out=out, max_rounds=max_rounds,
         max_total_input_tokens=max_total_input_tokens, max_total_output_tokens=max_total_output_tokens,
-        proposal_contract=proposal_contract)
+        proposal_contract=proposal_contract,test_plan=test_plan)
 
 
 def run_repair_loop(repo, issue, *, editable_paths, test_paths, provider, out,
                     strategy='api_debugger', task_id='repair', verifier=None, expected_source_files=None,
-                    proposal_contract='v1'):
+                    proposal_contract='v1', test_plan=None, source_scope=None, source_windows=None):
     """Normal route; configured HTTP still has no approved real validator.
 
     Real validation remains unavailable. Tests may inject the existing explicit
@@ -496,14 +555,16 @@ def run_repair_loop(repo, issue, *, editable_paths, test_paths, provider, out,
         provider=provider, verifier=verifier, out=out, max_rounds=limits['max_requests'],
         max_total_input_tokens=limits['max_total_input_tokens'],
         max_total_output_tokens=limits['max_total_output_tokens'], strategy=strategy, task_id=task_id,
-        expected_source_files=expected_source_files, proposal_contract=proposal_contract)
+        expected_source_files=expected_source_files, proposal_contract=proposal_contract,test_plan=test_plan,
+        source_scope=source_scope,source_windows=source_windows)
 
 
 def _prepared_request(files, config, feedback, number, history=None):
     bound = config.get('provider_config') is not None
     request = _request(files, config['issue'], config['editable_paths'], config['test_paths'],
                        feedback, number, strategy=config['strategy'], bound=bound,
-                       proposal_contract=config.get('proposal_contract','v1'),attempt_history=history)
+                       proposal_contract=config.get('proposal_contract','v1'),attempt_history=history,
+                       test_plan=config.get('test_plan'),source_scope=config.get('source_scope'),source_windows=config.get('source_windows'))
     if bound:
         from macr.providers.repair_binding import RepairProviderBinding
         request = RepairProviderBinding(config['provider_config']).prepare_request(request)
@@ -537,7 +598,7 @@ def _response(raw):
 def _run_loop(repo, issue, *, editable_paths, test_paths, provider, verifier, out,
               max_rounds, max_total_input_tokens, max_total_output_tokens,
               strategy='api_debugger', task_id='development', expected_source_files=None,
-              proposal_contract='v1'):
+              proposal_contract='v1', test_plan=None, source_scope=None, source_windows=None):
     """Exercise the shared control flow with explicit provider provenance.
 
     Exclusive output directory is the no-resume claim. Partial sessions are never
@@ -558,15 +619,25 @@ def _run_loop(repo, issue, *, editable_paths, test_paths, provider, verifier, ou
     _require(type(issue) is str and 0 < len(issue.encode()) <= 2048, 'issue')
     for value, cap in ((max_rounds, 3), (max_total_input_tokens, 8_000_000), (max_total_output_tokens, 1_000_000)):
         _require(type(value) is int and 0 < value <= cap, 'budget')
-    repo = _root(repo); original = _files(repo, expected_source_files); current = original
+    full_originals=source_windows is not None
+    if full_originals:
+        from .repair_windows import validate_selection_shape,project_source_windows
+        _require(source_scope=='declared_files','windowed_source_scope')
+        validate_selection_shape(source_windows,expected_paths=expected_source_files)
+    def sid(files): return source_id(files,full_originals=full_originals)
+    repo = _root(repo); original = _files(repo, expected_source_files,source_scope=source_scope,full_originals=full_originals); current = original
     # Validate edit authority without making any edit.
     _require(type(editable_paths) is list and 0 < len(editable_paths) <= len(original)
         and all(type(n) is str and n in original for n in editable_paths)
         and len(set(editable_paths)) == len(editable_paths), 'editable_paths')
-    names = test_manifest(original, test_paths)
+    names = test_manifest(original, test_paths,test_plan=test_plan,full_originals=full_originals)
     _require(not set(editable_paths) & set(test_paths), 'test_edit_authority')
+    if full_originals:
+        project_source_windows(original,source_windows,protected_paths=test_paths)
+        _require(all(path in source_windows['files'] for path in editable_paths),'windowed_editable_unshown')
     out = Path(out).absolute(); validate_workspace_path(out, output=True)
     _require(out == out.resolve() and not out.is_relative_to(repo) and not repo.is_relative_to(out), 'output_overlap')
+    if source_scope is not None: _require(not paths_overlap(out,repo),'output_overlap')
     _root(out.parent)
     try:
         with safe_parent(out.parent, out.name) as (fd, leaf): os.mkdir(leaf, 0o700, dir_fd=fd)
@@ -579,6 +650,9 @@ def _run_loop(repo, issue, *, editable_paths, test_paths, provider, verifier, ou
         'provider_available': provider is not None, 'verifier_available': verifier is not None,
         'strategy':strategy, 'task_id':task_id, 'provider_config':deepcopy(provider.config) if bound else None,
         'provider_enabled':provider.enabled if bound else provider is not None}
+    if test_plan is not None: config['test_plan']=deepcopy(test_plan)
+    if source_scope is not None: config['source_scope']=source_scope
+    if full_originals: config['source_windows']=deepcopy(source_windows)
     if proposal_contract in ('v2','v3','v4','v5','v6'): config['proposal_contract'] = proposal_contract
     if bound:
         if initial_meter['schema']=='macr.repair.provider-meter.v2':
@@ -595,20 +669,20 @@ def _run_loop(repo, issue, *, editable_paths, test_paths, provider, verifier, ou
         check_started = time.monotonic()
         for name, body in files.items(): _write(out, f'sources/{number}/{name}', body)
         bundle = store.capture(out/f'sources/{number}',
-                               RepositoryScope().inventory(out/f'sources/{number}', PROFILE))
+                               RepositoryScope().inventory(out/f'sources/{number}', _source_profile(full_originals)))
         # Use the same frozen order that replay verification reconstructs.
-        spec = _spec(number, config['test_paths'])
+        spec = _spec(number, config['test_paths'],config.get('test_plan'))
         _write(out, f'checks/{number}/intent.json', {'snapshot': asdict(bundle.ref), 'spec': asdict(spec),
                                                   'origin': 'synthetic_replay' if verifier else 'unavailable'})
         raw = None; invalid = False
         try:
             raw = verifier.take() if verifier else None
-            result = _observation(raw, files, names, spec, proposal_contract=proposal_contract) if raw is not None else None
+            result = _observation(raw, files, names, spec, proposal_contract=proposal_contract,full_originals=full_originals) if raw is not None else None
             result = TestRunnerTool().run_check(bundle.ref, spec, _ReplayBackend(bundle.ref, result) if result else None)
         except (ContractError, TypeError, ValueError):
             invalid = True
             result = classify_check({'execution_status': 'error'}, spec)
-        record = {'source_id': source_id(files), 'snapshot': asdict(bundle.ref),
+        record = {'source_id': sid(files), 'snapshot': asdict(bundle.ref),
             'spec': asdict(spec), 'observation': raw, 'result': asdict(result),
             'origin': 'synthetic_replay' if verifier else 'unavailable', 'invalid': invalid,
             'outcomes': raw.get('outcomes', {}) if type(raw) is dict and not invalid else {}}
@@ -633,7 +707,7 @@ def _run_loop(repo, issue, *, editable_paths, test_paths, provider, verifier, ou
         attempts += 1; folder = f'rounds/{attempts}'
         _write(out, folder+'/intent.json', {'request': asdict(request), 'request_sha256': digest(asdict(request)),
             'input_reserved': request.max_input_tokens, 'output_reserved': request.max_output_tokens})
-        row = {'number': attempts, 'base_source_id': source_id(current), 'status': None,
+        row = {'number': attempts, 'base_source_id': sid(current), 'status': None,
                'request_sha256': digest(asdict(request)), 'response_sha256': None}
         rounds.append(row)
         before_calls = provider.snapshot()['requests'] if bound else 0
@@ -670,17 +744,17 @@ def _run_loop(repo, issue, *, editable_paths, test_paths, provider, verifier, ou
         if changed is None:
             if proposal['status'] == 'select_candidate':
                 current,selection = _select_saved(config,proposal,current,candidates)
-                row['selected_source_id'] = source_id(current)
+                row['selected_source_id'] = sid(current)
                 _write(out,'selection.json',selection)
             status = row['status'] = proposal_status
             _write(out, folder+'/event.json', row); break
-        current = changed; row['candidate_source_id'] = source_id(current)
-        if proposal_contract == 'v6': candidates.setdefault(source_id(current),(attempts,dict(current)))
+        current = changed; row['candidate_source_id'] = sid(current)
+        if proposal_contract == 'v6': candidates.setdefault(sid(current),(attempts,dict(current)))
         accepted_candidates += 1
         previous_feedback = feedback
         feedback = check(current, attempts)
         if proposal_contract in ('v5','v6'):
-            history.append(_attempt_entry(attempts,proposal,source_id(current),previous_feedback,feedback,
+            history.append(_attempt_entry(attempts,proposal,sid(current),previous_feedback,feedback,
                                           feedback_enabled=strategy!='direct_api'))
         status = _candidate_stop(feedback, config)
         row['status'] = status or _continuing_status(strategy)
@@ -703,18 +777,23 @@ def _run_loop(repo, issue, *, editable_paths, test_paths, provider, verifier, ou
         'accounting_basis': 'provider_receipts_not_invoice' if bound else 'scripted_usage_not_billing',
         'unknown_request_reservation': (meter['unknown_reserved_usd'] != '0.000000') if bound else bool(rounds and rounds[-1]['status'] in ('provider_outcome_unknown', 'provider_usage_invalid')),
         'rounds': rounds, 'checks': checks, 'config_sha256': digest(config),
-        'final_source_id': source_id(current), 'checks_unchanged': all(current[n] == original[n] for n in test_paths),
+        'final_source_id': sid(current), 'checks_unchanged': all(current[n] == original[n] for n in test_paths),
         'repaired': False, 'target_code_executed': False, 'execution_authorized': False,
         'total_seconds': total_seconds,
         'phase_seconds': {'preparation':max(0.0,total_seconds-provider_seconds-validation_seconds),
                           'provider':provider_seconds,'validation':validation_seconds},
         'provider_accounting':meter,
         'limitations': ['Synthetic outcomes do not prove failure reproduction, repair, model autonomy or isolation.',
-                        'Declared unittest names do not attest collection or test adequacy.',
+                        ('Declared pytest nodeids do not attest exact collection, parameter IDs, fixtures or test adequacy.'
+                         if test_plan is not None else 'Declared unittest names do not attest collection or test adequacy.'),
                         ('Configured HTTP and local hashes do not authenticate the producer; no resume or real verifier is enabled.'
                          if runtime is not None else 'No live dispatch or resume adapter exists; unavailable and unknown stop the loop.')],
         'artifact_hashes': _file_hashes(out)}
     if proposal_contract == 'v6': report['final_selection'] = selection
+    if source_scope is not None:
+        from .repair_sources import source_view
+        report['source_view']=source_view(source_scope)
+    if full_originals: report['source_windows']=deepcopy(source_windows)
     _write(out, 'report.json', report)
     return verify_loop(out)
 
@@ -723,6 +802,20 @@ def verify_loop(out):
     """Revalidate local integrity and source/request/feedback links; never dispatch."""
     out = _root(out); report = _read(out, 'report.json'); claim = _read(out, 'claim.json')
     config = claim['config']
+    full_originals=config.get('source_windows') is not None
+    _require(('source_windows' in config)==('source_windows' in report),'source_window_binding')
+    if 'source_windows' in config: _require(full_originals,'source_window_binding')
+    if full_originals:
+        from .repair_windows import validate_selection_shape,project_source_windows
+        _require(config.get('source_scope')=='declared_files' and report['source_windows']==config['source_windows'],
+                 'source_window_binding')
+        validate_selection_shape(config['source_windows'],expected_paths=config['original_hashes'])
+    def sid(files): return source_id(files,full_originals=full_originals)
+    _require(('source_scope' in config)==('source_view' in report),'source_view_binding')
+    if 'source_scope' in config:
+        from .repair_sources import source_view
+        _require(config['source_scope'] is not None and report.get('source_view')==source_view(config['source_scope']),
+                 'source_view_binding')
     output_contract(config.get('proposal_contract','v1'))
     _validate_strategy(config['strategy'],config.get('proposal_contract','v1'))
     bound = config.get('provider_config') is not None
@@ -735,18 +828,22 @@ def verify_loop(out):
         and report['real_model_calls'] == report['paid_requests'] == (None if bound and report['provider_requests'] else 0)
         and report['candidate_origin'] == ('official_https_output_unattested' if official else
             'provider_output_unattested' if bound else 'scripted_provider'), 'simulation_boundary')
-    files = _files(out/'sources/0'); original = files
+    files = _files(out/'sources/0',full_originals=full_originals); original = files
     _require(_hashes(files) == config['original_hashes']
-        and test_manifest(files, config['test_paths']) == config['test_names'], 'original_binding')
+        and test_manifest(files, config['test_paths'],test_plan=config.get('test_plan'),full_originals=full_originals) == config['test_names'], 'original_binding')
+    if full_originals: project_source_windows(files,config['source_windows'],protected_paths=config['test_paths'])
     store = SnapshotStore(out/'snapshots', allowed_root=out)
     for i, check in enumerate(report['checks']):
         saved = _read(out, f'checks/{i}/receipt.json')
-        bodies = _files(out/f'sources/{i}')
-        _require(saved == check and saved['source_id'] == source_id(bodies)
+        bodies = _files(out/f'sources/{i}',full_originals=full_originals)
+        _require(saved == check and saved['source_id'] == sid(bodies)
             and all(bodies[n] == original[n] for n in config['test_paths']), 'check_binding')
-        _require(saved['spec'] == asdict(_spec(i, config['test_paths'])), 'fixed_check_contract')
+        _require(saved['spec'] == asdict(_spec(i, config['test_paths'],config.get('test_plan'))), 'fixed_check_contract')
         ref = decode_record(SnapshotRef, saved['snapshot'])
         store.verify(ref)
+        if full_originals:
+            _require(store._manifest(ref).scope_profile==asdict(_source_profile(True)), 'snapshot_profile_binding')
+            project_source_windows(bodies,config['source_windows'],protected_paths=config['test_paths'])
         _require({entry['path'] for entry in store._manifest(ref).files} == set(bodies)
             and all(store.read_verified(ref, name) == body for name, body in bodies.items()), 'snapshot_source_binding')
         _require(_read(out, f'checks/{i}/intent.json') == {
@@ -756,7 +853,7 @@ def verify_loop(out):
         if not saved['invalid']:
             spec = decode_record(CheckSpec, saved['spec'])
             result = _observation(saved['observation'], bodies, config['test_names'], spec,
-                proposal_contract=config.get('proposal_contract','v1')) if saved['observation'] is not None else classify_check({'execution_status': 'blocked'}, spec)
+                proposal_contract=config.get('proposal_contract','v1'),full_originals=full_originals) if saved['observation'] is not None else classify_check({'execution_status': 'blocked'}, spec)
             expected_outcomes = saved['observation']['outcomes'] if saved['observation'] is not None else {}
             _require(asdict(result) == saved['result'] and saved['outcomes'] == expected_outcomes,
                      'check_result_and_feedback')
@@ -786,7 +883,7 @@ def verify_loop(out):
     for i, row in enumerate(report['rounds'], 1):
         _require(status is None and config['provider_available'], 'dispatch_after_stop')
         _require(row == _read(out, f'rounds/{i}/event.json') and row['number'] == i
-            and row['base_source_id'] == source_id(files), 'round_binding')
+            and row['base_source_id'] == sid(files), 'round_binding')
         request = _prepared_request(files, config, feedback, i, history)
         if bound and i <= meter['requests']:
             from macr.providers.repair_binding import RepairProviderBinding
@@ -835,17 +932,17 @@ def verify_loop(out):
                         if proposal['status'] == 'select_candidate':
                             files,selection = _select_saved(config,proposal,files,candidates)
                             _require(_read(out,'selection.json') == selection
-                                and row.get('selected_source_id') == source_id(files), 'selection_receipt_binding')
+                                and row.get('selected_source_id') == sid(files), 'selection_receipt_binding')
                         status = proposal_status
                     else:
-                        _require(source_id(changed) == row.get('candidate_source_id')
-                            and changed == _files(out/f'sources/{i}'), 'candidate_binding')
+                        _require(sid(changed) == row.get('candidate_source_id')
+                            and changed == _files(out/f'sources/{i}',full_originals=full_originals), 'candidate_binding')
                         previous_feedback = feedback
                         files = changed; feedback = report['checks'][i]; used_checks += 1
                         if config.get('proposal_contract') == 'v6':
-                            candidates.setdefault(source_id(files),(i,dict(files)))
+                            candidates.setdefault(sid(files),(i,dict(files)))
                         if config.get('proposal_contract') in ('v5','v6'):
-                            history.append(_attempt_entry(i,proposal,source_id(files),previous_feedback,feedback,
+                            history.append(_attempt_entry(i,proposal,sid(files),previous_feedback,feedback,
                                 feedback_enabled=config['strategy']!='direct_api'))
                         accepted_candidates += 1
                         status = _candidate_stop(feedback, config)
@@ -863,7 +960,7 @@ def verify_loop(out):
         else:
             raise ContractError('repair_loop_invalid', 'missing_terminal_event')
     _require(report['proposal_requests'] == len(report['rounds']) <= config['max_rounds']
-        and report['final_source_id'] == source_id(files) and report['checks_unchanged'] is True,
+        and report['final_source_id'] == sid(files) and report['checks_unchanged'] is True,
         'terminal_binding')
     if config.get('proposal_contract') == 'v6':
         _require(report.get('final_selection') == selection, 'final_selection_binding')

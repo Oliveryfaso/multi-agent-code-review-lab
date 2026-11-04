@@ -26,7 +26,13 @@ def add_parser(subparsers):
     handoff_parser.add_argument('--plan', type=Path, required=True)
     handoff_parser.add_argument('--record', type=Path, required=True)
     handoff_parser.add_argument('--cell', required=True)
-    for command in (compile_parser, report_parser, handoff_parser):
+    scoring_parser = commands.add_parser('stage-scoring', help='Stage committed, whole evaluator tests over a revalidated record; never executes or scores.')
+    scoring_parser.add_argument('--plan', type=Path, required=True)
+    scoring_parser.add_argument('--record', type=Path, required=True)
+    scoring_parser.add_argument('--cell', required=True)
+    scoring_parser.add_argument('--overlay-manifest', type=Path, required=True)
+    scoring_parser.add_argument('--overlay-root', type=Path, required=True)
+    for command in (compile_parser, report_parser, handoff_parser, scoring_parser):
         command.add_argument('--out', type=Path, required=True, help='New exclusive local artifact directory; never overwritten or resumed.')
 
 
@@ -64,6 +70,15 @@ def run(args):
             summary = {'status': 'compiled', 'comparison_sha256': plan['comparison_sha256'],
                        'planned_cells': plan['planned_cells'], 'max_requests': plan['max_requests'],
                        'max_usd': plan['max_usd']}
+        elif args.comparison_operation == 'stage-scoring':
+            from .repair_scoring_stage import stage_scoring
+            staging = stage_scoring(args.record,_read(args.plan),args.cell,
+                _read(args.overlay_manifest),args.overlay_root,args.out,
+                input_paths=(args.plan,args.overlay_manifest))
+            summary = {'status':'staged_pending_independent_scoring',
+                'comparison_sha256':staging['comparison_sha256'],
+                'staging_sha256':staging['staging_sha256'],
+                'scoring_credit_awarded':False}
         elif args.comparison_operation == 'handoff':
             from macr.investigation.repair_entry import score_handoff
             # A handoff must never add files to its immutable input record.
@@ -81,7 +96,8 @@ def run(args):
             values = {'report.json': report}
             summary = {'status': 'reported', 'comparison_sha256': report['comparison_sha256'],
                        'planned_cells': report['planned_cells'], 'must_stop': report['must_stop']}
-        _write_new(args.out, values)
+        if args.comparison_operation != 'stage-scoring':
+            _write_new(args.out, values)
     except (ValueError, TypeError, OSError, UnicodeError) as error:
         # Contract codes only: no raw path, output, source or exception repr.
         code = error.code if isinstance(error, ContractError) else str(error)

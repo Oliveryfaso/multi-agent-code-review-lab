@@ -95,6 +95,19 @@ class RepairEditsTests(unittest.TestCase):
         repair_edits.validate_files({f'a{i}.py': full for i in range(4)})
         repair_edits.validate_files({f'a{i}.py': b'pass\n' for i in range(32)})
 
+    def test_snapshot_line_budget_is_checked_before_parsing_and_after_edits(self):
+        files={'a.py': b'\n'*4094+b'pass\n', 'checks.py': b'pass\n'}
+        repair_edits.validate_files(files)
+        too_many=dict(files);too_many['a.py']=b'\n'+files['a.py']
+        with patch.object(repair_edits,'_syntax') as syntax:
+            with self.assertRaises(ContractError): repair_edits.validate_files(too_many)
+            syntax.assert_not_called()
+        before=deepcopy(files)
+        with self.assertRaises(ContractError):
+            repair_edits.apply_edits(files,[{'file':'a.py','old':'pass','new':'pass\n'}],
+                                     editable_paths=['a.py'])
+        self.assertEqual(files,before)
+
     def test_edit_growth_is_checked_for_each_file_and_total_budget(self):
         for files, change in (
             ({'a.py': b'pass\n'}, {'file': 'a.py', 'old': 'pass', 'new': '#' + 'x' * 16384}),

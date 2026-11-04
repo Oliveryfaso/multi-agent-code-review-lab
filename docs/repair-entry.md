@@ -7,6 +7,21 @@ Repair parser registration is lazy and does not load optional recovery framework
 The checkout entry is tested here; building/installing a console-script artifact
 is outside this offline integration.
 
+For explicitly selecting complete source files from a larger checkout, use the
+[task-v3 declared source view](repair-source-scope.md). Its partial-repository
+coverage is visible to the model and evaluator; existing task versions retain
+their closed source inventory.
+
+Large complete originals with explicitly partial model context use
+[task-v4 line windows](repair-windowed-source.md). All three arms share that
+view and the existing budgets; full candidate bytes remain available to scoring.
+
+For full-denominator BugsInPy metadata inventory and checks of prepared neutral
+repair inputs, see [repair-benchmarks.md](repair-benchmarks.md). This does not
+enable execution or turn input acceptance into a successful repair.
+Explicit task-v2 pytest/nodeid inputs are described in
+[repair-pytest-input.md](repair-pytest-input.md); legacy task v1 is unchanged.
+
 From this Git checkout (no temporary PYTHONPATH or project installation needed):
 
 ```sh
@@ -306,3 +321,9 @@ production recovery or exactly-once external effects. That optional command is
 not a dependency of this default-disabled repair entry. The installed global
 console script, live services and target execution were not tested; the
 repository's documented checkout wrapper was.
+
+## Scoring-side large tests
+
+See [whole-file scoring overlays](repair-scoring-overlay.md) for staging complete
+evaluator tests separately from model inputs. This does not enable execution or
+change the generation source limits.

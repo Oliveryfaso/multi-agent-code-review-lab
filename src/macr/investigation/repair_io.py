@@ -124,14 +124,17 @@ def _root(path):
     return value
 
 
-def _syntax(body,name):
-    _require(type(body) is bytes and len(body) <= 16384, 'source_size')
+def _syntax(body,name, *, full_originals=False):
+    _require(type(full_originals) is bool, 'source_profile')
+    byte_limit, node_limit, depth_limit = ((128 * 1024, 32768, 64)
+        if full_originals else (16384, 2048, 32))
+    _require(type(body) is bytes and len(body) <= byte_limit, 'source_size')
     try:
         text=body.decode('utf-8');_require('\x00' not in text,'source_nul')
         tree=ast.parse(text,filename=name);pending=[(tree,0)];count=0
         while pending:
             node,depth=pending.pop();count+=1
-            _require(count <= 2048 and depth <= 32,'source_ast_budget')
+            _require(count <= node_limit and depth <= depth_limit,'source_ast_budget')
             pending.extend((child,depth+1) for child in ast.iter_child_nodes(node))
         compile(tree,name,'exec',dont_inherit=True,optimize=0)  # Discarded; never execute.
         return text,tree
@@ -146,11 +149,50 @@ def _hashes(files):
 
 def _test_names(body):
     _,tree=_syntax(body,'checks.py');names=[]
+    aliases={'unittest':'module'}  # Preserve the existing canonical declaration spelling.
+
+    def bindings(node):
+        # Nested locals cannot rebind a later top-level class's base alias.
+        if isinstance(node,(ast.FunctionDef,ast.AsyncFunctionDef,ast.ClassDef)):
+            return {node.name}
+        if isinstance(node,ast.Lambda): return set()
+        if isinstance(node,ast.comprehension):
+            # Comprehension targets are local; expressions can still bind outer names.
+            result=bindings(node.iter)
+            for condition in node.ifs: result.update(bindings(condition))
+            return result
+        result=set()
+        if isinstance(node,ast.Name) and isinstance(node.ctx,(ast.Store,ast.Del)):
+            result.add(node.id)
+        if isinstance(node,ast.Attribute) and isinstance(node.ctx,(ast.Store,ast.Del)):
+            value=node.value
+            while isinstance(value,ast.Attribute): value=value.value
+            if isinstance(value,ast.Name): result.add(value.id)
+        if isinstance(node,(ast.Import,ast.ImportFrom)):
+            result.update(item.asname or item.name.split('.')[0] for item in node.names)
+        if isinstance(node,(ast.ExceptHandler,ast.MatchAs,ast.MatchStar)) and node.name:
+            result.add(node.name)
+        if isinstance(node,ast.MatchMapping) and node.rest: result.add(node.rest)
+        for child in ast.iter_child_nodes(node): result.update(bindings(child))
+        return result
+
     for node in tree.body:
         if isinstance(node,ast.ClassDef) and any(isinstance(base,ast.Attribute)
-                and isinstance(base.value,ast.Name) and base.value.id=='unittest'
-                and base.attr=='TestCase' for base in node.bases):
+                and isinstance(base.value,ast.Name) and aliases.get(base.value.id)=='module'
+                and base.attr=='TestCase' or isinstance(base,ast.Name)
+                and aliases.get(base.id)=='case' for base in node.bases):
             names.extend(node.name+'.'+method.name for method in node.body
                 if isinstance(method,ast.FunctionDef) and method.name.startswith('test_'))
+        for name in bindings(node): aliases.pop(name,None)
+        if isinstance(node,ast.Import):
+            for item in node.names:
+                name=item.asname or item.name.split('.')[0]
+                aliases.pop(name,None)
+                if item.name=='unittest': aliases[name]='module'
+        elif isinstance(node,ast.ImportFrom) and node.level==0 and node.module=='unittest':
+            for item in node.names:
+                name=item.asname or item.name
+                aliases.pop(name,None)
+                if item.name=='TestCase': aliases[name]='case'
     _require(1 <= len(names) <= 32 and len(names)==len(set(names)), 'declared_tests_missing_or_ambiguous')
     return sorted(names)

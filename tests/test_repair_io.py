@@ -76,6 +76,60 @@ class RepairIOTests(unittest.TestCase):
         self.assertEqual(repair_io._test_names(body), ['Checks.test_a','Checks.test_b'])
         self.assertEqual(list(repair_io._hashes({'b.py':b'b','a.py':b'a'})),['a.py','b.py'])
 
+    def test_explicit_unittest_import_spellings_declare_the_same_tests(self):
+        for header, base in (
+            ('import unittest', 'unittest.TestCase'),
+            ('import unittest as ut', 'ut.TestCase'),
+            ('from unittest import TestCase', 'TestCase'),
+            ('from unittest import TestCase as Case', 'Case'),
+        ):
+            body=(header+'\nraise RuntimeError("source must not execute")\n'
+                'class Checks('+base+'):\n'
+                '    def test_b(self): pass\n    def test_a(self): pass\n').encode()
+            with self.subTest(header=header):
+                self.assertEqual(repair_io._test_names(body), ['Checks.test_a','Checks.test_b'])
+
+    def test_unittest_aliases_are_not_inferred_or_used_after_rebinding(self):
+        for header, base in (
+            ('from elsewhere import TestCase', 'TestCase'),
+            ('if True:\n    import unittest as ut', 'ut.TestCase'),
+            ('from .unittest import TestCase', 'TestCase'),
+            ('import unittest as ut\nut = object()', 'ut.TestCase'),
+            ('from unittest import TestCase as Case\nCase = object', 'Case'),
+            ('from unittest import TestCase as Case\ndef Case(): pass', 'Case'),
+            ('from unittest import TestCase as Case\nif True:\n    Case = object', 'Case'),
+            ('from unittest import TestCase as Case\nfrom elsewhere import Case', 'Case'),
+            ('import unittest as ut, elsewhere as ut', 'ut.TestCase'),
+            ('from unittest import TestCase as Case, skip as Case', 'Case'),
+        ):
+            body=(header+'\nclass Checks('+base+'):\n    def test_value(self): pass\n').encode()
+            with self.subTest(header=header), self.assertRaises(ContractError):
+                repair_io._test_names(body)
+
+    def test_local_rebinding_does_not_hide_later_explicit_unittest_classes(self):
+        body=b'''from unittest import TestCase as Case
+class First(Case):
+    def test_first(self):
+        Case = 1
+class Second(Case):
+    def test_second(self): pass
+'''
+        self.assertEqual(repair_io._test_names(body), ['First.test_first','Second.test_second'])
+        body=b'''from unittest import TestCase as Case
+unused = [Case for Case in ()]
+class Checks(Case):
+    def test_value(self): pass
+'''
+        self.assertEqual(repair_io._test_names(body), ['Checks.test_value'])
+
+    def test_aliases_keep_synchronous_and_duplicate_test_boundaries(self):
+        for body in (
+            'from unittest import TestCase as Case\nclass Checks(Case):\n    async def test_async(self): pass\n',
+            'from unittest import TestCase as Case\nclass Checks(Case):\n    def test_a(self): pass\n    def test_a(self): pass\n',
+        ):
+            with self.subTest(body=body), self.assertRaises(ContractError):
+                repair_io._test_names(body.encode())
+
     def test_safe_atomic_write_uses_private_files_and_rejects_aliases(self):
         root=fixture_root()
         repair_io.safe_write(root,'nested/record.json',b'{}',limit=2)

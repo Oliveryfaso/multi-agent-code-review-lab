@@ -10,7 +10,8 @@ from pathlib import Path
 from .records import ActionUsage, CoverageRecord, IndexPage, IndexQuery, IndexSummary, Location, RelationRecord, RunError, SnapshotBundle, SnapshotRef, SymbolRecord
 from .snapshots import SnapshotError, SnapshotStore
 from .validation import ContractError, decode_record
-from .scope import read_safe
+from .scope import open_directory, read_safe, validate_workspace_path
+from .repair_io import safe_write
 
 PARSER_VERSION = "qualified-ast-v2"
 
@@ -133,12 +134,28 @@ def _call_parts(node):
 
 
 class RepositoryIndex:
-    def __init__(self, store: SnapshotStore, cache_root: Path | None = None):
+    def __init__(self, store: SnapshotStore, cache_root: Path | None = None, *, allowed_root: Path | None = None):
         self.store = store
-        allowed = (Path(__file__).resolve().parents[3] / "artifacts").resolve()
-        self.cache_root = (cache_root or allowed / "index").resolve()
-        if not self.cache_root.is_relative_to(allowed):
-            raise ContractError("forbidden_path", "index_cache")
+        self._owned_cache = allowed_root is not None
+        if self._owned_cache:
+            allowed = Path(allowed_root).absolute()
+            self.cache_root = Path(cache_root or allowed / "index").absolute()
+            if (allowed != allowed.resolve() or allowed != store.allowed
+                    or self.cache_root != self.cache_root.resolve()
+                    or not self.cache_root.is_relative_to(allowed)):
+                raise ContractError("forbidden_path", "index_cache")
+            validate_workspace_path(allowed, output=True)
+            validate_workspace_path(self.cache_root, output=True)
+            try:
+                with open_directory(allowed): pass
+                with open_directory(self.cache_root, create=True): pass
+            except OSError:
+                raise ContractError("storage_unavailable", "index_cache") from None
+        else:
+            allowed = (Path(__file__).resolve().parents[3] / "artifacts").resolve()
+            self.cache_root = (cache_root or allowed / "index").resolve()
+            if not self.cache_root.is_relative_to(allowed):
+                raise ContractError("forbidden_path", "index_cache")
         self.symbols, self.relations, self.cache = [], [], {}
         self.content_id = None
         self.last_usage = ActionUsage()
@@ -185,8 +202,12 @@ class RepositoryIndex:
             # Integrity for derived cache bytes only, not a claim of cryptographic authenticity.
             payload['payload_sha256'] = hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(',', ':'), allow_nan=False).encode()).hexdigest()
             try:
-                path.parent.mkdir(parents=True, exist_ok=True)
-                path.write_text(json.dumps(payload, sort_keys=True, allow_nan=False), encoding="utf-8")
+                if self._owned_cache:
+                    safe_write(self.cache_root, path.name,
+                               json.dumps(payload, sort_keys=True, allow_nan=False).encode("utf-8"), limit=64*1024*1024)
+                else:
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    path.write_text(json.dumps(payload, sort_keys=True, allow_nan=False), encoding="utf-8")
             except OSError:
                 raise ContractError("storage_unavailable", "index_cache") from None
         self.content_id = bundle.ref.content_id

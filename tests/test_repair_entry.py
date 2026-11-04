@@ -883,6 +883,43 @@ class RepairEntryTests(TestCase):
         self.assertEqual(result['status'], 'verification_unavailable'); self.assertEqual(code,2)
         self.assertEqual(transport.requests, [])
 
+    def test_unittest_alias_task_reaches_normal_entry_and_reloads_without_execution(self):
+        body=SOURCES['checks.py'].replace('import unittest','from unittest import TestCase as Case')
+        body=body.replace('(unittest.TestCase)', '(Case)')
+        body='raise RuntimeError("target must not execute")\n'+body
+        self.files['checks.py']=body.encode();(self.repo/'checks.py').write_text(body)
+        self.task['source_files']=loop._hashes(self.files)
+        self.task_file.write_text(json.dumps(self.task))
+        self.assertEqual(entry.load_task(self.repo,self.task_file),self.task)
+        transport=InterceptedTransport([self.proposal()])
+        code,result=self.invoke('api_debugger',transport)
+        self.assertEqual((code,result['status'],len(transport.requests)),(2,'verification_unavailable',0))
+        report=loop.verify_loop(self.out)
+        self.assertFalse(report['target_code_executed']);self.assertFalse(report['repaired'])
+        self.out=self.root/'alias-replay'
+        code,result=self.invoke('api_test_feedback',InterceptedTransport([
+            {'status':'no_candidate','summary':'No candidate in this authored simulation.','edits':[]}]),
+            loop.ReplayVerifier([self.observation(self.files,loop.test_manifest(self.files,['checks.py']))]),
+            proposal_contract='v6')
+        self.assertEqual((code,result['status']),(0,'no_candidate'))
+        report=loop.verify_loop(self.out)
+        self.assertEqual(report['provider_requests'],1)
+        self.assertFalse(report['target_code_executed']);self.assertFalse(report['repaired'])
+
+    def test_snapshot_line_overflow_rejected_before_provider_or_record_creation(self):
+        total=sum(len(body.splitlines()) for body in self.files.values())
+        self.files['app.py']=b'\n'*(4097-total)+self.files['app.py']
+        (self.repo/'app.py').write_bytes(self.files['app.py'])
+        self.task['source_files']=loop._hashes(self.files)
+        self.task_file.write_text(json.dumps(self.task))
+        from macr.investigation.validation import ContractError
+        with self.assertRaises(ContractError): entry.load_task(self.repo,self.task_file)
+        transport=InterceptedTransport([])
+        code,result=self.invoke('direct_api',transport)
+        self.assertEqual((code,result['status'],result['provider_requests']),(2,'rejected',0))
+        self.assertEqual(transport.requests,[])
+        self.assertFalse(self.out.exists())
+
     def additional_test_file(self):
         body = ('import unittest\nclass MoreChecks(unittest.TestCase):\n'
                 '    def test_secondary(self):\n        self.assertTrue(True)\n').encode()

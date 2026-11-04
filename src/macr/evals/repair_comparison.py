@@ -312,7 +312,8 @@ def _row(row, task, spec):
 
 def score_packet(plan: dict, cell_id: str, row: dict, *, original_files: dict,
                  editable_paths: list[str], protected_paths: list[str], edits=None,
-                 final_output=None, verification_receipt=None, proposal_chain=None) -> dict:
+                 final_output=None, verification_receipt=None, proposal_chain=None, test_plan=None,
+                 source_scope=None, source_windows=None) -> dict:
     """Prepare a source-bound, unscored handoff; never execute tests or import gold.
 
     ``candidate_sha256`` means the applied source inventory's ``source_id``.
@@ -322,6 +323,8 @@ def score_packet(plan: dict, cell_id: str, row: dict, *, original_files: dict,
     Multi-round callers pass the entire previously verified parsed proposal chain,
     not just the last incremental edit. Local chain consistency still cannot
     authenticate who produced those outputs or whether verification ran.
+    Windowed mode commits to complete originals and an exact frozen model view;
+    the exported candidate always contains complete source files.
     The recipient supplies a locked independent review later through build_report;
     this function cannot attest provenance or turn a claimed pass into success.
     """
@@ -329,6 +332,7 @@ def score_packet(plan: dict, cell_id: str, row: dict, *, original_files: dict,
     from macr.investigation.repair_edits import apply_edits, validate_files
     from macr.investigation.repair_loop import source_id, output_contract, digest
 
+    full_originals = source_windows is not None
     plan = validate_comparison(plan)
     cell = next((c for c in plan['cells'] if c['cell_id'] == cell_id), None)
     _require(cell is not None, 'comparison_score_cell_missing')
@@ -348,7 +352,7 @@ def score_packet(plan: dict, cell_id: str, row: dict, *, original_files: dict,
                 'comparison_score_selection_field')
     _require(type(row) is dict and row.get('review') is None, 'comparison_score_review_must_be_separate')
     _row(row, task, plan['spec'])
-    validate_files(original_files)
+    validate_files(original_files, full_originals=full_originals)
     _require(type(protected_paths) is list and 1 <= len(protected_paths) <= 8
         and all(type(p) is str and p in original_files for p in protected_paths)
         and len(set(protected_paths)) == len(protected_paths), 'comparison_score_protected_paths')
@@ -356,9 +360,20 @@ def score_packet(plan: dict, cell_id: str, row: dict, *, original_files: dict,
         and all(type(p) is str and p in original_files for p in editable_paths)
         and len(set(editable_paths)) == len(editable_paths)
         and not set(editable_paths) & set(protected_paths), 'comparison_score_edit_authority')
-    _require(source_id(original_files) == task['snapshot_sha256']
-        and source_id({p:original_files[p] for p in protected_paths}) == task['visible_tests_sha256'],
+    _require(source_id(original_files, full_originals=full_originals) == task['snapshot_sha256']
+        and source_id({p:original_files[p] for p in protected_paths},
+                      full_originals=full_originals) == task['visible_tests_sha256'],
         'comparison_score_source_binding')
+    if test_plan is not None:
+        from macr.investigation.repair_test_plan import validate_test_plan
+        validate_test_plan(original_files,protected_paths,test_plan)
+    if full_originals:
+        from macr.investigation.repair_windows import project_source_windows, windowed_context_id
+        _require(source_scope == 'declared_files', 'comparison_score_windowed_source_scope')
+        project_source_windows(original_files, source_windows, protected_paths=protected_paths)
+        _require(windowed_context_id(original_files, task['issue_sha256'], source_windows,
+            source_scope=source_scope, test_plan=test_plan) == task['initial_context_sha256'],
+            'comparison_score_windowed_initial_context')
     changed = None; last_applied = original_files; has_candidate = False; accepted = {}
     if proposal_chain is not None:
         bounded_json(proposal_chain, max_bytes=65536, max_depth=16, utf8_bytes=True)
@@ -366,7 +381,8 @@ def score_packet(plan: dict, cell_id: str, row: dict, *, original_files: dict,
             and 1 <= len(proposal_chain) <= min(3, row['requests']),
                  'comparison_score_chain_contract')
         for index, proposal in enumerate(proposal_chain):
-            _require(type(proposal) is dict and proposal.get('base_content_id') == source_id(last_applied)
+            _require(type(proposal) is dict and proposal.get('base_content_id') ==
+                     source_id(last_applied, full_originals=full_originals)
                 and proposal.get('status') in (('candidate', 'no_candidate', 'insufficient_evidence',
                                                'finalize_current', 'select_candidate') if selection_allowed else
                                               ('candidate', 'no_candidate', 'insufficient_evidence','finalize_current'))
@@ -375,11 +391,14 @@ def score_packet(plan: dict, cell_id: str, row: dict, *, original_files: dict,
                 _require('selected_content_id' in proposal and (proposal['status'] == 'select_candidate'
                     or proposal['selected_content_id'] is None), 'comparison_score_selection_field')
             if proposal['status'] == 'candidate':
-                last_applied = apply_edits(last_applied, proposal['edits'], editable_paths=editable_paths)
+                last_applied = apply_edits(last_applied, proposal['edits'], editable_paths=editable_paths,
+                    full_originals=full_originals, source_windows=source_windows)
+                if full_originals:
+                    project_source_windows(last_applied, source_windows, protected_paths=protected_paths)
                 _require(all(last_applied[p] == original_files[p] for p in protected_paths),
                          'comparison_score_chain_protected')
                 has_candidate = True
-                accepted[source_id(last_applied)] = last_applied
+                accepted[source_id(last_applied, full_originals=full_originals)] = last_applied
             elif proposal['status'] == 'select_candidate':
                 selected = proposal['selected_content_id']
                 _require(index == len(proposal_chain)-1 and proposal['edits'] == []
@@ -394,14 +413,17 @@ def score_packet(plan: dict, cell_id: str, row: dict, *, original_files: dict,
         _require(final_output == proposal_chain[-1], 'comparison_score_chain_final_output')
         if proposal_chain[-1]['status'] in ('candidate', 'finalize_current'):
             changed = last_applied
-        expected_candidate = source_id(changed) if changed is not None else None
+        expected_candidate = source_id(changed, full_originals=full_originals) if changed is not None else None
         _require(row['candidate_sha256'] == expected_candidate, 'comparison_score_candidate_binding')
     elif row['candidate_sha256'] is None:
         _require(edits is None or edits == [], 'comparison_score_candidate_unexpected')
     else:
-        changed = apply_edits(original_files, edits, editable_paths=editable_paths)
+        changed = apply_edits(original_files, edits, editable_paths=editable_paths,
+            full_originals=full_originals, source_windows=source_windows)
+        if full_originals:
+            project_source_windows(changed, source_windows, protected_paths=protected_paths)
         last_applied = changed
-        _require(source_id(changed) == row['candidate_sha256']
+        _require(source_id(changed, full_originals=full_originals) == row['candidate_sha256']
             and all(changed[p] == original_files[p] for p in protected_paths),
             'comparison_score_candidate_binding')
     for value, key in ((final_output, 'final_output_sha256'),
@@ -430,15 +452,20 @@ def score_packet(plan: dict, cell_id: str, row: dict, *, original_files: dict,
     packet = {'schema': 'macr.repair-comparison.score-packet.v2' if plan['spec']['schema']==SCHEMA_V2
               else 'macr.repair-comparison.score-packet.v1',
         'comparison_sha256': plan['comparison_sha256'], 'cell': deepcopy(cell),
-        'result': deepcopy(row), 'original_source_id': source_id(original_files),
+        'result': deepcopy(row), 'original_source_id': source_id(original_files, full_originals=full_originals),
         'protected_paths': sorted(protected_paths),
         'candidate_files': {p:b.decode('utf-8') for p,b in sorted(changed.items())} if changed else None,
         'proposal_chain': deepcopy(proposal_chain),
         'proposal_chain_sha256': result_digest(proposal_chain) if proposal_chain is not None else None,
-        'last_applied_source_id': source_id(last_applied),
+        'last_applied_source_id': source_id(last_applied, full_originals=full_originals),
         'final_output': deepcopy(final_output), 'verification_receipt': deepcopy(verification_receipt),
         'scoring_commitments': deepcopy(plan['spec']['scoring']),
         'semantic_truth_validated': False, 'provenance_authenticated': False}
+    if test_plan is not None: packet['test_plan']=deepcopy(test_plan)
+    if full_originals: packet['source_windows']=deepcopy(source_windows)
+    if source_scope is not None:
+        from macr.investigation.repair_sources import source_view
+        packet['source_view']=source_view(source_scope)
     packet['packet_sha256'] = result_digest(packet)
     return packet
 

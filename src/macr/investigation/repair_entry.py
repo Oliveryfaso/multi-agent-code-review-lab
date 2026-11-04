@@ -10,6 +10,26 @@ import re
 _TASK_FIELDS = {'schema','task_id','issue','source_files','editable_paths','test_paths'}
 
 
+def _task_shape(task):
+    from .repair_loop import _require
+    _require(type(task) is dict and task.get('schema') in ('macr.repair.task.v1','macr.repair.task.v2','macr.repair.task.v3','macr.repair.task.v4'),
+             'neutral_task_contract')
+    windowed=task['schema']=='macr.repair.task.v4'
+    scoped=task['schema'] in ('macr.repair.task.v3','macr.repair.task.v4')
+    selected=task['schema']=='macr.repair.task.v2' or scoped
+    fields=(_TASK_FIELDS|{'test_plan'} if selected else _TASK_FIELDS)|({'source_scope'} if scoped else set())
+    if windowed: fields|={'source_windows'}
+    _require(set(task)==fields, 'neutral_task_contract')
+    if scoped: _require(task['source_scope']=='declared_files', 'neutral_task_contract')
+    if windowed:
+        from .repair_windows import validate_selection_shape
+        validate_selection_shape(task['source_windows'],expected_paths=task['source_files'])
+    if selected and (not scoped or task['test_plan'] is not None):
+        from .repair_test_plan import validate_plan_shape
+        validate_plan_shape(task['test_plan'])
+    return task
+
+
 def add_parser(subparsers):
     parser = subparsers.add_parser('repair', help='Bounded source repair; remote transport disabled, missing validation stops honestly.')
     parser.add_argument('--repo', required=True, type=Path)
@@ -36,10 +56,8 @@ def _json(path):
 def load_task(repo, task_path):
     from . import repair_loop
     from .scope import walk_entries
-    task = _json(task_path)
-    repair_loop._require(type(task) is dict and set(task) == _TASK_FIELDS
-        and task['schema'] == 'macr.repair.task.v1'
-        and type(task['task_id']) is str and re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_.-]{0,63}', task['task_id'])
+    task = _task_shape(_json(task_path))
+    repair_loop._require(type(task['task_id']) is str and re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_.-]{0,63}', task['task_id'])
         and type(task['issue']) is str and 0 < len(task['issue'].encode()) <= 2048,
         'neutral_task_contract')
     expected = task['source_files']
@@ -49,15 +67,22 @@ def load_task(repo, task_path):
     repo = repair_loop._root(repo)
     # Inspect names only before reading any source content. An unlisted hidden
     # test file cannot silently enter the model's full-source generation view.
-    inventory = list(walk_entries(repo, repair_loop.PROFILE))
-    repair_loop._require({n for n,k,_ in inventory if k == 'file'} == set(expected), 'source_inventory_mismatch')
-    files = repair_loop._files(repo)
+    source_scope=task.get('source_scope')
+    if source_scope is None:
+        inventory = list(walk_entries(repo, repair_loop.PROFILE))
+        repair_loop._require({n for n,k,_ in inventory if k == 'file'} == set(expected), 'source_inventory_mismatch')
+    windows=task.get('source_windows');full_originals=windows is not None
+    files = repair_loop._files(repo,expected,source_scope=source_scope,full_originals=full_originals)
     repair_loop._require(repair_loop._hashes(files) == expected, 'source_digest_mismatch')
-    repair_loop.test_manifest(files,task['test_paths'])
+    repair_loop.test_manifest(files,task['test_paths'],test_plan=task.get('test_plan'),full_originals=full_originals)
     repair_loop._require(type(task['editable_paths']) is list and 0 < len(task['editable_paths']) <= len(files)
         and all(type(n) is str and n in files for n in task['editable_paths'])
         and len(set(task['editable_paths'])) == len(task['editable_paths'])
         and not set(task['editable_paths']) & set(task['test_paths']), 'edit_authority')
+    if full_originals:
+        from .repair_windows import project_source_windows
+        repair_loop._require(all(path in windows['files'] for path in task['editable_paths']), 'windowed_editable_unshown')
+        project_source_windows(files,windows,protected_paths=task['test_paths'])
     return task
 
 
@@ -71,7 +96,7 @@ def spend_binding_sha256(task,strategy,config,*,proposal_contract='v2'):
     """Bind neutral data and common limits, independently of an output path."""
     from . import repair_loop as loop
     from macr.providers.repair_binding import validate_config
-    loop._require(type(task) is dict and set(task)==_TASK_FIELDS,'neutral_task_contract')
+    _task_shape(task)
     loop._validate_strategy(strategy,proposal_contract)
     return loop.digest({'task':task,'strategy':strategy,
         'configuration_sha256':loop.digest(validate_config(config)),
@@ -130,7 +155,8 @@ def _run_report(args,task,provider,verifier):
     return loop.run_repair_loop(args.repo,task['issue'],editable_paths=task['editable_paths'],
         test_paths=task['test_paths'],task_id=task['task_id'],strategy=args.strategy,provider=provider,
         proposal_contract=args.proposal_contract,verifier=verifier,out=args.out,
-        expected_source_files=task['source_files'])
+        expected_source_files=task['source_files'],test_plan=task.get('test_plan'),source_scope=task.get('source_scope'),
+        source_windows=task.get('source_windows'))
 
 
 def _run_durable(args,task,config,plan,binding,state):
@@ -174,10 +200,22 @@ def _verification_backend():
     return None
 
 
-def initial_context_id(files, issue):
+def initial_context_id(files, issue, *, test_plan=None, source_scope=None, source_windows=None):
     """The common source/issue payload, excluding each strategy's later feedback."""
     from .repair_loop import digest
-    return digest({'files':{p:b.decode() for p,b in sorted(files.items())},'issue':issue})
+    if source_windows is not None:
+        from .repair_windows import windowed_context_id
+        return windowed_context_id(files,digest(issue),source_windows,source_scope=source_scope,test_plan=test_plan)
+    value={'files':{p:b.decode() for p,b in sorted(files.items())},'issue':issue}
+    if test_plan is not None:
+        from .repair_test_plan import validate_plan_shape, validate_test_plan
+        validate_plan_shape(test_plan)
+        paths=sorted({node.split('::',1)[0] for node in test_plan['nodeids']})
+        value['test_plan']=validate_test_plan(files,paths,test_plan)
+    if source_scope is not None:
+        from .repair_sources import source_view
+        value['source_view']=source_view(source_scope)
+    return digest(value)
 
 
 def score_handoff(record_root, plan, cell_id):
@@ -195,11 +233,13 @@ def score_handoff(record_root, plan, cell_id):
     loop._require(cell is not None and cell['task_id'] == config['task_id']
         and cell['arm'] == config['strategy'], 'score_cell_binding')
     task = next(t for t in plan['spec']['tasks'] if t['task_id'] == config['task_id'])
-    original = loop._files(root/'sources/0')
+    windows=config.get('source_windows')
+    original = loop._files(root/'sources/0',full_originals=windows is not None)
     model_config = config['provider_config']; limits = model_config['limits']
     proposal_contract = config.get('proposal_contract','v1')
     loop._require(task['issue_sha256'] == loop.digest(config['issue'])
-        and task['initial_context_sha256'] == initial_context_id(original,config['issue'])
+        and task['initial_context_sha256'] == initial_context_id(original,config['issue'],test_plan=config.get('test_plan'),
+            source_scope=config.get('source_scope'),source_windows=windows)
         and plan['spec']['model']['configuration_sha256'] == loop.digest(model_config)
         and plan['spec']['model']['output_contract_sha256'] == loop.digest(loop.output_contract(proposal_contract))
         and plan['spec']['limits'] == {'max_requests':limits['max_requests'],
@@ -267,7 +307,8 @@ def score_handoff(record_root, plan, cell_id):
         'total':math.ceil(report['total_seconds']*1000)}
     return score_packet(plan,cell_id,row,original_files=original,
         editable_paths=config['editable_paths'],protected_paths=config['test_paths'],
-        final_output=final_output,verification_receipt=receipt,proposal_chain=chain)
+        final_output=final_output,verification_receipt=receipt,proposal_chain=chain,
+        test_plan=config.get('test_plan'),source_scope=config.get('source_scope'),source_windows=windows)
 
 
 def run(args):
@@ -311,6 +352,9 @@ def run(args):
             summary.update(selected_content_id=report['final_selection']['selected_source_id'],
                            final_verification_status='not_rerun',verification_origin='unavailable',
                            historical_verification_origin=report['verification_origin'])
+        if 'source_view' in report: summary['source_view']=report['source_view']
+        if 'source_windows' in report:
+            summary.update(source_context='partial_files',source_window_contract=report['source_windows']['schema'])
         if remote:summary.update(global_spend=state['global_spend'],spend_status=state['spend_status'])
         print(json.dumps(summary))
         # No candidate or abstention here is declared a successful real repair.
