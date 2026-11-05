@@ -154,14 +154,23 @@ class Handler(BaseHTTPRequestHandler):
             if self.command == 'GET':
                 if length:
                     raise ContractError('input_invalid', 'get_body')
-                if split.path == '/api/history' and not set(query) - {'cursor'}:
+                if split.path in ('/api/history','/api/repair-history') and not set(query) - {'cursor'}:
                     text = query.get('cursor', ['0'])[0]
                     if not re.fullmatch('[0-9]{1,9}', text):
                         raise ContractError('input_invalid', 'cursor')
-                    self._json(200, workbench.history(int(text)))
+                    history = workbench.history if split.path == '/api/history' else workbench.repair_history
+                    self._json(200, history(int(text)))
                     return
                 if split.path == '/api/runs' and set(query) == {'intent_id'}:
                     self._json(200, workbench.by_intent(query['intent_id'][0]))
+                    return
+                if split.path == '/api/repairs' and set(query) == {'intent_id'}:
+                    self._json(200, workbench.repair_by_intent(query['intent_id'][0]))
+                    return
+                repair = re.fullmatch('/api/repairs/([0-9a-f-]{36})(?:/(result))?', split.path)
+                if repair and not query:
+                    identifier, action = repair.groups()
+                    self._json(200, workbench.repair_result(identifier) if action else workbench.repair_state(identifier))
                     return
                 match = re.fullmatch('/api/runs/([0-9a-f-]{36})(?:/(report|export))?', split.path)
                 if match:
@@ -187,6 +196,9 @@ class Handler(BaseHTTPRequestHandler):
                 if len(raw) != length:
                     raise ContractError('input_invalid', 'body_incomplete')
                 body = load_json(raw.decode('utf-8'), max_bytes=BODY_LIMIT, max_depth=32)
+                if split.path == '/api/repairs':
+                    self._json(202, workbench.start_repair(body))
+                    return
                 if split.path == '/api/runs':
                     self._json(202, workbench.start(body))
                     return

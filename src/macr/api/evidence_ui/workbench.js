@@ -7,11 +7,15 @@ const activeStates = new Set(['running','cancelling','verifying']);
 const labels = {running:'正在读取并核对证据',cancelling:'已请求取消，正在等待进程退出',verifying:'正在核验已保存报告',ready:'读取完成',partial:'部分证据',verification_failed:'报告暂时无法核验',cancelled:'已取消',rejected:'无法开始读取',failed:'本次读取未完成',closure_unknown:'进程关闭尚未确认'};
 const errors = {input_invalid:'输入不满足读取合同，请检查对应字段。',contract_invalid:'输入或报告不满足合同。',forbidden_path:'所选路径超出读取范围，请选择允许的具体项目目录。',unsupported_environment:'当前环境无法提供所需监控或安全读取能力。',scope_limit:'达到读取或资源预算，已停止本次操作。',resource_pressure:'内存压力不满足读取条件。',workbench_busy:'已有读取或核验正在进行，请等待它完成。',intent_conflict:'请求标识已用于另一项输入，请新建读取。',closure_unknown:'进程关闭证据不足；不能开始新的分析。',history_corrupt:'保存文件或证据关联无法核验。文件已保留。',history_budget_exceeded:'本次核验超出工作台读取预算，不能据此判断报告损坏。',history_version_unsupported:'暂不支持此报告版本，原文件已保留。',workbench_storage_limit:'工作台保存额度不足，请检查并手动处理拥有的旧输出。',session_required:'本地会话已失效，请从启动时的本地地址重新打开。',report_unavailable:'本次没有已提交的证据报告。',workbench_stopping:'工作台正在退出。',workbench_unavailable:'本地工作台当前无法完成操作。',output_limit_unrepresentable:'报告超过输出限制，无法显示。'};
 let token = '', current = null, saved = null, loadedReport = null, timer = null, intent = null, nextCursor = null, submitting = false, connected = true, viewGeneration = 0, transportGeneration = 0;
+let repairCurrent=null,repairTimer=null,repairIntent=null,repairSubmitting=false,repairQuarantined=false,repairGeneration=0,repairCursor=null,workbenchStopping=false;
+const repairActiveStates=new Set(['running','verifying']);
 try {
   const fragment = location.hash.slice(1);
   if (/^[A-Za-z0-9_-]{43}$/.test(fragment)) { sessionStorage.setItem('evidence-access', fragment); history.replaceState(null,'',location.pathname); }
   token = sessionStorage.getItem('evidence-access') || '';
   intent = sessionStorage.getItem('evidence-intent');
+  repairIntent = sessionStorage.getItem('repair-intent');
+  repairSubmitting=Boolean(repairIntent);
 } catch { text('connection','浏览器会话存储不可用，请重新打开初始本地地址。'); $('connection').hidden=false; }
 function connection(message='') { text('connection',message); $('connection').hidden=!message; }
 function explain(error) { return errors[error.code] || ('本次操作未完成。代码：' + clean(error.code)); }
@@ -34,8 +38,10 @@ function formError(message, field=null) {
 }
 function listValue(id) { return $(id).value.split(/\r\n|\r|\n/).map(line=>line.trim()).filter(Boolean); }
 function updateControls() {
-  const busy=submitting || (current && activeStates.has(current.state));
+  const repairBusy=repairSubmitting || repairQuarantined || Boolean(repairCurrent && repairActiveStates.has(repairCurrent.state));
+  const busy=workbenchStopping || submitting || Boolean(current && activeStates.has(current.state)) || repairBusy;
   $('start').disabled=busy || !token || !connected || (current && current.state==='closure_unknown');
+  $('repair-start').disabled=busy || !token || !connected || (current && current.state==='closure_unknown');
   $('cancel').hidden=!current || !activeStates.has(current.state);
   $('cancel').disabled=!current || current.cancel_requested || current.state==='verifying';
 }
@@ -106,7 +112,7 @@ $('reading-form').addEventListener('submit',async event=>{
 $('cancel').addEventListener('click',async()=>{ if(!current) return; const id=current.id,generation=viewGeneration; $('cancel').disabled=true; try { const run=await api('/api/runs/'+id+'/cancel','POST',{}); if(generation===viewGeneration && current?.id===id) showState(run); } catch(error) { if(generation===viewGeneration && current?.id===id) { connection(explain(error)); updateControls(); } } });
 $('new-reading').addEventListener('click',()=>{ $('input-panel').open=true; $('question').focus(); });
 $('history-toggle').addEventListener('click',()=>{ const hidden=!$('history-panel').hidden; $('history-panel').hidden=hidden; $('history-toggle').setAttribute('aria-expanded',String(!hidden)); });
-$('shutdown').addEventListener('click',async()=>{ $('shutdown').disabled=true; try { await api('/api/shutdown','POST',{}); connection('已请求退出工作台，正在等待分析和连接关闭。'); $('start').disabled=true; } catch(error) { connection(explain(error)); $('shutdown').disabled=false; } });
+$('shutdown').addEventListener('click',async()=>{ $('shutdown').disabled=true; try { await api('/api/shutdown','POST',{}); workbenchStopping=true;updateControls();connection('已请求退出工作台，正在等待分析和连接关闭。'); } catch(error) { connection(explain(error)); $('shutdown').disabled=false; } });
 function activateTab(name) {
   for(const item of ['evidence','coverage','details']) { const on=item===name; $('tab-'+item).setAttribute('aria-selected',String(on)); $('tab-'+item).tabIndex=on?0:-1; $('panel-'+item).hidden=!on; }
 }
@@ -182,3 +188,92 @@ $('export-json').addEventListener('click',()=>download('json'));$('export-markdo
 setInterval(elapsed,1000); updateControls();
 if(!token) connection('缺少本地会话凭据，请从启动时打印的完整本地地址打开。');
 else loadHistory().then(()=>intent?resolveIntent(intent):null).catch(error=>connection(error.code==='connection_lost'?'与本地工作台连接中断。':explain(error)));
+
+function clearRepairResult() {
+  $('repair-edits').replaceChildren();text('repair-record','');text('repair-usage','');text('repair-final','');
+  text('repair-empty','尚未生成候选补丁。');$('repair-empty').hidden=false;
+}
+function showRepairState(run) {
+  if(repairCurrent?.id!==run.id||run.result_available===false) clearRepairResult();
+  if(run.state==='unknown')repairQuarantined=true;
+  repairCurrent=run;$('repair-panel').hidden=false;$('repair-result').hidden=false;
+  const labels={running:'正在准备修复候选',verifying:'正在核验保存的记录',blocked:'修复流程受阻',completed:'候选记录已保存',failed:'本次流程未完成',unknown:'本次结果尚不确定'};
+  text('repair-status',labels[run.state]||'修复状态待核对');
+  const summary=run.summary||{};let detail='候选记录不等于修复通过；原项目未被直接改写。';
+  if(run.repair_status==='verification_unavailable') detail='缺少已获准的真实验证后端，尚未调用模型进行修复。记录已保留。';
+  else if(run.repair_status==='provider_disabled') detail='模型调用未启用，尚未生成候选补丁。记录已保留。';
+  else if(run.state==='unknown') detail='结果或关闭状态无法确认；已暂停新任务，不自动重试。';
+  else if(run.state==='running'||run.state==='verifying') detail='正在处理已选任务；没有可用的逐步进度或修复取消接口。退出工作台会等待该流程结束。';
+  else if(['no_candidate','insufficient_evidence'].includes(run.repair_status)) detail='本次未交付候选补丁，下方仅保留提案历史。';
+  if(summary.simulation) detail+=' 这是模拟流程，不是实际模型修复或目标测试通过。';
+  if(summary.final_verification_status==='not_rerun') detail+=' 已选择历史候选，未重新运行验证。';
+  if(run.error) detail+=' 代码：'+clean(run.error)+'。';
+  text('repair-detail',detail);
+  text('repair-usage','模型请求 '+(summary.provider_requests??0)+' 次 · 输入 '+(summary.input_tokens??0)+' / 输出 '+(summary.output_tokens??0)+' token · 本机计量 $'+(summary.known_usd??'0.000000')+'（非供应商账单）');
+  text('repair-record',pretty({state:run,summary}));updateControls();
+}
+function renderRepairResult(value) {
+  showRepairState(value.state);$('repair-edits').replaceChildren();let edits=0;
+  const report=value.report||{},proposals=value.proposals||[];
+  const hasCandidate=['simulation_passed','public_tests_reported_passed','candidate_unverified','candidate_finalized','candidate_selected_unverified'].includes(report.status);
+  const matches=proposals.filter(p=>p.candidate_source_id&&p.candidate_source_id===report.final_source_id);
+  const retained=hasCandidate?(report.final_selection?.accepted_round??matches[matches.length-1]?.round):null;
+  text('repair-final',retained?'当前保留：第 '+retained+' 轮候选 · 内容 ID '+report.final_source_id+'。尚未取得独立修复验证。':value.state.state==='unknown'?'结果尚不确定，不能确认最终候选。':hasCandidate?'候选已保存；轮次关联未提供，以下仅为提案历史。':'本次没有已确认的最终候选，以下仅为提案历史。');
+  for(const proposal of proposals) {
+    const section=document.createElement('section');section.className='repair-edit';
+    const heading=document.createElement('h4');heading.textContent=clean('第 '+proposal.round+' 轮 · '+(proposal.round===retained?'当前保留候选':'历史提案')+' · '+proposal.status);section.append(heading);
+    const note=document.createElement('p');note.textContent=clean(proposal.summary||'');section.append(note);
+    for(const edit of proposal.edits||[]) {
+      const location=document.createElement('p');location.textContent=clean(edit.file);section.append(location);
+      for(const [label,body] of [['替换前',edit.old],['替换后',edit.new]]) {const caption=document.createElement('p'),code=document.createElement('pre');caption.textContent=label;code.textContent=clean(body);section.append(caption,code);}
+      edits++;
+    }
+    $('repair-edits').append(section);
+  }
+  $('repair-empty').hidden=edits>0;
+  if(!edits) text('repair-empty',value.proposals?.length?'本次没有新增编辑；请核对保留候选或弃答状态。':'本次没有生成候选补丁。');
+  text('repair-record',pretty({state:value.state,summary:value.summary,report:value.report}));
+}
+async function pollRepair(id,generation=++repairGeneration) {
+  if(generation!==repairGeneration) return;clearTimeout(repairTimer);
+  try {
+    const run=await api('/api/repairs/'+id);if(generation!==repairGeneration)return;showRepairState(run);connection();
+    if(repairActiveStates.has(run.state)) repairTimer=setTimeout(()=>pollRepair(id,generation),750);
+    else {
+      if(run.result_available) {const result=await api('/api/repairs/'+id+'/result');if(generation!==repairGeneration)return;if(result.state?.id!==id)throw {code:'repair_result_invalid'};renderRepairResult(result);}
+      if(generation===repairGeneration)await loadRepairHistory();
+    }
+  } catch(error) {if(generation!==repairGeneration)return;clearRepairResult();text('repair-status','结果暂时无法核验');text('repair-detail',error.code==='connection_lost'?'连接中断，当前是最后已知状态；查询不会重新启动修复。':explain(error));$('repair-reconnect').hidden=false;}
+  updateControls();
+}
+async function resolveRepairIntent() {
+  if(!repairIntent)return;
+  repairSubmitting=true;updateControls();
+  try {const run=await api('/api/repairs?intent_id='+encodeURIComponent(repairIntent));repairSubmitting=false;$('repair-reconnect').hidden=true;await pollRepair(run.id);}
+  catch(error) {text('repair-detail',error.code==='run_not_found'?'尚未找到本次请求，不能据此确认它未创建。可继续查询，不会重复提交。':'当前无法确认本次请求是否已创建。只会查询，不会自动重发。');$('repair-result').hidden=false;$('repair-reconnect').hidden=false;}
+  updateControls();
+}
+$('repair-form').addEventListener('submit',async event=>{
+  event.preventDefault();if(repairSubmitting||$('repair-start').disabled)return;
+  const repo=$('repair-repo').value.trim(),task=$('repair-task').value.trim(),model_config=$('repair-config').value.trim();
+  $('repair-error').hidden=true;
+  if(![repo,task,model_config].every(v=>v.startsWith('/')&&new TextEncoder().encode(v).length<=4096)) {text('repair-error','填写项目、任务清单和非密钥配置文件的绝对路径。');$('repair-error').hidden=false;return;}
+  const payload={intent_id:crypto.randomUUID(),repo,task,model_config,strategy:$('repair-strategy').value,proposal_contract:'v6'};
+  try{sessionStorage.setItem('repair-intent',payload.intent_id);}catch{text('repair-error','浏览器无法保存请求标识，尚未创建修复任务。请恢复会话存储后再试。');$('repair-error').hidden=false;return;}
+  repairIntent=payload.intent_id;repairSubmitting=true;++repairGeneration;clearTimeout(repairTimer);repairCurrent=null;clearRepairResult();$('repair-result').hidden=false;text('repair-status','正在提交修复任务');updateControls();
+  try {const run=await api('/api/repairs','POST',payload);repairSubmitting=false;await pollRepair(run.id);}
+  catch(error) {if(error.code==='connection_lost')await resolveRepairIntent();else{repairSubmitting=false;sessionStorage.removeItem('repair-intent');repairIntent=null;text('repair-error',explain(error));$('repair-error').hidden=false;text('repair-status','未创建新的修复任务');}}
+  updateControls();
+});
+async function loadRepairHistory(append=false) {
+  const value=await api('/api/repair-history?cursor='+(append?repairCursor:0));
+  if(value.items.some(run=>run.state==='unknown'))repairQuarantined=true;
+  if(!append)$('repair-history').replaceChildren();
+  for(const run of value.items) {const button=document.createElement('button');button.textContent=clean((run.project||'修复记录')+' · '+(run.repair_status||run.state));button.addEventListener('click',()=>{if(repairSubmitting||repairActiveStates.has(repairCurrent?.state))return;clearRepairResult();pollRepair(run.id);});$('repair-history').append(button);}
+  $('repair-history-empty').hidden=$('repair-history').children.length>0;repairCursor=value.next_cursor;$('more-repairs').hidden=repairCursor===null;
+  updateControls();
+}
+$('new-repair').addEventListener('click',()=>{$('repair-panel').hidden=false;if(!$('repair-repo').value)$('repair-repo').value=current?.project||$('repo').value;$('repair-repo').focus();});
+$('repair-reconnect').addEventListener('click',()=>repairSubmitting?resolveRepairIntent():repairCurrent?pollRepair(repairCurrent.id):resolveRepairIntent());
+$('more-repairs').addEventListener('click',()=>loadRepairHistory(true).catch(error=>connection(explain(error))));
+if(token)loadRepairHistory().then(()=>repairIntent?resolveRepairIntent():null).catch(error=>connection(explain(error)));

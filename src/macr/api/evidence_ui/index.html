@@ -3,19 +3,36 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>Debugger · 静态证据</title>
+  <title>Debugger · 证据与修复候选</title>
   <link rel="stylesheet" href="/workbench.css">
   <script src="/workbench.js" defer></script>
 </head>
 <body>
   <header class="topbar">
-    <div><h1>Debugger <span>静态证据</span></h1><p>捕获并读取源码；不执行项目或判断根因。</p></div>
-    <div class="actions"><button id="history-toggle" aria-expanded="true" aria-controls="history-panel">本地报告</button><button id="new-reading">新建读取</button><button id="shutdown" class="quiet">退出工作台</button></div>
+    <div><h1>Debugger <span>证据与修复候选</span></h1><p>读取源码、审阅候选改动；验证状态分别展示。</p></div>
+    <div class="actions"><button id="history-toggle" aria-expanded="true" aria-controls="history-panel">本地报告</button><button id="new-reading">新建读取</button><button id="new-repair" aria-controls="repair-panel">修复候选</button><button id="shutdown" class="quiet">退出工作台</button></div>
   </header>
   <div id="connection" class="notice" role="status" hidden></div>
   <div class="workspace">
-    <aside id="history-panel"><h2>本地报告</h2><p id="history-empty" class="muted">尚无报告。开始一次读取后，记录会保留在本机。</p><nav id="history" aria-label="本地报告"></nav><button id="more-history" hidden>更多报告</button></aside>
+    <aside id="history-panel"><h2>本地报告</h2><p id="history-empty" class="muted">尚无报告。开始一次读取后，记录会保留在本机。</p><nav id="history" aria-label="本地报告"></nav><button id="more-history" hidden>更多报告</button><h2 class="repair-history-title">修复记录</h2><p id="repair-history-empty" class="muted">尚无修复记录。</p><nav id="repair-history" aria-label="本地修复记录"></nav><button id="more-repairs" hidden>更多修复记录</button></aside>
     <main>
+      <section id="repair-panel" class="repair-panel" hidden aria-labelledby="repair-heading">
+        <h2 id="repair-heading">修复候选</h2>
+        <p class="help">使用已准备的任务清单，明确可编辑源码和公开测试。原项目不会被直接改写；候选保存在工作台记录中。</p>
+        <form id="repair-form" novalidate>
+          <label for="repair-repo">项目目录</label><input id="repair-repo" autocomplete="off" spellcheck="false" placeholder="项目的绝对目录">
+          <label for="repair-task">任务清单</label><input id="repair-task" autocomplete="off" spellcheck="false" placeholder="任务 JSON 文件的绝对路径" aria-describedby="repair-task-help"><p id="repair-task-help" class="help">任务清单包含问题、源码摘要、编辑范围与公开测试；不要选择答案或隐藏评分文件。</p>
+          <label for="repair-config">模型配置文件</label><input id="repair-config" autocomplete="off" spellcheck="false" placeholder="非密钥配置 JSON 的绝对路径"><p class="help">此入口不接收 API Key，不开放远程调用。模型或验证器不可用时会保留明确的阻塞记录。</p>
+          <label for="repair-strategy">修复策略</label><select id="repair-strategy"><option value="api_debugger">Debugger · 公开测试通过即停</option><option value="api_test_feedback">模型自检 · 同样的公开测试反馈</option><option value="direct_api">直接 API · 无测试反馈自检</option></select>
+          <div class="form-actions"><p id="repair-error" class="field-error" role="alert" hidden></p><button id="repair-start" type="submit" class="primary">开始修复流程</button></div>
+        </form>
+        <section id="repair-result" class="repair-result" hidden aria-label="修复流程结果">
+          <h3 id="repair-status" role="status" aria-live="polite"></h3><p id="repair-detail" class="help"></p><p id="repair-usage" class="help"></p>
+          <button id="repair-reconnect" hidden>查询这次请求</button>
+          <p id="repair-final" class="help"></p><h3 class="repair-changes-title">提案与编辑历史</h3><p id="repair-empty" class="muted">尚未生成候选补丁。</p><div id="repair-edits"></div>
+          <details><summary>记录与验证详情</summary><pre id="repair-record"></pre></details>
+        </section>
+      </section>
       <details id="input-panel" open>
         <summary id="task-summary">本次读取</summary>
         <form id="reading-form" novalidate>

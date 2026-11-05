@@ -15,6 +15,73 @@ from macr.api.evidence_workbench import Workbench
 
 
 class LoopbackProtocolTests(unittest.TestCase):
+    def repair_payload(self):
+        from macr.investigation import repair_loop as loop
+        from macr.providers.repair_binding import development_config
+        from repair_fixtures import SOURCES
+        repo=Path(self.temp.name)/'repair-source';repo.mkdir()
+        files={name:text.encode() for name,text in SOURCES.items()}
+        for name,data in files.items():(repo/name).write_bytes(data)
+        task=Path(self.temp.name)/'repair-task.json';config=Path(self.temp.name)/'repair-model.json'
+        task.write_text(json.dumps({'schema':'macr.repair.task.v1','task_id':'http-invoice',
+            'issue':'Delivery must not be discounted.','source_files':loop._hashes(files),
+            'editable_paths':['builder.py'],'test_paths':['checks.py']}))
+        config.write_text(json.dumps(development_config()))
+        return {'intent_id':str(uuid4()),'repo':str(repo),'task':str(task),'model_config':str(config),
+            'strategy':'api_debugger','proposal_contract':'v6'},files
+
+    def repair_headers(self):
+        return self.auth()|{'Origin':self.origin,'Content-Type':'application/json'}
+
+    def test_repair_http_reaches_normal_entry_and_retains_blocked_result(self):
+        payload,_=self.repair_payload()
+        code,raw,_=self.request('POST','/api/repairs',headers=self.repair_headers(),body=json.dumps(payload))
+        self.assertEqual(code,202);run=json.loads(raw);self.workbench.thread.join(3)
+        code,raw,_=self.request('GET','/api/repairs/'+run['id']+'/result',headers=self.auth())
+        self.assertEqual(code,200);result=json.loads(raw)
+        self.assertEqual(result['state']['state'],'blocked')
+        self.assertEqual(result['state']['repair_status'],'verification_unavailable')
+        self.assertEqual(result['summary']['provider_requests'],0)
+        self.assertFalse(result['summary']['repaired']);self.assertFalse(result['summary']['remote_enabled'])
+        self.assertEqual(result['proposals'],[])
+        code,raw,_=self.request('GET','/api/repair-history?cursor=0',headers=self.auth())
+        self.assertEqual(code,200);self.assertEqual(json.loads(raw)['items'][0]['id'],run['id'])
+
+    def test_repair_http_uses_real_loop_with_authored_transport_and_no_repeat(self):
+        from macr.investigation import repair_entry as entry,repair_loop as loop
+        from macr.providers.repair_binding import RepairProviderBinding
+        from repair_fixtures import OLD,NEW
+        from test_workbench_repair import AuthoredTransport
+        payload,files=self.repair_payload();fixed=dict(files);fixed['builder.py']=fixed['builder.py'].replace(OLD.encode(),NEW.encode())
+        names=loop.test_manifest(files,['checks.py'])
+        observe=lambda source,failed:{'source_id':loop.source_id(source),'execution_status':'completed',
+            'outcomes':{n:'failed' if n in failed else 'passed' for n in names}}
+        replay=loop.ReplayVerifier([observe(files,names[:1]),observe(fixed,())])
+        transport=AuthoredTransport([{'status':'candidate','summary':'Exclude delivery.',
+            'edits':[{'file':'builder.py','old':OLD,'new':NEW}]}])
+        with patch.object(self.workbench.repairs,'provider_factory',lambda config:RepairProviderBinding(config,transport=transport)), \
+             patch.object(self.workbench.repairs,'verifier_factory',lambda:replay):
+            code,raw,_=self.request('POST','/api/repairs',headers=self.repair_headers(),body=json.dumps(payload))
+            self.assertEqual(code,202);run=json.loads(raw);self.workbench.thread.join(3)
+            code,raw,_=self.request('GET','/api/repairs/'+run['id']+'/result',headers=self.auth())
+            self.assertEqual(code,200);result=json.loads(raw)
+            self.assertEqual(result['report']['status'],'simulation_passed');self.assertFalse(result['summary']['repaired'])
+            self.assertEqual(result['proposals'][0]['edits'][0]['file'],'builder.py')
+            code,raw,_=self.request('POST','/api/repairs',headers=self.repair_headers(),body=json.dumps(payload))
+            self.assertEqual(code,202);self.assertEqual(json.loads(raw)['id'],run['id'])
+        self.assertEqual(len(transport.requests),1)
+        self.assertEqual((Path(payload['repo'])/'builder.py').read_bytes(),files['builder.py'])
+
+    def test_repair_routes_keep_auth_and_reject_runtime_and_arbitrary_output(self):
+        payload,_=self.repair_payload()
+        self.assertEqual(self.request('POST','/api/repairs',headers={'Origin':self.origin,'Content-Type':'application/json'},body=json.dumps(payload))[0],401)
+        self.assertEqual(self.request('POST','/api/repairs',headers=self.auth()|{'Content-Type':'application/json'},body=json.dumps(payload))[0],403)
+        for extra in ({'enable_remote':True},{'out':'/tmp/arbitrary-repair'},{'key':'DUMMY-NOT-A-KEY'},
+                      {'provider':'official'},{'spend_plan':'/tmp/plan'}):
+            with self.subTest(extra=extra):
+                self.assertEqual(self.request('POST','/api/repairs',headers=self.repair_headers(),body=json.dumps(payload|extra))[0],400)
+        self.assertEqual(self.request('GET','/api/repairs/'+str(uuid4())+'/result?path=/etc/passwd',headers=self.auth())[0],404)
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix='macr-ui-http-', dir=Path(tempfile.gettempdir()).resolve())
         self.addCleanup(self.temp.cleanup)

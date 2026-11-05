@@ -45,8 +45,11 @@ The target must be separate from the trusted product package. Exit `0` means req
 flowchart TD
     CLI["CLI / Python API"] --> S["Supervisor: budgets and one fixed worker"]
     UI["Local browser"] --> H["Authenticated 127.0.0.1 HTTP"]
-    H --> O["Owned root and one active analysis"]
+    H --> O["Owned root and one active operation"]
     O --> S
+    O --> P["Repair coordinator: prepared task/config"]
+    P --> K["Saved repair record / blocked outcome"]
+    K --> H
     S --> C["Capture source as data and index Python AST"]
     C --> V["Bound report, verify bytes and worker exit"]
     V --> R["COMMITTED receipt"]
@@ -69,19 +72,24 @@ Outermost CPU, an independent deadline-qualified exit upper bound and sustained-
 behavior remain unverified; the dated records retain all remaining limits.
 Local reports contain source/input and must stay private; never expose the workbench publicly.
 
-## Repair CLI research path
+## Repair candidates and CLI
 
 The explicit `repair` command connects bound patch proposals, protected edits,
 public feedback, candidate history and pending independent scoring. All three
-repair strategies share the configured model and budget. This is a CLI path;
-the static workbench does not yet launch repairs or claim a verified fix.
+repair strategies share the configured model and budget. The workbench's
+**修复候选** panel now launches this same coordinator with explicit prepared
+task/configuration paths and proposal contract v6. It retains state, verified
+records and proposal history without changing the original project. See the
+[workbench repair flow](docs/evidence-workbench.md#repair-candidates).
 
 ```sh
 python3 -I -S -B cli/agent_review.py repair --help
 ```
 
-The default has no model transport or execution backend and stops honestly.
-Official HTTP requires its explicit spend/credential gates, and feedback needs
+The workbench currently has no model transport or native verifier configured;
+it retains blocked outcomes with zero model requests. It exposes no API Key,
+remote-call or backend controls. The separate CLI's official HTTP mode requires
+its explicit spend/credential gates, and feedback needs
 an independently qualified, authorized backend. Scripted tests are not real
 repair or model-quality evidence. See [the normal repair entry](docs/repair-entry.md),
 [public verification boundary](docs/repair-public-verification.md), and

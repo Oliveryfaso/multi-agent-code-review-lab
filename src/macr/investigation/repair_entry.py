@@ -304,7 +304,7 @@ def score_handoff(record_root, plan, cell_id):
         test_plan=config.get('test_plan'),source_scope=config.get('source_scope'),source_windows=windows)
 
 
-def run(args, *, verifier_factory=None):
+def run(args, *, verifier_factory=None, provider_factory=None, emit=None):
     from macr.providers.base import ProviderError
     from macr.providers.repair_binding import validate_config
     from . import repair_loop
@@ -335,7 +335,7 @@ def run(args, *, verifier_factory=None):
             else:
                 report=_run_durable(args,task,config,plan,binding,state,verifier);provider=state['provider']
         else:
-            provider=_make_provider(config)
+            provider=(provider_factory or _make_provider)(config)
             repair_loop._require(provider.config==config,'provider_config_binding')
             report=_run_report(args,task,provider,verifier)
         meter = report['provider_accounting']
@@ -353,7 +353,8 @@ def run(args, *, verifier_factory=None):
         if 'source_windows' in report:
             summary.update(source_context='partial_files',source_window_contract=report['source_windows']['schema'])
         if remote:summary.update(global_spend=state['global_spend'],spend_status=state['spend_status'])
-        print(json.dumps(summary))
+        if emit is None: print(json.dumps(summary))
+        else: emit(summary)
         # No candidate or abstention here is declared a successful real repair.
         return 0 if report['status'] in ('simulation_passed','public_tests_reported_passed','candidate_unverified','candidate_finalized','candidate_selected_unverified',
                                         'no_candidate','insufficient_evidence') else 2
@@ -367,5 +368,6 @@ def run(args, *, verifier_factory=None):
             'target_code_executed':None if type(verifier) is repair_loop.BackendVerifier else False,
             'remote_enabled':meter['remote_enabled'] if meter else False}
         if remote:summary.update(global_spend=state['global_spend'],spend_status=state['spend_status'])
-        print(json.dumps(summary))
+        if emit is None: print(json.dumps(summary))
+        else: emit(summary)
         return 2

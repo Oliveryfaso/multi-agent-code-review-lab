@@ -113,7 +113,7 @@ def _local_filesystem(fd):
 
 
 class Workbench:
-    def __init__(self, root: Path):
+    def __init__(self, root: Path, *, repair_provider_factory=None, repair_verifier_factory=None):
         self.root = Path(root).absolute()
         self.mutex = threading.RLock()
         self.consumer = threading.Lock()
@@ -159,6 +159,9 @@ class Workbench:
                 self.registry = load_json(raw.decode('utf-8'), max_bytes=META_LIMIT, max_depth=64)
                 self._validate_registry()
                 self._recover()
+            from .repair_workbench import RepairWorkbench
+            self.repairs = RepairWorkbench(self, provider_factory=repair_provider_factory,
+                                            verifier_factory=repair_verifier_factory)
         except BaseException as error:
             if self.lock_fd is not None:
                 os.close(self.lock_fd)
@@ -185,7 +188,7 @@ class Workbench:
         check_storage(self.root, budget, 'workbench_storage')
         return budget.usage.get('max_allocated_bytes', 0)
 
-    def _metadata_bytes(self):
+    def _metadata_bytes(self, *, include_repair=True):
         total = 0
         budget = self._budget()
         budget.check('workbench_metadata')
@@ -202,6 +205,18 @@ class Workbench:
                 total += info.st_size
                 if total > META_LIMIT:
                     raise ContractError('workbench_storage_limit', 'metadata')
+        if include_repair:
+            with open_directory(self.root, identities=budget.anchors) as fd:
+                try:
+                    info = os.stat('repair-registry.json', dir_fd=fd, follow_symlinks=False)
+                except FileNotFoundError:
+                    pass
+                else:
+                    if not stat.S_ISREG(info.st_mode):
+                        raise ContractError('registry_invalid', 'repair_registry_type')
+                    total += info.st_size
+                    if total > META_LIMIT:
+                        raise ContractError('workbench_storage_limit', 'metadata')
         budget.check('workbench_metadata_complete')
         return total
 
@@ -307,6 +322,8 @@ class Workbench:
             with open_directory(Path(payload['repo'])):
                 pass
             digest = document(encode_bounded(payload, profile.max_input_bytes))['sha256']
+            if self.repairs.has_intent(intent):
+                raise ContractError('intent_conflict', 'intent_id')
             for run in self.registry['runs'].values():
                 if run['intent_id'] == intent:
                     if run['payload_digest'] != digest:
@@ -517,3 +534,18 @@ class Workbench:
         with self.mutex:
             self.stopping = True
             self.event.set()
+
+    def start_repair(self, payload):
+        return self.repairs.start(payload)
+
+    def repair_state(self, identifier):
+        return self.repairs.state(identifier)
+
+    def repair_result(self, identifier):
+        return self.repairs.result(identifier)
+
+    def repair_by_intent(self, intent):
+        return self.repairs.by_intent(intent)
+
+    def repair_history(self, cursor=0):
+        return self.repairs.history(cursor)
