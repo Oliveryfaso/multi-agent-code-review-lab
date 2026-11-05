@@ -12,6 +12,17 @@ from macr.schemas import ToolResult
 class TestRunnerTool:
     name = "run_tests"
 
+    @staticmethod
+    def supports(backend: ExecutionBackend | None) -> bool:
+        """Side-effect-free capability admission, not an execution grant."""
+        if backend is None:return False
+        try:
+            caps=backend.capabilities()
+            return all(getattr(caps,name,False) is True for name in (
+                'network_disabled','readonly_input','isolated_writes','secrets_absent','cpu_limit',
+                'memory_limit','pid_limit','wall_limit','output_limit','process_tree_stop'))
+        except Exception:return False
+
     def run(self, repo_path: Path, selector: str) -> ToolResult:
         return ToolResult(False, self.name, {"execution_status": "blocked", "observed_status": "not_applicable"},
                           "An approved isolation backend is required", 0, "environment_missing")
@@ -25,10 +36,7 @@ class TestRunnerTool:
             return classify_check({'execution_status': 'blocked'}, CheckSpec(getattr(check, 'check_id', 'invalid')))
         if backend is None or snapshot is None or check.limits is None:
             return classify_check({"execution_status": "blocked"}, check)
-        caps = backend.capabilities()
-        required = ("network_disabled", "readonly_input", "isolated_writes", "secrets_absent", "cpu_limit",
-                    "memory_limit", "pid_limit", "wall_limit", "output_limit", "process_tree_stop")
-        if not all(getattr(caps, name, False) is True for name in required):
+        if not self.supports(backend):
             return classify_check({"execution_status": "blocked"}, check)
         if any(getattr(check.limits, name) <= 0 for name in ("cpu", "memory_bytes", "pids", "wall_seconds", "output_bytes")):
             return classify_check({"execution_status": "blocked"}, check)

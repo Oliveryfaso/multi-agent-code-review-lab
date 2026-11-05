@@ -2,7 +2,7 @@ name: Offline Core
 
 'on':
   push:
-    branches: [main]
+    branches: [main, codex/debugger-repair-integration-20261103, codex/debugger-main-integration-20261105]
   pull_request:
     branches: [main]
 
@@ -173,6 +173,29 @@ jobs:
 
       - name: Static evidence contracts and CLI without native dispatch
         run: python -I -S -B scripts/run_static_evidence_tests.py
+
+      - name: Repair loop and provider contracts
+        run: >-
+          python -I -S -B scripts/run_offline_tests.py
+          test_repair_io test_repair_edits test_repair_loop test_repair_entry
+          test_repair_provider_binding test_repair_transport test_repair_spend
+          test_repair_runtime_binding test_repair_scoring_flow
+          test_repair_comparison test_repair_comparison_entry test_repair_backend_verifier
+
+      - name: Repair inputs and source evidence
+        run: >-
+          python -I -S -B scripts/run_offline_tests.py
+          test_bugsinpy_inventory test_repair_test_plan test_repair_pytest_entry
+          test_repair_scoring_overlay test_repair_scoring_stage
+          test_repair_sources test_repair_source_scope_entry
+          test_repair_localize test_repair_localize_entry
+
+      - name: Windowed repair evidence and repository maps
+        run: >-
+          python -I -S -B scripts/run_offline_tests.py
+          test_repair_windows test_repair_windows_entry test_repair_windows_scoring
+          test_repair_visible_matches
+          test_repo_map
 
       - name: Bounded kernel loopback lifecycle fixtures
         run: python -I -S -B tests/test_loopback_lifecycle.py

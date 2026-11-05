@@ -10,13 +10,12 @@ from pathlib import Path
 from uuid import uuid4
 
 from .records import ActionUsage, CapturedFile, ContentManifest, ScopeManifest, SnapshotBundle, SnapshotRef
-from .scope import TEXT_SUFFIXES, exclusion, read_safe, resolve_allowed, walk_entries
+from .scope import TEXT_SUFFIXES, exclusion, read_safe, resolve_allowed, safe_parent, validate_workspace_path, walk_entries
 from .validation import ContractError, decode_record, validate_identifier, validate_relative
 from .source_text import raw_physical_line_count
 from .evidence_profiles import EvidenceProfile, load_json
 from .evidence_budget import BudgetExceeded, EvidenceBudget
 from .evidence_workspace import check_storage, encode_bounded, safe_write, storage_root
-from .scope import safe_parent
 
 
 class SnapshotError(ContractError):
@@ -36,7 +35,12 @@ class SnapshotStore:
         self.allowed = Path(allowed_root).absolute() if allowed_root is not None else (Path(__file__).resolve().parents[3] / 'artifacts').resolve()
         self.profile = profile or (budget.profile if budget else EvidenceProfile())
         self.budget = budget or (EvidenceBudget(self.profile) if profile is not None else None)
-        self.root = storage_root(root or self.allowed / 'snapshots', self.allowed, budget=self.budget)
+        requested_root = Path(root or self.allowed / 'snapshots').absolute()
+        if not requested_root.is_relative_to(self.allowed):
+            raise SnapshotError('forbidden_path', 'storage_root')
+        validate_workspace_path(self.allowed, output=True)
+        validate_workspace_path(requested_root, output=True)
+        self.root = storage_root(requested_root, self.allowed, budget=self.budget)
         self.last_usage = ActionUsage()
 
     def _read(self, root, relative, limit, stage):
@@ -176,9 +180,10 @@ class SnapshotStore:
             self._read_entry(ref, entries[relative])
 
     def export_verified(self, ref: SnapshotRef, destination: Path) -> ContentManifest:
-        destination = destination.absolute()
+        destination = Path(destination).absolute()
         if not destination.is_relative_to(self.allowed):
             raise SnapshotError("forbidden_path", "export_destination")
+        validate_workspace_path(destination, output=True)
         self.verify(ref)
         manifest = self._manifest(ref)
         with safe_parent(self.allowed, destination.relative_to(self.allowed).as_posix(), create=True, identities=self.budget.anchors if self.budget else None) as (parent_fd, leaf):

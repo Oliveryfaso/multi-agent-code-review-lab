@@ -117,6 +117,28 @@ def _identity_evidence(data, *, body):
     except (ValueError, TypeError, KeyError, UnicodeError, OverflowError):
         return None
 
+def encode_conversation_request_body(request: ConversationRequest, *, model: str) -> bytes:
+    """Pure wire encoding shared by preparation and the dispatch adapter."""
+    validate_conversation_request(request)
+    payload = {'model': model, 'messages': request.messages,
+               'stream': False, 'max_tokens': request.max_output_tokens}
+    if request.thinking is not None:
+        payload['thinking'] = request.thinking
+    if request.reasoning_effort is not None:
+        payload['reasoning_effort'] = request.reasoning_effort
+    if request.tools:
+        payload.update(tools=request.tools, tool_choice='auto')
+    if request.response_schema is not None:
+        payload['response_format'] = {'type': 'json_object'}
+    try:
+        body = json.dumps(payload, allow_nan=False).encode()
+    except (ValueError, TypeError, RecursionError):
+        raise ProviderError('model_request_invalid') from None
+    if len(body) > 1024 * 1024:
+        raise ProviderError('model_request_limit')
+    return body
+
+
 class DeepSeekProvider:
     """Compatibility adapter. Real remote transport requires explicit approval/config."""
     name = 'deepseek'
@@ -171,24 +193,7 @@ class DeepSeekProvider:
 
     def encode_conversation_request(self, request: ConversationRequest) -> bytes:
         """Return the exact body sent by converse, so owners can admit its bytes first."""
-        validate_conversation_request(request)
-        payload = {'model': self.model, 'messages': request.messages,
-                   'stream': False, 'max_tokens': request.max_output_tokens}
-        if request.thinking is not None:
-            payload['thinking'] = request.thinking
-        if request.reasoning_effort is not None:
-            payload['reasoning_effort'] = request.reasoning_effort
-        if request.tools:
-            payload.update(tools=request.tools, tool_choice='auto')
-        if request.response_schema is not None:
-            payload['response_format'] = {'type': 'json_object'}
-        try:
-            body = json.dumps(payload, allow_nan=False).encode()
-        except (ValueError, TypeError, RecursionError):
-            raise ProviderError('model_request_invalid') from None
-        if len(body) > 1024 * 1024:
-            raise ProviderError('model_request_limit')
-        return body
+        return encode_conversation_request_body(request, model=self.model)
 
     def converse(self, request: ConversationRequest) -> ConversationResponse:
         """Complete one conversation step; tool execution and argument validation are caller-owned."""

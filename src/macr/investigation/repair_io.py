@@ -1,0 +1,198 @@
+"""Small bounded repair I/O primitives, shared with the existing snapshot layer.
+
+No target imports/execution, environment discovery or execution authority lives
+here. The helpers are the narrow, dependency-free subset of the reviewed repair
+preparation path needed by the normal CLI integration.
+"""
+from __future__ import annotations
+
+import ast
+from hashlib import sha256
+import json
+import math
+import os
+from pathlib import Path
+import stat
+
+from macr.memory.atomic_file import atomic_write
+from .scope import open_directory, safe_parent, validate_workspace_path
+from .validation import ContractError
+
+
+def _require(ok, field):
+    if not ok: raise ContractError('repair_io_invalid', field)
+
+
+def utf8_size(text):
+    try: return len(text.encode('utf-8'))
+    except UnicodeError: raise ContractError(field='utf8_text') from None
+
+
+def encode_bounded(value, limit):
+    _require(type(limit) is int and limit > 0, 'record_limit')
+    data = bytearray()
+    try:
+        for chunk in json.JSONEncoder(ensure_ascii=False,sort_keys=True,
+                separators=(',', ':'),allow_nan=False).iterencode(value):
+            raw = chunk.encode('utf-8')
+            _require(len(data)+len(raw) <= limit, 'json_bytes')
+            data.extend(raw)
+        return bytes(data)
+    except (TypeError,ValueError,UnicodeError,RecursionError) as error:
+        if isinstance(error,ContractError): raise
+        raise ContractError(field='json_serialization') from None
+
+
+def _json_shape(value, max_depth, *, utf8_bytes):
+    _require(type(max_depth) is int and max_depth > 0, 'json_limit')
+    def check(item, depth=0):
+        _require(depth <= max_depth, 'json_depth')
+        if type(item) is str:
+            if utf8_bytes: utf8_size(item)
+            return
+        if item is None or type(item) in (bool,int): return
+        if type(item) is float and math.isfinite(item): return
+        if type(item) is list:
+            for child in item: check(child,depth+1)
+            return
+        if type(item) is dict and all(type(k) is str for k in item):
+            for key,child in item.items():
+                if utf8_bytes: utf8_size(key)
+                check(child,depth+1)
+            return
+        raise ContractError(field='json_type')
+    check(value)
+    return value
+
+
+def bounded_json(value, *, max_bytes=128*1024, max_depth=32, utf8_bytes=False):
+    _require(type(max_bytes) is int and max_bytes > 0
+             and type(utf8_bytes) is bool, 'json_limit')
+    _json_shape(value, max_depth, utf8_bytes=utf8_bytes)
+    # Preserve the reviewed JSON contract's ASCII/default-separator size rule;
+    # parsed proposal objects explicitly opt into compact UTF-8 accounting.
+    try: size=len(json.dumps(value,ensure_ascii=not utf8_bytes,allow_nan=False,
+        **({'separators':(',', ':')} if utf8_bytes else {})).encode('utf-8'))
+    except (TypeError,ValueError,UnicodeError,OverflowError,RecursionError):
+        raise ContractError(field='json_serialization') from None
+    _require(size <= max_bytes,'json_bytes')
+    return value
+
+
+def load_json(text, *, max_bytes=128*1024, max_depth=32, utf8_bytes=False):
+    """Parse strict JSON; opt-in proposal limits count the original UTF-8 wire.
+
+    The default additionally enforces the legacy ASCII-reserialized record size.
+    Both modes reject duplicate keys, nonfinite values and excessive depth.
+    """
+    _require(type(max_bytes) is int and max_bytes > 0
+             and type(utf8_bytes) is bool, 'json_limit')
+    _require(type(text) is str and utf8_size(text) <= max_bytes, 'json_bytes')
+    def pairs(items):
+        result = {}
+        for k,v in items:
+            _require(k not in result, 'duplicate_json_key')
+            result[k] = v
+        return result
+    try:
+        value=json.loads(text,object_pairs_hook=pairs,
+            parse_constant=lambda _: (_ for _ in ()).throw(ContractError(field='nonfinite')))
+        if utf8_bytes:
+            return _json_shape(value, max_depth, utf8_bytes=True)
+        return bounded_json(value,max_bytes=max_bytes,max_depth=max_depth)
+    except ContractError: raise
+    except (ValueError,UnicodeError,RecursionError): raise ContractError(field='json') from None
+
+
+def safe_write(root, relative, data, *, limit):
+    """Write only a regular leaf below an anchored parent; retain failed temps."""
+    _require(type(data) is bytes and type(limit) is int and limit > 0
+             and len(data) <= limit, 'storage_payload')
+    with safe_parent(root,relative,create=True) as (parent,leaf):
+        try:
+            previous=os.stat(leaf,dir_fd=parent,follow_symlinks=False)
+            _require(stat.S_ISREG(previous.st_mode), 'storage_leaf')
+        except FileNotFoundError: pass
+        atomic_write(Path(leaf),data,dir_fd=parent)
+
+
+def _root(path):
+    value=Path(path).absolute()
+    validate_workspace_path(value,output=True)
+    _require(value == value.resolve(), 'path_identity')
+    with open_directory(value): pass
+    return value
+
+
+def _syntax(body,name, *, full_originals=False):
+    _require(type(full_originals) is bool, 'source_profile')
+    byte_limit, node_limit, depth_limit = ((128 * 1024, 32768, 64)
+        if full_originals else (16384, 2048, 32))
+    _require(type(body) is bytes and len(body) <= byte_limit, 'source_size')
+    try:
+        text=body.decode('utf-8');_require('\x00' not in text,'source_nul')
+        tree=ast.parse(text,filename=name);pending=[(tree,0)];count=0
+        while pending:
+            node,depth=pending.pop();count+=1
+            _require(count <= node_limit and depth <= depth_limit,'source_ast_budget')
+            pending.extend((child,depth+1) for child in ast.iter_child_nodes(node))
+        compile(tree,name,'exec',dont_inherit=True,optimize=0)  # Discarded; never execute.
+        return text,tree
+    except (SyntaxError,ValueError,UnicodeError,RecursionError,MemoryError,OverflowError) as error:
+        if isinstance(error,ContractError): raise
+        raise ContractError('repair_io_invalid','source_compile') from None
+
+
+def _hashes(files):
+    return {name:sha256(body).hexdigest() for name,body in sorted(files.items())}
+
+
+def _test_names(body):
+    _,tree=_syntax(body,'checks.py');names=[]
+    aliases={'unittest':'module'}  # Preserve the existing canonical declaration spelling.
+
+    def bindings(node):
+        # Nested locals cannot rebind a later top-level class's base alias.
+        if isinstance(node,(ast.FunctionDef,ast.AsyncFunctionDef,ast.ClassDef)):
+            return {node.name}
+        if isinstance(node,ast.Lambda): return set()
+        if isinstance(node,ast.comprehension):
+            # Comprehension targets are local; expressions can still bind outer names.
+            result=bindings(node.iter)
+            for condition in node.ifs: result.update(bindings(condition))
+            return result
+        result=set()
+        if isinstance(node,ast.Name) and isinstance(node.ctx,(ast.Store,ast.Del)):
+            result.add(node.id)
+        if isinstance(node,ast.Attribute) and isinstance(node.ctx,(ast.Store,ast.Del)):
+            value=node.value
+            while isinstance(value,ast.Attribute): value=value.value
+            if isinstance(value,ast.Name): result.add(value.id)
+        if isinstance(node,(ast.Import,ast.ImportFrom)):
+            result.update(item.asname or item.name.split('.')[0] for item in node.names)
+        if isinstance(node,(ast.ExceptHandler,ast.MatchAs,ast.MatchStar)) and node.name:
+            result.add(node.name)
+        if isinstance(node,ast.MatchMapping) and node.rest: result.add(node.rest)
+        for child in ast.iter_child_nodes(node): result.update(bindings(child))
+        return result
+
+    for node in tree.body:
+        if isinstance(node,ast.ClassDef) and any(isinstance(base,ast.Attribute)
+                and isinstance(base.value,ast.Name) and aliases.get(base.value.id)=='module'
+                and base.attr=='TestCase' or isinstance(base,ast.Name)
+                and aliases.get(base.id)=='case' for base in node.bases):
+            names.extend(node.name+'.'+method.name for method in node.body
+                if isinstance(method,ast.FunctionDef) and method.name.startswith('test_'))
+        for name in bindings(node): aliases.pop(name,None)
+        if isinstance(node,ast.Import):
+            for item in node.names:
+                name=item.asname or item.name.split('.')[0]
+                aliases.pop(name,None)
+                if item.name=='unittest': aliases[name]='module'
+        elif isinstance(node,ast.ImportFrom) and node.level==0 and node.module=='unittest':
+            for item in node.names:
+                name=item.asname or item.name
+                aliases.pop(name,None)
+                if item.name=='TestCase': aliases[name]='case'
+    _require(1 <= len(names) <= 32 and len(names)==len(set(names)), 'declared_tests_missing_or_ambiguous')
+    return sorted(names)

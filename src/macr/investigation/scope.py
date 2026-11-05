@@ -20,6 +20,17 @@ SECRET_PATTERNS = (".env*", "*.pem", "*.key", "id_rsa*", "id_ed25519*", "*creden
 PRIVATE_DIRS = {'.git', '.hg', '.aws', '.ssh', '.codex', '.agents', 'secrets', 'credentials', 'oracles', 'oracle'}
 
 
+def paths_overlap(left: Path, right: Path):
+    """Conservative overlap for absolute paths on case/Unicode-insensitive volumes."""
+    from unicodedata import normalize
+
+    def parts(path):
+        return tuple(normalize('NFC', part).casefold() for part in Path(path).parts)
+
+    left, right = parts(left), parts(right)
+    return left[:len(right)] == right or right[:len(left)] == left
+
+
 def validate_workspace_path(path: Path, *, output=False):
     """Explicit roots do not grant protected ancestry; output containers have a separate policy."""
     parts = Path(path).absolute().parts
@@ -100,6 +111,7 @@ def safe_parent(root: Path, relative: str, *, create=False, identities=None):
 
 def walk_entries(root: Path, profile: ScopeProfile | None = None, *, budget=None):
     from .evidence_profiles import EvidenceProfile
+    root = Path(root).absolute()
     profile = profile or ScopeProfile()
     limits = budget.profile if budget else EvidenceProfile()
     pending = [('', root)]
@@ -113,10 +125,14 @@ def walk_entries(root: Path, profile: ScopeProfile | None = None, *, budget=None
                 for entry in iterator:
                     rel = '/'.join(filter(None, (directory_rel, entry.name)))
                     count += 1
-                    metadata_bytes += len(rel.encode('utf-8')) + 128
+                    try:
+                        entry_bytes = len(rel.encode('utf-8')) + 128
+                    except UnicodeError:
+                        raise ContractError('forbidden_path', 'filename_encoding') from None
+                    metadata_bytes += entry_bytes
                     for field, observed in (('max_metadata_entries', count), ('max_metadata_bytes', metadata_bytes)):
                         if budget:
-                            budget.charge(field, 1 if field == 'max_metadata_entries' else len(rel.encode('utf-8')) + 128, 'inventory_metadata')
+                            budget.charge(field, 1 if field == 'max_metadata_entries' else entry_bytes, 'inventory_metadata')
                         elif observed > getattr(limits, field):
                             raise BudgetExceeded(field, 'inventory_metadata', getattr(limits, field), observed)
                     try:
@@ -139,16 +155,11 @@ def resolve_allowed(root: Path, relative: str, scope: ScopeManifest) -> Path:
     validate_relative(relative)
     if scope.errors or relative not in {f.path for f in scope.eligible}:
         raise ContractError("forbidden_path", "scope")
-    root = root.resolve()
-    path = root / relative
-    current = root
-    for part in relative.split("/"):
-        current = current / part
-        if current.is_symlink():
-            raise ContractError("forbidden_path", "symlink")
-    if not path.resolve().is_relative_to(root) or not path.is_file():
-        raise ContractError("forbidden_path", "path")
-    return path
+    root = Path(root).absolute()
+    with safe_parent(root,relative) as (parent,leaf):
+        if not stat.S_ISREG(os.stat(leaf,dir_fd=parent,follow_symlinks=False).st_mode):
+            raise ContractError('forbidden_path','path')
+    return root / relative
 
 
 def read_safe(root: Path, relative: str, limit: int, *, budget=None, stage='source_read', limit_field='max_file_bytes') -> bytes:
@@ -211,6 +222,10 @@ class RepositoryScope:
                 self._add_entry(manifest, names, root, profile, rel, kind, size)
         except BudgetExceeded as error:
             manifest.errors.append(RunError(error.code, error.detail()))
+        except ContractError as error:
+            if error.code != 'forbidden_path' or error.field != 'filename_encoding':
+                raise
+            manifest.errors.append(RunError(error.code, error.field))
         eligible = manifest.eligible
         limits = budget.profile if budget else None
         for field, observed, limit in (

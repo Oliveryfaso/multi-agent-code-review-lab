@@ -15,7 +15,11 @@ class PackagingTests(unittest.TestCase):
         self.assertEqual(project['project']['version'], '0.1.0')
         self.assertEqual(project['project']['dependencies'], [])
         self.assertEqual(project['project']['scripts'], {'agent-review':'macr.cli:main'})
+        self.assertEqual(project['project']['optional-dependencies']['mock-recovery'],
+                         ['langgraph==1.2.14', 'langgraph-checkpoint-sqlite==3.1.1', 'langgraph-checkpoint==4.2.0'])
         self.assertEqual(project['tool']['setuptools']['package-data']['macr.investigation'], ['static_evidence.schema.json'])
+        self.assertEqual(project['tool']['setuptools']['package-data']['macr.api'],
+                         ['evidence_ui/index.html', 'evidence_ui/workbench.js', 'evidence_ui/workbench.css'])
         self.assertEqual(project['project']['license'], {'file':'LICENSE'})
 
     def test_local_schema_complete_contract_and_refs(self):
@@ -49,7 +53,9 @@ class PackagingTests(unittest.TestCase):
                 if fullname.startswith(denied): raise AssertionError('Unrelated import: ' + fullname)
         guard = Guard(); sys.meta_path.insert(0, guard)
         try:
-            for command in ('evidence-locate','mock-recovery','static-baseline','ask','patch','review-diff','eval','prepare-real-eval','code-smell','llm-check','view'):
+            for command in ('evidence-locate','evidence-ui','repair','repair-locate','repair-comparison',
+                            'repair-benchmark-inventory','mock-recovery','static-baseline','ask','patch',
+                            'review-diff','eval','prepare-real-eval','code-smell','llm-check','view'):
                 with patch.object(sys, 'argv', ['agent-review', command, '--help']), contextlib.redirect_stdout(io.StringIO()), self.assertRaises(SystemExit) as stopped:
                     cli.main()
                 self.assertEqual(stopped.exception.code, 0)

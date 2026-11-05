@@ -1,6 +1,8 @@
 import unittest
+from contextlib import nullcontext
 from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 from debugger_fixtures import fixture_root, write_files
 from macr.investigation.records import ScopeProfile
@@ -16,6 +18,32 @@ class RepositoryScopeTests(unittest.TestCase):
     def setUp(self):
         self.assertIsNotNone(RepositoryScope, "unified repository scope is missing")
         self.root = write_files(fixture_root(), {"a.py": "x = 1\n", "pkg/b.py": "y = 2\n", ".env": "DO_NOT_READ", "._a.py": "APPLEDOUBLE", ".git/HEAD": "excluded", "artifacts/private.py": "excluded", "photo.bin": "unsupported"})
+
+    def test_output_overlap_includes_case_and_unicode_ancestry_aliases(self):
+        from macr.investigation.scope import paths_overlap
+        self.assertTrue(paths_overlap(Path('/source/Caf\u00e9'), Path('/SOURCE/Cafe\u0301/output')))
+        self.assertTrue(paths_overlap(Path('/source/repo/output'), Path('/source/repo')))
+        self.assertFalse(paths_overlap(Path('/source/repo'), Path('/source/repository')))
+
+    def test_unencodable_inventory_name_stops_before_source_reads(self):
+        entries = nullcontext(iter([SimpleNamespace(name='\udcff.py')]))
+        with patch('macr.investigation.scope.os.scandir', return_value=entries), \
+             patch('macr.investigation.scope.read_safe') as read:
+            scope = RepositoryScope().inventory(self.root, ScopeProfile())
+        self.assertEqual([(error.code, error.detail) for error in scope.errors],
+                         [('forbidden_path', 'filename_encoding')])
+        read.assert_not_called()
+
+    def test_metadata_identity_and_cancellation_errors_still_propagate(self):
+        for error in (ContractError('forbidden_path', 'directory_identity'),
+                      ContractError('cancelled', 'inventory_metadata')):
+            with self.subTest(code=error.code), \
+                 patch('macr.investigation.scope.walk_entries', side_effect=error), \
+                 patch('macr.investigation.scope.read_safe') as read:
+                with self.assertRaises(ContractError) as caught:
+                    RepositoryScope().inventory(self.root, ScopeProfile())
+            self.assertIs(caught.exception, error)
+            read.assert_not_called()
 
     def test_inventory_excludes_secret_without_open(self):
         original = Path.read_bytes

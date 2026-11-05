@@ -36,6 +36,9 @@ def main() -> None:
     parser.add_argument("--version", action="version", version="%(prog)s 0.1.0")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
+    from macr.repair_cli import add_parsers as add_repair_parsers
+    add_repair_parsers(subparsers)
+
     mock_parser = subparsers.add_parser('mock-recovery', help='Synthetic recovery demo only; no production resume, real model, or tool execution.')
     mock_commands = mock_parser.add_subparsers(dest='mock_operation', required=True)
     for name in ('start', 'status', 'resume'):
@@ -122,6 +125,18 @@ def main() -> None:
     if args.command == "evidence-locate":
         from macr.evidence_cli import run
         raise SystemExit(run(args))
+    if args.command == 'repair':
+        from macr.investigation.repair_entry import run as run_repair
+        raise SystemExit(run_repair(args))
+    if args.command == 'repair-locate':
+        from macr.investigation.repair_localize_entry import run as run_localize
+        raise SystemExit(run_localize(args))
+    if args.command == 'repair-comparison':
+        from macr.evals.repair_comparison_entry import run as run_comparison
+        raise SystemExit(run_comparison(args))
+    if args.command == 'repair-benchmark-inventory':
+        from macr.evals.bugsinpy_inventory import run as run_inventory
+        raise SystemExit(run_inventory(args))
     if args.command == 'mock-recovery':
         from macr.investigation import mock_recovery
         command = [args.mock_operation, '--root=' + str(args.root)]

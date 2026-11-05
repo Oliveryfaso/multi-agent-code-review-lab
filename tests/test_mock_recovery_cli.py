@@ -361,7 +361,8 @@ class MockRecoveryCLITests(unittest.TestCase):
         with guard, patch.object(recovery, '_dependencies',
                                  side_effect=AssertionError('default CLI entered recovery')):
             for arguments in (('--help',), ('ask', '--help'), ('patch', '--help'),
-                              ('review-diff', '--help'),
+                              ('review-diff', '--help'), ('repair', '--help'),
+                              ('repair-locate', '--help'), ('repair-comparison', '--help'),
                               ('static-baseline', '--help')):
                 with self.subTest(arguments=arguments):
                     code, output, errors = self.invoke_cli(*arguments)

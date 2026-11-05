@@ -11,7 +11,7 @@ from pathlib import Path
 from .records import ActionUsage, CoverageRecord, IndexPage, IndexQuery, IndexSummary, Location, RelationRecord, RunError, SnapshotBundle, SnapshotRef, SymbolRecord
 from .snapshots import SnapshotError, SnapshotStore
 from .validation import ContractError, decode_record
-from .scope import read_safe
+from .scope import read_safe, validate_workspace_path
 from .source_text import SourceText, raw_physical_line_count, PHYSICAL_LINE_VERSION, COORDINATE_ENCODING_VERSION
 from .evidence_profiles import EvidenceProfile, load_json
 from .evidence_budget import BudgetExceeded, EvidenceBudget
@@ -147,7 +147,15 @@ class RepositoryIndex:
         self.allowed = allowed
         self.profile = profile or (budget.profile if budget else store.profile)
         self.budget = budget or store.budget or (EvidenceBudget(self.profile) if profile is not None else None)
-        self.cache_root = storage_root(cache_root or allowed / 'index', allowed, budget=self.budget)
+        requested_root = Path(cache_root or allowed / 'index').absolute()
+        if allowed_root is not None:
+            if (allowed != allowed.resolve() or allowed != store.allowed
+                    or requested_root != requested_root.resolve()
+                    or not requested_root.is_relative_to(allowed)):
+                raise ContractError('forbidden_path', 'index_cache')
+            validate_workspace_path(allowed, output=True)
+            validate_workspace_path(requested_root, output=True)
+        self.cache_root = storage_root(requested_root, allowed, budget=self.budget)
         self.symbols, self.relations, self.cache = [], [], {}
         self.content_id = None
         self.last_usage = ActionUsage()

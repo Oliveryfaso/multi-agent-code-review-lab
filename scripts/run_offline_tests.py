@@ -23,7 +23,7 @@ sys.dont_write_bytecode = True
 PROJECT = Path(__file__).resolve().parents[1]
 sys.path[:0] = [str(PROJECT / 'src'), str(PROJECT / 'tests'), str(PROJECT / 'scripts')]
 from debugger_fixtures import RUNS_ROOT, fixture_session
-from macr.memory.atomic_file import tree_usage as shared_tree_usage
+from macr.memory.atomic_file import namespace_snapshot
 
 MIB = 1024 * 1024
 OFFLINE_MODULES = frozenset({
@@ -41,6 +41,18 @@ OFFLINE_MODULES = frozenset({
     'test_deepseek_study_live',
     'test_provider_identity_evidence',
     'test_deepseek_study_continuation',
+    'test_repair_io', 'test_repair_loop', 'test_repair_edits', 'test_repair_entry',
+    'test_repair_provider_binding', 'test_repair_scoring_flow', 'test_repair_comparison',
+    'test_repair_transport', 'test_repair_spend', 'test_repair_runtime_binding',
+    'test_repair_comparison_entry',
+    'test_bugsinpy_inventory',
+    'test_repair_test_plan', 'test_repair_pytest_entry',
+    'test_repair_scoring_overlay', 'test_repair_scoring_stage',
+    'test_repair_sources', 'test_repair_source_scope_entry',
+    'test_repair_localize', 'test_repair_localize_entry',
+    'test_repair_windows', 'test_repair_windows_entry', 'test_repair_windows_scoring',
+    'test_repair_visible_matches',
+    'test_repair_backend_verifier',
     'test_offline_tests', 'test_code_graph', 'test_repository_scope',
     'test_repository_snapshots', 'test_repository_index', 'test_context_reader',
     'test_static_readers', 'test_static_facts', 'test_static_locate_abstention', 'test_contracts',
@@ -102,8 +114,49 @@ class BoundedOutput(io.StringIO):
 
 
 def tree_usage(root):
-    """Count only this run, including directories and AppleDouble allocation."""
-    return shared_tree_usage(root)
+    """Meter owned fixtures, including links used by negative reader tests.
+
+    Count link storage without looking up targets or descending through links.
+    This fixture accounting is not an execution sandbox or source-read grant.
+    Share the atomic writer's lock without relaxing production tree_usage.
+    """
+    root = Path(root)
+    with namespace_snapshot():
+        info = root.lstat()
+        if not stat.S_ISDIR(info.st_mode):
+            raise RuntimeError('unexpected_fixture_entry')
+        usage = {'files': 0, 'logical_bytes': 0, 'allocated_bytes': info.st_blocks * 512}
+        directory_flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+
+        def scan(directory_fd):
+            with os.scandir(directory_fd) as entries:
+                for entry in entries:
+                    info = entry.stat(follow_symlinks=False)
+                    if stat.S_ISDIR(info.st_mode):
+                        child_fd = os.open(entry.name, directory_flags, dir_fd=directory_fd)
+                        try:
+                            child = os.fstat(child_fd)
+                            if (child.st_dev, child.st_ino) != (info.st_dev, info.st_ino):
+                                raise RuntimeError('unexpected_fixture_entry')
+                            scan(child_fd)
+                        finally:
+                            os.close(child_fd)
+                    elif stat.S_ISREG(info.st_mode):
+                        usage['files'] += 1
+                        usage['logical_bytes'] += info.st_size
+                    elif not stat.S_ISLNK(info.st_mode):
+                        raise RuntimeError('unexpected_fixture_entry')
+                    usage['allocated_bytes'] += info.st_blocks * 512
+
+        root_fd = os.open(root, directory_flags)
+        try:
+            opened = os.fstat(root_fd)
+            if (opened.st_dev, opened.st_ino) != (info.st_dev, info.st_ino):
+                raise RuntimeError('unexpected_fixture_entry')
+            scan(root_fd)
+        finally:
+            os.close(root_fd)
+    return usage
 
 
 @contextmanager
@@ -114,10 +167,20 @@ def offline_context(tmp):
     snapshot_init, index_init = SnapshotStore.__init__, RepositoryIndex.__init__
     verifier_init = PatchVerifierTool.__init__
 
-    def snapshots(self, root=None, **kwargs):
-        return snapshot_init(self, tmp / 'snapshots' if root is None else root, **kwargs)
+    def snapshots(self, root=None, *, allowed_root=None, **kwargs):
+        if allowed_root is not None:
+            allowed_root = Path(allowed_root).absolute()
+            if allowed_root != allowed_root.resolve() or not allowed_root.is_relative_to(tmp):
+                raise RuntimeError('fixture snapshot authority must stay inside managed output')
+        return snapshot_init(self, tmp / 'snapshots' if root is None else root,
+                             allowed_root=allowed_root, **kwargs)
 
-    def indexes(self, store, cache_root=None, **kwargs):
+    def indexes(self, store, cache_root=None, *, allowed_root=None, **kwargs):
+        if allowed_root is not None:
+            allowed_root = Path(allowed_root).absolute()
+            if allowed_root != allowed_root.resolve() or not allowed_root.is_relative_to(tmp):
+                raise RuntimeError('fixture index authority must stay inside managed output')
+            return index_init(self, store, cache_root, allowed_root=allowed_root, **kwargs)
         return index_init(self, store, tmp / 'index' if cache_root is None else cache_root, **kwargs)
 
     def verifier(self, profile=None, artifact_root=None):

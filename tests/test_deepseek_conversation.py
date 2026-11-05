@@ -39,6 +39,24 @@ def completion(content='answer', *, calls=None, finish='stop', reasoning='fixtur
 
 
 class DeepSeekConversationTests(unittest.TestCase):
+    def test_pure_wire_encoder_matches_method_without_provider_construction(self):
+        from types import SimpleNamespace
+        from macr.providers import deepseek
+        encode = getattr(deepseek, 'encode_conversation_request_body', None)
+        self.assertTrue(callable(encode), 'pure request encoder missing')
+        request = self.request(response_schema={'type': 'object'})
+        request.thinking = {'type': 'enabled'}
+        request.reasoning_effort = 'high'
+        expected = json.dumps({'model': 'fixture-deepseek', 'messages': request.messages,
+            'stream': False, 'max_tokens': request.max_output_tokens, 'thinking': request.thinking,
+            'reasoning_effort': 'high', 'tools': request.tools, 'tool_choice': 'auto',
+            'response_format': {'type': 'json_object'}}, allow_nan=False).encode()
+        with patch.object(DeepSeekProvider, '__init__', side_effect=AssertionError('no provider')):
+            actual = encode(request, model='fixture-deepseek')
+            self.assertEqual(actual, expected)
+            self.assertEqual(actual, DeepSeekProvider.encode_conversation_request(
+                SimpleNamespace(model='fixture-deepseek'), request))
+
     def test_wire_metadata_is_removed_before_strict_validation_and_replay(self):
         sentinel = 'EXTENSION_VALUE_MUST_NOT_REPLAY'
         data = completion(None, calls=[CALL], finish='tool_calls')

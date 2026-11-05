@@ -1,7 +1,7 @@
 # Explicit mock-only recovery CLI
 
 `agent-review mock-recovery` is an isolated synthetic demo. It is not production
-investigation resume. The existing ask, patch and review-diff commands
+investigation resume. The existing ask, patch, review-diff and repair commands
 retain their behavior. The CLI imports the optional recovery module only after
 this explicit subcommand is selected; ordinary installation needs no LangGraph.
 
