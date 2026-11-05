@@ -18,6 +18,27 @@ except ImportError:
 
 
 class RepairRuntimeBindingTests(TestCase):
+    def test_stopped_finish_remains_halted_after_reload_with_known_usage(self):
+        with self.ledger() as ledger:
+            ledger.claim_cell('raw','a'*64)
+            binding=RepairProviderBinding(self.config,transport=Transport([reply()]),spend_ledger=ledger)
+            binding.complete(self.request(binding))
+            ledger.finish_cell('stopped')
+            self.assertTrue(ledger.summary()['stopped'])
+        with self.ledger() as ledger:
+            self.assertEqual((ledger.summary()['requests'],ledger.summary()['known_usd'],
+                              ledger.summary()['unknown_reserved_usd']),(1,'0.000008','0.000000'))
+            with self.assertRaises(spend.RepairSpendError):ledger.claim_cell('feedback','b'*64)
+
+    def test_stopped_finish_rejects_a_later_claim_already_in_persisted_records(self):
+        with self.ledger() as ledger:
+            ledger.claim_cell('raw','a'*64);ledger.finish_cell('stopped')
+            # An authored old/corrupt prefix, not a permitted new claim.
+            ledger._append('cell-002.claim.json',{'schema':'macr.repair.spend-claim.v1',
+                'plan_sha256':ledger.plan_sha256,'index':2,'cell_id':'feedback','binding_sha256':'b'*64})
+            with self.assertRaisesRegex(spend.RepairSpendError,'repair_spend_claim_after_stop'):
+                ledger.summary()
+
     def setUp(self):
         self.assertIsNotNone(spend, 'durable repair ledger missing')
         self.root=fixture_root()/'ledger';self.config=development_config()

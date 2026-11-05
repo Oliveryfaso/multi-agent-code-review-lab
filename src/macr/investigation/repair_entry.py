@@ -180,7 +180,8 @@ def _run_durable(args,task,config,plan,binding,state,verifier=None):
                 box.clear()
                 current=ledger.summary()
                 if ledger.cell_id is not None:
-                    status='stopped' if current['stopped'] or isinstance(failure,KeyboardInterrupt) else (
+                    status='stopped' if current['stopped'] or isinstance(failure,KeyboardInterrupt) or (
+                        report is not None and report['status']=='verification_outcome_unknown') else (
                         'failed' if failure is not None else 'budget_exhausted' if report['status']=='budget_exhausted'
                         else 'completed' if report['status'] in ('public_tests_reported_passed','candidate_unverified','candidate_finalized','candidate_selected_unverified',
                             'no_candidate','insufficient_evidence') else 'failed')
@@ -260,6 +261,7 @@ def score_handoff(record_root, plan, cell_id):
         'simulation_passed','public_tests_reported_passed','candidate_unverified','candidate_finalized','candidate_selected_unverified','no_candidate','insufficient_evidence')
     row['status'] = ('unknown' if report['unknown_request_reservation'] else
         'budget_exceeded' if budget_failure else 'answer_recorded' if answer else
+        'verification_unknown' if report['status']=='verification_outcome_unknown' else
         'verification_unavailable' if report['status']=='verification_unavailable' else
         'verification_timeout' if report['status']=='verification_timeout' else
         'not_attempted' if meter['requests']==0 else 'contract_failed')
@@ -295,9 +297,9 @@ def score_handoff(record_root, plan, cell_id):
         row['verification_receipt_sha256']=loop.digest(receipt)
     elif row['status']=='verification_unavailable':
         row['verification_origin']='unavailable'
-    elif row['status']=='verification_timeout':
+    elif row['status'] in ('verification_timeout','verification_unknown'):
         row['verification_origin']='simulation' if report['verification_origin']=='synthetic_replay' else 'unavailable'
-        row['feedback_validation_attempts']=1
+        row['feedback_validation_attempts']=len(report['checks'])
         check=report['checks'][-1]
         receipt={key:check[key] for key in ('source_id','spec','origin','outcomes','result')}
         row['verification_receipt_sha256']=loop.digest(receipt)

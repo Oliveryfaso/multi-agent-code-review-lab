@@ -14,6 +14,17 @@ EXAMPLE = Path(__file__).resolve().parents[1] / 'examples/repair_comparison_deve
 
 
 class ThreeArmComparisonTests(unittest.TestCase):
+    def test_stopped_report_rejects_later_verification_without_a_model_request(self):
+        spec=self.spec(tasks=2);plan=comparison.compile_comparison(spec)
+        first=plan['cells'][0]
+        unknown=self.row(spec,first,status='unknown',reviewed=False);unknown['unknown_reserved_usd']='0.001000'
+        later=next(c for c in plan['cells'][1:] if c['arm']!='direct_api')
+        task=next(t for t in spec['tasks'] if t['task_id']==later['task_id'])
+        timed=comparison._empty(task,spec)
+        timed.update(status='verification_timeout',verification_origin='unavailable',
+                     feedback_validation_attempts=1,verification_receipt_sha256='c'*64)
+        with self.assertRaises(ValueError):comparison.build_report(plan,{first['cell_id']:unknown,later['cell_id']:timed})
+
     """Synthetic receipt arithmetic only; none of these rows attest execution."""
     arms = ('direct_api', 'api_test_feedback', 'api_debugger')
     contrast = 'feedback_and_public_pass_stop_policy'

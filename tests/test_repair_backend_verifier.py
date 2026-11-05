@@ -46,6 +46,75 @@ class FixtureBackend:
 
 
 class RepairBackendVerifierTests(TestCase):
+    def test_unknown_verification_preserves_receipt_and_stops_report_before_or_after_model(self):
+        from macr.evals.repair_comparison import build_report
+        for after_model in (False,True):
+            with self.subTest(after_model=after_model):
+                self.h.out=self.h.root/('unknown-score-'+str(after_model))
+                backend=FixtureBackend(self.names,('failed','outcome_unknown') if after_model else ('outcome_unknown',))
+                code,result,transport=self.invoke(backend)
+                self.assertEqual((code,result['status']),(2,'verification_outcome_unknown'))
+                plan,cell=self.score_plan();packet=entry.score_handoff(self.h.out,plan,cell['cell_id'])
+                row=packet['result']
+                self.assertEqual(row['status'],'verification_unknown')
+                self.assertEqual(row['requests'],int(after_model))
+                self.assertEqual(row['feedback_validation_attempts'],1+int(after_model))
+                self.assertEqual(row['verification_origin'],'unavailable')
+                self.assertEqual(row['unknown_reserved_usd'],'0.000000')
+                self.assertEqual(packet['verification_receipt']['result']['execution_status'],'outcome_unknown')
+                self.assertIsNone(row['review']);self.assertIsNone(row['candidate_sha256'])
+                report=build_report(plan,{cell['cell_id']:row})
+                self.assertTrue(report['must_stop'])
+                self.assertEqual(report['planned_cells'],3)
+
+    def test_durable_verification_unknown_halts_other_cells_without_unknown_model_cost(self):
+        from macr.providers.repair_binding import RepairProviderBinding
+        for after_model in (False,True):
+            with self.subTest(after_model=after_model):
+                self.h.out=self.h.root/('durable-unknown-'+str(after_model))
+                plan,path=self.h.spend_plan(strategy='api_debugger',proposal_contract='v6')
+                plan['ledger_root']=str(self.h.root/('ledger-'+str(after_model)));path.write_text(json.dumps(plan))
+                backend=FixtureBackend(self.names,('failed','outcome_unknown') if after_model else ('outcome_unknown',))
+                transport=fixtures.InterceptedTransport([self.h.proposal()])
+                def provider(config,ledger,*,credential_reader):
+                    self.assertEqual(credential_reader(),'DUMMY-KEY-NOT-A-CREDENTIAL')
+                    return RepairProviderBinding(config,transport=transport,spend_ledger=ledger)
+                with patch.object(entry,'_read_runtime_credential',return_value='DUMMY-KEY-NOT-A-CREDENTIAL') as key, \
+                     patch.object(entry,'_make_runtime_provider',side_effect=provider):
+                    code,result=self.h.invoke('api_debugger',None,self.verifier(backend),proposal_contract='v6',
+                        enable_remote=True,spend_plan=path,spend_cell='one')
+                    self.assertEqual((code,result['status']),(2,'verification_outcome_unknown'))
+                    self.assertTrue(result['global_spend']['stopped'])
+                    self.assertEqual(result['global_spend']['requests'],int(after_model))
+                    self.assertEqual(result['global_spend']['unknown_reserved_usd'],'0.000000')
+                    self.assertEqual(result['global_spend']['known_usd'],'0.000090' if after_model else '0.000000')
+                    previous=(len(backend.calls),len(transport.requests))
+                    self.h.out=self.h.root/('no-resume-'+str(after_model))
+                    code,result=self.h.invoke('api_debugger',None,self.verifier(backend),proposal_contract='v6',
+                        enable_remote=True,spend_plan=path,spend_cell='two')
+                    self.assertEqual((code,result['status']),(2,'rejected'))
+                    self.assertEqual((len(backend.calls),len(transport.requests)),previous)
+                    self.assertEqual(key.call_count,1)
+
+    def test_verification_unknown_requires_receipt_and_cannot_replace_model_unknown_cost(self):
+        from macr.evals.repair_comparison import build_report
+        backend=FixtureBackend(self.names,('outcome_unknown',));self.invoke(backend)
+        plan,cell=self.score_plan();row=entry.score_handoff(self.h.out,plan,cell['cell_id'])['result']
+        for change in ({'feedback_validation_attempts':0},{'verification_receipt_sha256':None},
+                       {'unknown_reserved_usd':'0.001000'},{'verification_origin':'isolated_execution'},
+                       {'candidate_sha256':'a'*64},{'verdict':'defect'},
+                       {'status':'unknown','requests':1,'input_tokens':1,'output_tokens':1,
+                        'candidate_origin':'model','model_identity_sha256':'a'*64}):
+            with self.subTest(change=change),self.assertRaises(ValueError):
+                build_report(plan,{cell['cell_id']:row|change})
+        direct=next(c for c in plan['cells'] if c['arm']=='direct_api')
+        with self.assertRaises(ValueError):build_report(plan,{direct['cell_id']:row})
+        report=build_report(plan,{cell['cell_id']:row})
+        self.assertTrue(report['must_stop'])
+        self.assertTrue(all('verification_unknown' in arm['statuses'] for arm in report['arms'].values()))
+        empty=build_report(plan,{})
+        self.assertTrue(all('verification_unknown' not in arm['statuses'] for arm in empty['arms'].values()))
+
     def setUp(self):
         self.h=fixtures.RepairEntryTests('runTest');self.h.setUp();self.addCleanup(self.h.doCleanups)
         self.names=loop.test_manifest(self.h.files,['checks.py'])

@@ -42,7 +42,7 @@ _CONTRASTS_V2 = {
 }
 STATUSES = ('not_attempted', 'skipped', 'answer_recorded', 'contract_failed',
             'transport_failed', 'verification_unavailable', 'verification_timeout',
-            'budget_exceeded', 'unknown')
+            'budget_exceeded', 'unknown', 'verification_unknown')
 OUTCOMES = ('full_repair', 'healthy_correct', 'necessary_abstention',
             'unnecessary_abstention', 'false_positive', 'false_release', 'partial')
 SUCCESS = frozenset({'full_repair', 'healthy_correct', 'necessary_abstention'})
@@ -265,6 +265,12 @@ def _row(row, task, spec):
     _require((reserved > 0) == (row['status'] == 'unknown'), 'comparison_unknown_reserve_invalid')
     _require(_integer(row['feedback_validation_attempts'], 0, 32),
              'comparison_feedback_count_invalid')
+    if row['status']=='verification_unknown':
+        _require(row['feedback_validation_attempts']>=1
+            and _hash(row['verification_receipt_sha256'])
+            and row['verification_origin'] in {'simulation','unavailable'}
+            and row['verdict'] is row['review'] is row['final_output_sha256'] is row['candidate_sha256'] is None,
+            'comparison_verification_unknown_invalid')
     timing = row['timing_ms']
     _object(timing, {'preparation', 'provider', 'verification', 'total'}, 'comparison_timing_fields')
     _require(all(_integer(v) for v in timing.values()) and
@@ -272,16 +278,17 @@ def _row(row, task, spec):
         'comparison_timing_invalid')
     pre_dispatch_blocked = (row['status'] == 'verification_unavailable' and row['requests'] == 0)
     pre_dispatch_timeout = (row['status'] == 'verification_timeout' and row['requests'] == 0)
-    if row['status'] in {'not_attempted', 'skipped'} or pre_dispatch_blocked or pre_dispatch_timeout:
-        expected_origins = ({'simulation','unavailable'} if pre_dispatch_timeout
+    pre_dispatch_unknown = (row['status'] == 'verification_unknown' and row['requests'] == 0)
+    if row['status'] in {'not_attempted', 'skipped'} or pre_dispatch_blocked or pre_dispatch_timeout or pre_dispatch_unknown:
+        expected_origins = ({'simulation','unavailable'} if pre_dispatch_timeout or pre_dispatch_unknown
                             else {'unavailable'} if pre_dispatch_blocked else {'none'})
         _require(row['requests'] == row['input_tokens'] == row['output_tokens'] == known == reserved == 0
             and row['candidate_origin'] == 'none'
             and row['verification_origin'] in expected_origins
             and row['verdict'] is row['review'] is row['model_identity_sha256'] is None
             and row['final_output_sha256'] is row['candidate_sha256'] is None
-            and (pre_dispatch_timeout or row['verification_receipt_sha256'] is None)
-            and row['feedback_validation_attempts'] <= (1 if pre_dispatch_timeout else 0),
+            and (pre_dispatch_timeout or pre_dispatch_unknown or row['verification_receipt_sha256'] is None)
+            and row['feedback_validation_attempts'] <= (1 if pre_dispatch_timeout or pre_dispatch_unknown else 0),
             'comparison_unrun_has_result')
     else:
         _require(row['requests'] > 0, 'comparison_attempt_missing')
@@ -480,7 +487,7 @@ def build_report(plan: dict, results: dict) -> dict:
     active_arms = ARMS_V2 if three else ARMS
     arms = {arm: {'planned': len(plan['cells']) // len(active_arms), 'scored': 0, 'unscored': 0,
         'identity_invalid': 0, 'excluded_locked_reviews': 0,
-        'statuses': dict.fromkeys(STATUSES, 0), 'outcomes': dict.fromkeys(OUTCOMES, 0),
+        'statuses': dict.fromkeys((s for s in STATUSES if s!='verification_unknown'), 0), 'outcomes': dict.fromkeys(OUTCOMES, 0),
         'requests': 0, 'input_tokens': 0, 'output_tokens': 0, 'known_usd': 0,
         'unknown_reserved_usd': 0, 'feedback_validation_attempts': 0,
         'timing_ms': dict.fromkeys(('preparation', 'provider', 'verification', 'total'), 0)}
@@ -494,7 +501,8 @@ def build_report(plan: dict, results: dict) -> dict:
         _require(cell['arm'] != 'direct_api' or row['feedback_validation_attempts'] == 0
             or (row['status'] == 'verification_timeout' and row['requests'] == 0),
                  'comparison_baseline_received_extra_feedback')
-        _require(not must_stop or row['requests'] == 0, 'comparison_dispatch_after_stop')
+        _require(not must_stop or (row['requests'] == 0 and row['feedback_validation_attempts'] == 0),
+                 'comparison_dispatch_after_stop')
         identity_valid = False
         if row['requests']:
             identity = row['model_identity_sha256']
@@ -504,8 +512,10 @@ def build_report(plan: dict, results: dict) -> dict:
                 identity_valid = True
                 if first_identity is None:
                     first_identity = identity
-        if row['status'] in {'unknown', 'budget_exceeded'}:
+        if row['status'] in {'unknown', 'budget_exceeded', 'verification_unknown'}:
             must_stop = True
+        if row['status']=='verification_unknown':
+            for stats in arms.values():stats['statuses'].setdefault('verification_unknown',0)
         stats = arms[cell['arm']]
         stats['identity_invalid'] += int(row['requests'] > 0 and not identity_valid)
         stats['statuses'][row['status']] += 1

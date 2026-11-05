@@ -121,6 +121,16 @@ and are never hidden by clipping values to ceilings. Costs are local accounting,
 not supplier invoices. Timing is measured/reported, not proof of hard whole-run
 cancellation or a guaranteed supplier spending cap.
 
+`verification_unknown` preserves an attempted public check whose result is
+unknown, including a baseline before the first model request. It retains the
+receipt digest and verification-attempt count, remains unresolved, and requires
+the batch to stop. Already settled model requests/tokens/cost remain recorded;
+this state has zero unknown **model** cost reserve. The existing `unknown`
+model-cost state still requires its positive reserve. No answer or locked review
+is accepted for unknown verification. After any stop, later model requests and
+verification attempts are both rejected. When no new verification-unknown row
+is present, reports retain the prior status-table keys.
+
 ## What a real pilot still needs
 
 An actually permitted isolation backend with verified public/hidden-test

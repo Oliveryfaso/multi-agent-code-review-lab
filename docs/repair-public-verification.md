@@ -69,6 +69,14 @@ conservatively unknown; malformed/missing completed receipts are invalid.
 There is no retry. Backend cleanup and stopping remain backend-owned: this
 interface cannot infer that an unknown job stopped or safely kill it.
 
+An unknown verification result is exported as `verification_unknown`, not
+`not_attempted`, even with zero model requests. Its public receipt and attempt
+count remain auditable; final hidden scoring stays unavailable. In the durable
+application path the cell finishes as stopped and the same ledger remains
+halted across later output directories/cells. Settled model usage remains
+intact; no fictitious unknown model-cost reservation is added. This local halt
+does not attest that an external job was stopped or cleaned up.
+
 ## Persistence and conclusions
 
 The loop verifies snapshot integrity again before exposing feedback. It stores

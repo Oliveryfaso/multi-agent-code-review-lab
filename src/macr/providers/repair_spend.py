@@ -328,6 +328,12 @@ class RepairSpendLedger:
             if (state['pending'] and self._pending_seq!=state['pending']['sequence']) or (
                 incomplete and self.cell_id!=claims[-1]):
                 state['stopped']=True;state['reason']=state['reason'] or 'incomplete_claim'
+            # Replay legitimate settled requests before applying a cell stop:
+            # a verification unknown can halt with entirely known model costs.
+            stopped=[index for index,row in finished.items() if row['status']=='stopped']
+            _need(not stopped or stopped==[len(claims)],'repair_spend_claim_after_stop')
+            if stopped:
+                state['stopped']=True;state['reason']=state['reason'] or 'cell_stopped'
             return state
         except Exception as error:
             if isinstance(error,RepairSpendError):raise
