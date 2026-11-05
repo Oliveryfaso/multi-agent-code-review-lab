@@ -58,6 +58,22 @@ class InterceptedOfficialOpener:
 
 
 class RepairEntryTests(TestCase):
+    def test_overlapping_edit_is_rejected_by_normal_entry_without_accepting_a_candidate(self):
+        self.files['builder.py']+=b'\ndef ratio(x):\n    return x // x // x\n'
+        (self.repo/'builder.py').write_bytes(self.files['builder.py'])
+        self.task['source_files']=loop._hashes(self.files)
+        self.task_file.write_text(json.dumps(self.task))
+        self.config['limits']['max_requests']=1
+        self.config_file.write_text(json.dumps(self.config))
+        transport=InterceptedTransport([self.proposal(old='x // x',new='1')])
+        code,result=self.invoke('direct_api',transport,proposal_contract='v6')
+        self.assertEqual((code,result['status'],result['provider_requests']),(2,'proposal_invalid',1))
+        report=loop.verify_loop(self.out)
+        self.assertEqual(report['final_source_id'],loop.source_id(self.files))
+        self.assertNotIn('candidate_source_id',report['rounds'][0])
+        self.assertFalse(report['repaired']);self.assertFalse(report['target_code_executed'])
+        self.assertEqual((self.repo/'builder.py').read_bytes(),self.files['builder.py'])
+
     def test_v6_each_arm_can_select_its_accepted_candidate_without_new_verification(self):
         names=loop.test_manifest(self.files,['checks.py'])
         fixed=dict(self.files);fixed['builder.py']=fixed['builder.py'].replace(OLD.encode(),NEW.encode())

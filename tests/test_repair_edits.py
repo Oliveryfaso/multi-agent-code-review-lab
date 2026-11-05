@@ -31,6 +31,20 @@ class RepairEditsTests(unittest.TestCase):
         self.assertEqual(self.files, before)
         self.assertIsNot(result, self.files)
 
+    def test_overlapping_whole_file_matches_are_ambiguous(self):
+        cases=[('def ratio(x):\n    return x // x // x\n','x // x','1'),
+               ('# Unicode prefix: 文\ndef token():\n    return "aaaa"\n','aaa','bbb')]
+        for body,old,new in cases:
+            with self.subTest(old=old):
+                files={'pkg/math.py':body.encode(),'checks.py':self.files['checks.py']}
+                before=deepcopy(files)
+                self.assertEqual(body.count(old),1)
+                self.assertNotEqual(body.find(old),body.rfind(old))
+                with self.assertRaises(ContractError) as stopped:
+                    self.apply(files=files,edits=[{'file':'pkg/math.py','old':old,'new':new}])
+                self.assertEqual((stopped.exception.code,stopped.exception.field),('repair_edits_invalid','edit_match'))
+                self.assertEqual(files,before)
+
     def test_explicit_editable_subset_never_grants_test_or_added_file_access(self):
         for name in ('checks.py', 'new.py'):
             edit = {'file': name, 'old': 'assert False', 'new': 'assert True'}

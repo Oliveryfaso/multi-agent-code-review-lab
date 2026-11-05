@@ -95,7 +95,8 @@ def apply_edits(files: dict[str, bytes], edits: list[dict], *,
             result[name] = result[name][:start] + edit['new'].encode('utf-8') + result[name][end:]
         else:
             text = result[name].decode('utf-8')
-            _require(text.count(edit['old']) == 1, 'edit_match')
+            first = text.find(edit['old'])
+            _require(first >= 0 and first == text.rfind(edit['old']), 'edit_match')
             result[name] = text.replace(edit['old'], edit['new'], 1).encode('utf-8')
         validate_files(result, full_originals=full_originals)
     if full_originals: project_source_windows(result, source_windows)
