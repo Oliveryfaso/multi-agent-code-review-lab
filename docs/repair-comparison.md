@@ -128,8 +128,16 @@ the batch to stop. Already settled model requests/tokens/cost remain recorded;
 this state has zero unknown **model** cost reserve. The existing `unknown`
 model-cost state still requires its positive reserve. No answer or locked review
 is accepted for unknown verification. After any stop, later model requests and
-verification attempts are both rejected. When no new verification-unknown row
-is present, reports retain the prior status-table keys.
+verification attempts are both rejected.
+
+Known verification errors and invalid completed public receipts are exported as
+`verification_failed`, including before the first model request. The receipt,
+attempt count and any settled model usage are retained. This is observed
+pipeline non-completion, not proof that the target tests failed or that a repair
+was incorrect. It grants no answer or scoring credit and does not change the
+existing known-failure stopping policy. Zero model requests still mean zero
+model tokens/cost; genuinely unrun cells remain `not_attempted`. Reports with
+neither new verification status retain the prior status-table keys.
 
 ## What a real pilot still needs
 

@@ -264,6 +264,7 @@ def score_handoff(record_root, plan, cell_id):
         'verification_unknown' if report['status']=='verification_outcome_unknown' else
         'verification_unavailable' if report['status']=='verification_unavailable' else
         'verification_timeout' if report['status']=='verification_timeout' else
+        'verification_failed' if report['status'] in ('verification_failed','verification_invalid') else
         'not_attempted' if meter['requests']==0 else 'contract_failed')
     final_output = None; chain = None; receipt = None
     if meter['requests']:
@@ -297,7 +298,7 @@ def score_handoff(record_root, plan, cell_id):
         row['verification_receipt_sha256']=loop.digest(receipt)
     elif row['status']=='verification_unavailable':
         row['verification_origin']='unavailable'
-    elif row['status'] in ('verification_timeout','verification_unknown'):
+    elif row['status'] in ('verification_timeout','verification_unknown','verification_failed'):
         row['verification_origin']='simulation' if report['verification_origin']=='synthetic_replay' else 'unavailable'
         row['feedback_validation_attempts']=len(report['checks'])
         check=report['checks'][-1]

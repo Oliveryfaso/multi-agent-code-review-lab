@@ -46,6 +46,77 @@ class FixtureBackend:
 
 
 class RepairBackendVerifierTests(TestCase):
+    def test_known_verification_failures_keep_observation_before_or_after_model(self):
+        from macr.evals.repair_comparison import build_report
+        for strategy in ('api_debugger','api_test_feedback'):
+            for after_model in (False,True):
+                for failure in ('error','resource_limit','cancelled','invalid_receipt'):
+                    with self.subTest(strategy=strategy,after_model=after_model,failure=failure):
+                        self.h.out=self.h.root/f'known-{strategy}-{after_model}-{failure}'
+                        state='passed' if failure=='invalid_receipt' else failure
+                        backend=FixtureBackend(self.names,('failed',state) if after_model else (state,))
+                        if failure=='invalid_receipt':
+                            backend.modify=lambda receipt: receipt.update(phase='hidden') if backend.state=='passed' else None
+                        code,result,transport=self.invoke(backend,strategy)
+                        expected='verification_invalid' if failure=='invalid_receipt' else 'verification_failed'
+                        self.assertEqual((code,result['status']),(2,expected))
+                        plan,cell=self.score_plan(strategy)
+                        packet=entry.score_handoff(self.h.out,plan,cell['cell_id']);row=packet['result']
+                        self.assertEqual(row['status'],'verification_failed')
+                        self.assertEqual(row['requests'],int(after_model))
+                        self.assertEqual(len(transport.requests),int(after_model))
+                        self.assertEqual(len(backend.calls),1+int(after_model))
+                        self.assertEqual(row['feedback_validation_attempts'],1+int(after_model))
+                        self.assertEqual(row['verification_origin'],'unavailable')
+                        self.assertEqual(row['known_usd'],'0.000090' if after_model else '0.000000')
+                        self.assertEqual((row['input_tokens'],row['output_tokens']),(100,50) if after_model else (0,0))
+                        self.assertEqual(row['unknown_reserved_usd'],'0.000000')
+                        check=loop.verify_loop(self.h.out)['checks'][-1]
+                        self.assertEqual(packet['verification_receipt'],{key:check[key] for key in
+                            ('source_id','spec','origin','outcomes','result')})
+                        self.assertIsNone(row['review']);self.assertIsNone(row['candidate_sha256'])
+                        report=build_report(plan,{cell['cell_id']:row});stats=report['arms'][strategy]
+                        self.assertFalse(report['must_stop'])
+                        self.assertEqual(report['planned_cells'],3)
+                        self.assertEqual(stats['completion_bounds'],{'observed_successes':0,
+                            'definite_noncompletions':1,'unresolved':0,'rate_bounds':[0.0,0.0]})
+                        self.assertEqual(stats['statuses']['verification_failed'],1)
+                        self.assertEqual(stats['unscored'],1)
+
+    def test_known_failure_requires_receipt_and_cannot_claim_model_or_score(self):
+        from macr.evals.repair_comparison import build_report
+        self.invoke(FixtureBackend(self.names,('error',)))
+        plan,cell=self.score_plan();row=entry.score_handoff(self.h.out,plan,cell['cell_id'])['result']
+        self.assertEqual(row['status'],'verification_failed')
+        for change in ({'feedback_validation_attempts':0},{'feedback_validation_attempts':2},
+                       {'verification_receipt_sha256':None},{'verification_origin':'isolated_execution'},
+                       {'known_usd':'0.001000'},{'unknown_reserved_usd':'0.001000'},
+                       {'input_tokens':1},{'output_tokens':1},{'candidate_origin':'model'},
+                       {'model_identity_sha256':'a'*64},{'candidate_sha256':'a'*64},
+                       {'final_output_sha256':'a'*64},{'verdict':'defect'},
+                       {'review':{'outcome':'full_repair'}}):
+            with self.subTest(change=change),self.assertRaises(ValueError):
+                build_report(plan,{cell['cell_id']:row|change})
+        direct=next(c for c in plan['cells'] if c['arm']=='direct_api')
+        with self.assertRaises(ValueError):build_report(plan,{direct['cell_id']:row})
+        report=build_report(plan,{cell['cell_id']:row})
+        self.assertTrue(all('verification_failed' in arm['statuses'] for arm in report['arms'].values()))
+        empty=build_report(plan,{})
+        self.assertTrue(all('verification_failed' not in arm['statuses'] for arm in empty['arms'].values()))
+        self.assertTrue(all(arm['statuses']['not_attempted']==1 for arm in empty['arms'].values()))
+
+    def test_undispatched_model_and_nonfailing_baseline_keep_qualification_status(self):
+        from macr.evals.repair_comparison import build_report
+        code,result=self.h.invoke('direct_api',proposal_contract='v6')
+        self.assertEqual((code,result['status']),(2,'provider_disabled'))
+        plan,cell=self.score_plan('direct_api')
+        row=entry.score_handoff(self.h.out,plan,cell['cell_id'])['result']
+        self.assertEqual((row['status'],row['feedback_validation_attempts']),('not_attempted',0))
+        self.assertEqual(build_report(plan,{cell['cell_id']:row})['arms']['direct_api']['completion_bounds']['unresolved'],1)
+        self.h.out=self.h.root/'nonfailing-baseline'
+        code,result,_=self.invoke(FixtureBackend(self.names,('passed',)))
+        self.assertEqual((code,result['status']),(2,'baseline_not_failing'))
+
     def test_unknown_verification_preserves_receipt_and_stops_report_before_or_after_model(self):
         from macr.evals.repair_comparison import build_report
         for after_model in (False,True):
