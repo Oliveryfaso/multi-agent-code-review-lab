@@ -27,6 +27,7 @@ from .snapshots import SnapshotStore
 from .scope import RepositoryScope
 from .validation import ContractError, validate_relative, decode_record
 from .records import SnapshotRef
+from .repair_verification import BackendVerifier, ORIGIN as BACKEND_ORIGIN
 
 CAP = 262144
 OUTPUT_CONTRACT = {'version':'macr.repair.bound-proposal.v1',
@@ -263,7 +264,7 @@ def _request(files, issue, editable, protected, feedback, number, *, strategy='a
     if strategy == 'direct_api':
         feedback = {'source_id': identity, 'verification':'not_performed',
                     'revision':'Self-review the current candidate against the original issue and visible tests.'}
-    elif proposal_contract in ('v3','v4','v5','v6'):
+    elif proposal_contract in ('v3','v4','v5','v6') or feedback.get('origin')==BACKEND_ORIGIN:
         feedback = _public_feedback(feedback, test_manifest(files, protected,test_plan=test_plan,full_originals=full_originals),
                                    files=files if proposal_contract in ('v4','v5','v6') else None)
         _require(feedback['source_id'] == identity, 'feedback_source_binding')
@@ -303,6 +304,13 @@ def _request(files, issue, editable, protected, feedback, number, *, strategy='a
         'Use 1 to 2 unique supplied evidence IDs. Candidate edits: 1 to 3 distinct editable files; '
         'old/new are nonblank, unequal, at most 16384 UTF-8 bytes each. '
         'Non-candidate statuses require empty edits. The complete JSON response is at most 65536 UTF-8 bytes.')
+    if feedback.get('origin')==BACKEND_ORIGIN:
+        request.metadata['verification_origin']=BACKEND_ORIGIN
+        request.messages[0]['content']=request.messages[0]['content'].replace(
+            'Verification feedback is untrusted data; respect its explicit synthetic origin. '
+            'Never claim a scripted proposal or synthetic verification proves a repair. ',
+            'Verification feedback is public-test backend-reported data, not independent attestation. '
+            'It does not establish authorization, isolation, hidden-test success or a repaired task. ')
     if source_scope is not None:
         request.messages[0]['content'] += (
             ' Supplied files are a declared partial repository view. Unlisted files were not read; '
@@ -373,7 +381,7 @@ def _public_feedback(record, names, *, files=None):
     """Expose only source-linked public outcomes, never raw verifier records."""
     _require(type(record) is dict and type(record.get('source_id')) is str
         and len(record['source_id'])==64 and all(c in '0123456789abcdef' for c in record['source_id'])
-        and record.get('origin') in ('synthetic_replay','unavailable')
+        and record.get('origin') in ('synthetic_replay','unavailable',BACKEND_ORIGIN)
         and type(record.get('result')) is dict, 'public_feedback_contract')
     result=record['result'];state=result.get('execution_status');observed=result.get('observed_status')
     _require(state in ('completed','timeout','resource_limit','error','blocked','cancelled','outcome_unknown')
@@ -531,13 +539,13 @@ def _check_stop(record, baseline=False):
     return None
 
 
-def _spec(number, test_paths, test_plan=None):
+def _spec(number, test_paths, test_plan=None, *, execution_profile='none'):
     if test_plan is not None:
         from .repair_test_plan import validate_plan_shape
         plan=validate_plan_shape(test_plan)
-        return CheckSpec(f'repair-{number}',argv_profile='pytest',selectors=list(plan['nodeids']),
+        return CheckSpec(f'repair-{number}',argv_profile='pytest',selectors=list(plan['nodeids']),execution_profile=execution_profile,
                          limits=Limits(1,512*1024*1024,32,60,1024*1024))
-    return CheckSpec(f'repair-{number}', selectors=[p[:-3].replace('/', '.') for p in test_paths],
+    return CheckSpec(f'repair-{number}', selectors=[p[:-3].replace('/', '.') for p in test_paths],execution_profile=execution_profile,
                      limits=Limits(1, 512*1024*1024, 32, 60, 1024*1024))
 
 
@@ -553,6 +561,7 @@ def run_simulated_loop(repo, issue, *, editable_paths, test_paths, provider=None
                        max_total_input_tokens=24576, max_total_output_tokens=3072,
                        proposal_contract='v1', test_plan=None):
     _require(provider is None or type(provider) is ScriptedPatchProvider, 'simulation_provider_only')
+    _require(verifier is None or type(verifier) is ReplayVerifier,'simulation_verifier_only')
     return _run_loop(repo, issue, editable_paths=editable_paths, test_paths=test_paths,
         provider=provider, verifier=verifier, out=out, max_rounds=max_rounds,
         max_total_input_tokens=max_total_input_tokens, max_total_output_tokens=max_total_output_tokens,
@@ -562,10 +571,10 @@ def run_simulated_loop(repo, issue, *, editable_paths, test_paths, provider=None
 def run_repair_loop(repo, issue, *, editable_paths, test_paths, provider, out,
                     strategy='api_debugger', task_id='repair', verifier=None, expected_source_files=None,
                     proposal_contract='v1', test_plan=None, source_scope=None, source_windows=None):
-    """Normal route; configured HTTP still has no approved real validator.
+    """Normal route; no production verifier is registered by default.
 
-    Real validation remains unavailable. Tests may inject the existing explicit
-    replay seam, which stays synthetic. Direct self-review never receives it.
+    An embedding application may supply an independently authorized public
+    backend. Replay observations stay synthetic. Direct self-review gets neither.
     """
     from macr.providers.repair_binding import RepairProviderBinding
     _require(type(provider) is RepairProviderBinding, 'provider_binding_required')
@@ -597,7 +606,8 @@ def _initial_stop(record, config):
 def _candidate_stop(record, config):
     if config['strategy'] == 'direct_api': return None
     status = _check_stop(record)
-    if status is None and config['strategy']=='api_debugger' and record['result']['observed_status'] == 'passed': return 'simulation_passed'
+    if status is None and config['strategy']=='api_debugger' and record['result']['observed_status'] == 'passed':
+        return 'public_tests_reported_passed' if 'verification_backend' in config else 'simulation_passed'
     return status
 
 
@@ -621,7 +631,8 @@ def _run_loop(repo, issue, *, editable_paths, test_paths, provider, verifier, ou
     """Exercise the shared control flow with explicit provider provenance.
 
     Exclusive output directory is the no-resume claim. Partial sessions are never
-    restarted; inspect their intent files instead. No real verifier is enabled.
+    restarted; inspect their intent files instead. Backend admission, execution
+    and cleanup authority are owned by the explicitly supplied application.
     """
     started = time.monotonic()
     output_contract(proposal_contract)
@@ -633,8 +644,10 @@ def _run_loop(repo, issue, *, editable_paths, test_paths, provider, verifier, ou
         _require(proposal_contract in ('v2','v3','v4','v5','v6'),'remote_proposal_contract_required')
     _validate_strategy(strategy, proposal_contract)
     _require(type(task_id) is str and 0 < len(task_id) <= 128, 'task_id')
-    _require(verifier is None or type(verifier) is ReplayVerifier, 'simulation_verifier_only')
+    _require(verifier is None or type(verifier) in (ReplayVerifier,BackendVerifier), 'verification_interface_required')
     if strategy == 'direct_api': verifier = None  # No in-generation validation advantage for the baseline.
+    backend_verifier=type(verifier) is BackendVerifier
+    origin=BACKEND_ORIGIN if backend_verifier else 'synthetic_replay' if verifier else 'unavailable'
     _require(type(issue) is str and 0 < len(issue.encode()) <= 2048, 'issue')
     for value, cap in ((max_rounds, 3), (max_total_input_tokens, 8_000_000), (max_total_output_tokens, 1_000_000)):
         _require(type(value) is int and 0 < value <= cap, 'budget')
@@ -673,6 +686,9 @@ def _run_loop(repo, issue, *, editable_paths, test_paths, provider, verifier, ou
     if source_scope is not None: config['source_scope']=source_scope
     if full_originals: config['source_windows']=deepcopy(source_windows)
     if proposal_contract in ('v2','v3','v4','v5','v6'): config['proposal_contract'] = proposal_contract
+    if backend_verifier:
+        from .repair_verification import validate_descriptor
+        config['verification_backend']=validate_descriptor(verifier.identity)
     if bound:
         if initial_meter['schema']=='macr.repair.provider-meter.v2':
             config['provider_runtime']={'spend_commitment':deepcopy(initial_meter['spend_commitment']),
@@ -690,21 +706,37 @@ def _run_loop(repo, issue, *, editable_paths, test_paths, provider, verifier, ou
         bundle = store.capture(out/f'sources/{number}',
                                RepositoryScope().inventory(out/f'sources/{number}', _source_profile(full_originals)))
         # Use the same frozen order that replay verification reconstructs.
-        spec = _spec(number, config['test_paths'],config.get('test_plan'))
-        _write(out, f'checks/{number}/intent.json', {'snapshot': asdict(bundle.ref), 'spec': asdict(spec),
-                                                  'origin': 'synthetic_replay' if verifier else 'unavailable'})
-        raw = None; invalid = False
+        spec = _spec(number, config['test_paths'],config.get('test_plan'),
+                     execution_profile=config.get('verification_backend',{}).get('execution_profile','none'))
+        intent={'snapshot':asdict(bundle.ref),'spec':asdict(spec),'origin':origin}
+        if backend_verifier:
+            from .repair_verification import public_request,validate_audit
+            request=public_request(config['verification_backend'],bundle.ref,spec,sid(files),names)
+            intent['backend_request']=request
+        _write(out, f'checks/{number}/intent.json',intent)
+        raw = None; invalid = False; audit=None
         try:
-            raw = verifier.take() if verifier else None
-            result = _observation(raw, files, names, spec, proposal_contract=proposal_contract,full_originals=full_originals) if raw is not None else None
-            result = TestRunnerTool().run_check(bundle.ref, spec, _ReplayBackend(bundle.ref, result) if result else None)
+            if backend_verifier:
+                audit=verifier.observe(request,bundle.ref,spec)
+                store.verify(bundle.ref)
+                _require(all(store.read_verified(bundle.ref,name)==body for name,body in files.items()),
+                         'backend_snapshot_changed')
+                raw,result,invalid=validate_audit(audit,request,files,names,spec,
+                    proposal_contract=proposal_contract,full_originals=full_originals)
+            else:
+                raw = verifier.take() if verifier else None
+                result = _observation(raw, files, names, spec, proposal_contract=proposal_contract,full_originals=full_originals) if raw is not None else None
+                result = TestRunnerTool().run_check(bundle.ref, spec, _ReplayBackend(bundle.ref, result) if result else None)
         except (ContractError, TypeError, ValueError):
             invalid = True
             result = classify_check({'execution_status': 'error'}, spec)
+            if backend_verifier and audit is not None:
+                audit['receipt']=None;audit['failure']='receipt_invalid'
         record = {'source_id': sid(files), 'snapshot': asdict(bundle.ref),
             'spec': asdict(spec), 'observation': raw, 'result': asdict(result),
-            'origin': 'synthetic_replay' if verifier else 'unavailable', 'invalid': invalid,
+            'origin': origin, 'invalid': invalid,
             'outcomes': raw.get('outcomes', {}) if type(raw) is dict and not invalid else {}}
+        if backend_verifier:record['backend_audit']=audit
         # Unsafe/big replay objects fail closed without retaining arbitrary input.
         if invalid: record['observation'] = None
         if proposal_contract in ('v4','v5','v6'):
@@ -786,7 +818,7 @@ def _run_loop(repo, issue, *, editable_paths, test_paths, provider, verifier, ou
     official=runtime is not None and runtime['remote_enabled']
     report = {'schema': config['schema'], 'status': status, 'simulation': not official,
         'candidate_origin': 'official_https_output_unattested' if official else 'provider_output_unattested' if bound else 'scripted_provider',
-        'verification_origin': 'synthetic_replay' if verifier else 'unavailable',
+        'verification_origin': origin,
         'proposal_requests': attempts, 'real_model_calls': None if bound and meter['requests'] else 0,
         'paid_requests': None if bound and meter['requests'] else 0,
         'provider_requests':meter['requests'] if bound else attempts,
@@ -797,7 +829,8 @@ def _run_loop(repo, issue, *, editable_paths, test_paths, provider, verifier, ou
         'unknown_request_reservation': (meter['unknown_reserved_usd'] != '0.000000') if bound else bool(rounds and rounds[-1]['status'] in ('provider_outcome_unknown', 'provider_usage_invalid')),
         'rounds': rounds, 'checks': checks, 'config_sha256': digest(config),
         'final_source_id': sid(current), 'checks_unchanged': all(current[n] == original[n] for n in test_paths),
-        'repaired': False, 'target_code_executed': False, 'execution_authorized': False,
+        'repaired': False, 'target_code_executed': None if backend_verifier else False,
+        'execution_authorized': None if backend_verifier else False,
         'total_seconds': total_seconds,
         'phase_seconds': {'preparation':max(0.0,total_seconds-provider_seconds-validation_seconds),
                           'provider':provider_seconds,'validation':validation_seconds},
@@ -808,6 +841,10 @@ def _run_loop(repo, issue, *, editable_paths, test_paths, provider, verifier, ou
                         ('Configured HTTP and local hashes do not authenticate the producer; no resume or real verifier is enabled.'
                          if runtime is not None else 'No live dispatch or resume adapter exists; unavailable and unknown stop the loop.')],
         'artifact_hashes': _file_hashes(out)}
+    if backend_verifier:
+        report['limitations']=['Public-only backend reports are unattested, not proof of isolation, authorization, repair or hidden-test success.',
+            'Structured allowlists cannot prove the producer did not access hidden data; the approved backend owns that boundary.',
+            'Replay checks local source/receipt consistency without re-executing; raw log references are not opened or retained.']
     if proposal_contract == 'v6': report['final_selection'] = selection
     if source_scope is not None:
         from .repair_sources import source_view
@@ -821,6 +858,11 @@ def verify_loop(out):
     """Revalidate local integrity and source/request/feedback links; never dispatch."""
     out = _root(out); report = _read(out, 'report.json'); claim = _read(out, 'claim.json')
     config = claim['config']
+    backend_verifier='verification_backend' in config
+    if backend_verifier:
+        from .repair_verification import public_request,validate_audit,validate_descriptor
+        validate_descriptor(config['verification_backend'])
+        _require(config['verifier_available'] is True and config['strategy']!='direct_api','public_backend_config')
     full_originals=config.get('source_windows') is not None
     _require(('source_windows' in config)==('source_windows' in report),'source_window_binding')
     if 'source_windows' in config: _require(full_originals,'source_window_binding')
@@ -843,7 +885,8 @@ def verify_loop(out):
     _require(report['artifact_hashes'] == _file_hashes(out, skip=('report.json',))
         and report['config_sha256'] == digest(config) and claim['mode']==_claim_mode(config,bound), 'artifact_binding')
     _require(report['simulation'] is (not official) and report['repaired'] is False
-        and report['target_code_executed'] is False and report['execution_authorized'] is False
+        and report['target_code_executed'] is (None if backend_verifier else False)
+        and report['execution_authorized'] is (None if backend_verifier else False)
         and report['real_model_calls'] == report['paid_requests'] == (None if bound and report['provider_requests'] else 0)
         and report['candidate_origin'] == ('official_https_output_unattested' if official else
             'provider_output_unattested' if bound else 'scripted_provider'), 'simulation_boundary')
@@ -857,7 +900,8 @@ def verify_loop(out):
         bodies = _files(out/f'sources/{i}',full_originals=full_originals)
         _require(saved == check and saved['source_id'] == sid(bodies)
             and all(bodies[n] == original[n] for n in config['test_paths']), 'check_binding')
-        _require(saved['spec'] == asdict(_spec(i, config['test_paths'],config.get('test_plan'))), 'fixed_check_contract')
+        _require(saved['spec'] == asdict(_spec(i, config['test_paths'],config.get('test_plan'),
+            execution_profile=config.get('verification_backend',{}).get('execution_profile','none'))), 'fixed_check_contract')
         ref = decode_record(SnapshotRef, saved['snapshot'])
         store.verify(ref)
         if full_originals:
@@ -865,11 +909,22 @@ def verify_loop(out):
             project_source_windows(bodies,config['source_windows'],protected_paths=config['test_paths'])
         _require({entry['path'] for entry in store._manifest(ref).files} == set(bodies)
             and all(store.read_verified(ref, name) == body for name, body in bodies.items()), 'snapshot_source_binding')
-        _require(_read(out, f'checks/{i}/intent.json') == {
-            'snapshot': saved['snapshot'], 'spec': saved['spec'], 'origin': saved['origin']}, 'check_intent')
+        intent={'snapshot':saved['snapshot'],'spec':saved['spec'],'origin':saved['origin']}
+        if backend_verifier:
+            request=public_request(config['verification_backend'],ref,
+                decode_record(CheckSpec,saved['spec']),sid(bodies),config['test_names'])
+            intent['backend_request']=request
+        _require(_read(out, f'checks/{i}/intent.json') == intent, 'check_intent')
         _require(saved['origin'] == report['verification_origin'] == (
-            'synthetic_replay' if config['verifier_available'] else 'unavailable'), 'verification_origin')
-        if not saved['invalid']:
+            BACKEND_ORIGIN if backend_verifier else 'synthetic_replay' if config['verifier_available'] else 'unavailable'), 'verification_origin')
+        if backend_verifier:
+            raw,result,invalid=validate_audit(saved['backend_audit'],request,bodies,config['test_names'],
+                decode_record(CheckSpec,saved['spec']),proposal_contract=config.get('proposal_contract','v1'),
+                full_originals=full_originals)
+            _require(saved['invalid'] is invalid and saved['observation']==raw
+                and saved['result']==asdict(result)
+                and saved['outcomes']==(raw['outcomes'] if raw is not None else {}),'public_backend_replay')
+        elif not saved['invalid']:
             spec = decode_record(CheckSpec, saved['spec'])
             result = _observation(saved['observation'], bodies, config['test_names'], spec,
                 proposal_contract=config.get('proposal_contract','v1'),full_originals=full_originals) if saved['observation'] is not None else classify_check({'execution_status': 'blocked'}, spec)

@@ -159,7 +159,7 @@ def _run_report(args,task,provider,verifier):
         source_windows=task.get('source_windows'))
 
 
-def _run_durable(args,task,config,plan,binding,state):
+def _run_durable(args,task,config,plan,binding,state,verifier=None):
     from . import repair_loop as loop
     from macr.providers.repair_spend import RepairSpendLedger
     box={};failure=None;report=None
@@ -173,7 +173,7 @@ def _run_durable(args,task,config,plan,binding,state):
                 provider=_make_runtime_provider(config,ledger,credential_reader=lambda:box['credential'])
                 state['provider']=provider
                 loop._require(provider.config==config,'provider_config_binding')
-                report=_run_report(args,task,provider,None)
+                report=_run_report(args,task,provider,verifier)
             except BaseException as error:
                 failure=error
             finally:
@@ -182,7 +182,7 @@ def _run_durable(args,task,config,plan,binding,state):
                 if ledger.cell_id is not None:
                     status='stopped' if current['stopped'] or isinstance(failure,KeyboardInterrupt) else (
                         'failed' if failure is not None else 'budget_exhausted' if report['status']=='budget_exhausted'
-                        else 'completed' if report['status'] in ('candidate_unverified','candidate_finalized','candidate_selected_unverified',
+                        else 'completed' if report['status'] in ('public_tests_reported_passed','candidate_unverified','candidate_finalized','candidate_selected_unverified',
                             'no_candidate','insufficient_evidence') else 'failed')
                     ledger.finish_cell(status)
                 state['global_spend']=ledger.summary()
@@ -257,7 +257,7 @@ def score_handoff(record_root, plan, cell_id):
             or call['usage']['output_tokens'] > limits['max_output_per_request'])
             for call in meter['calls']))
     answer = not budget_failure and report['status'] in (
-        'simulation_passed','candidate_unverified','candidate_finalized','candidate_selected_unverified','no_candidate','insufficient_evidence')
+        'simulation_passed','public_tests_reported_passed','candidate_unverified','candidate_finalized','candidate_selected_unverified','no_candidate','insufficient_evidence')
     row['status'] = ('unknown' if report['unknown_request_reservation'] else
         'budget_exceeded' if budget_failure else 'answer_recorded' if answer else
         'verification_unavailable' if report['status']=='verification_unavailable' else
@@ -296,7 +296,7 @@ def score_handoff(record_root, plan, cell_id):
     elif row['status']=='verification_unavailable':
         row['verification_origin']='unavailable'
     elif row['status']=='verification_timeout':
-        row['verification_origin']='simulation'
+        row['verification_origin']='simulation' if report['verification_origin']=='synthetic_replay' else 'unavailable'
         row['feedback_validation_attempts']=1
         check=report['checks'][-1]
         receipt={key:check[key] for key in ('source_id','spec','origin','outcomes','result')}
@@ -311,12 +311,12 @@ def score_handoff(record_root, plan, cell_id):
         test_plan=config.get('test_plan'),source_scope=config.get('source_scope'),source_windows=windows)
 
 
-def run(args):
+def run(args, *, verifier_factory=None):
     from macr.providers.base import ProviderError
     from macr.providers.repair_binding import validate_config
     from . import repair_loop
     from .validation import ContractError
-    provider = None
+    provider = None;verifier=None
     state={'provider':None,'global_spend':None,'spend_status':'unreconciled'}
     remote=getattr(args,'enable_remote',False)
     try:
@@ -326,21 +326,25 @@ def run(args):
         repair_loop._require(not requested or (complete and args.proposal_contract in ('v2','v3','v4','v5','v6')),'repair_remote_scope_required')
         task = load_task(args.repo,args.task)
         config = validate_config(_json(args.model_config))
+        # Factories are application-owned and side-effect-free. CLI text cannot
+        # load plugins or grant a backend; direct self-review never constructs it.
+        verifier=None if args.strategy=='direct_api' else (verifier_factory or _verification_backend)()
         if remote:
             plan,binding=_runtime_plan(args,task,config)
-            if args.strategy in ('api_debugger','api_test_feedback'):
-                # No supported real verifier exists. A synthetic replay is not
-                # authority to consume a live cell or read a credential.
+            if args.strategy in ('api_debugger','api_test_feedback') and (
+                    type(verifier) is not repair_loop.BackendVerifier or not verifier.available()):
+                # Missing backends and synthetic replays cannot consume a live
+                # cell or read a credential. No capability-probe target run.
                 state['spend_status']='not_opened_no_verifier'
                 provider=_make_provider(config)
                 repair_loop._require(provider.config==config,'provider_config_binding')
                 report=_run_report(args,task,provider,None)
             else:
-                report=_run_durable(args,task,config,plan,binding,state);provider=state['provider']
+                report=_run_durable(args,task,config,plan,binding,state,verifier);provider=state['provider']
         else:
             provider=_make_provider(config)
             repair_loop._require(provider.config==config,'provider_config_binding')
-            report=_run_report(args,task,provider,_verification_backend())
+            report=_run_report(args,task,provider,verifier)
         meter = report['provider_accounting']
         summary = {key:report[key] for key in ('status','simulation','proposal_requests','provider_requests',
             'candidate_origin','verification_origin','repaired','target_code_executed','input_tokens','output_tokens')}
@@ -358,7 +362,7 @@ def run(args):
         if remote:summary.update(global_spend=state['global_spend'],spend_status=state['spend_status'])
         print(json.dumps(summary))
         # No candidate or abstention here is declared a successful real repair.
-        return 0 if report['status'] in ('simulation_passed','candidate_unverified','candidate_finalized','candidate_selected_unverified',
+        return 0 if report['status'] in ('simulation_passed','public_tests_reported_passed','candidate_unverified','candidate_finalized','candidate_selected_unverified',
                                         'no_candidate','insufficient_evidence') else 2
     except (ContractError,ProviderError,OSError,ValueError,TypeError,KeyError,UnicodeError,RuntimeError,EOFError,KeyboardInterrupt) as error:
         provider=provider or state['provider']
@@ -367,7 +371,8 @@ def run(args):
             'provider_requests':meter['requests'] if meter else 0,
             'known_usd':meter['known_usd'] if meter else '0.000000',
             'unknown_reserved_usd':meter['unknown_reserved_usd'] if meter else '0.000000',
-            'target_code_executed':False,'remote_enabled':meter['remote_enabled'] if meter else False}
+            'target_code_executed':None if type(verifier) is repair_loop.BackendVerifier else False,
+            'remote_enabled':meter['remote_enabled'] if meter else False}
         if remote:summary.update(global_spend=state['global_spend'],spend_status=state['spend_status'])
         print(json.dumps(summary))
         return 2

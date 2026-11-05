@@ -37,6 +37,7 @@ OFFLINE_MODULES = frozenset({
     'test_repair_localize', 'test_repair_localize_entry',
     'test_repair_windows', 'test_repair_windows_entry', 'test_repair_windows_scoring',
     'test_repair_visible_matches',
+    'test_repair_backend_verifier',
     'test_deepseek_conversation', 'test_provider_billing_evidence',
     'test_provider_identity_evidence', 'test_provider_failure_structure',
     'test_offline_tests', 'test_code_graph', 'test_repository_scope',
