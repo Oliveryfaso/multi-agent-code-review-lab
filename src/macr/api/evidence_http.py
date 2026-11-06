@@ -294,9 +294,16 @@ def run_cli(args, *, repair_verifier_factory=None, credential_reader=None):
             raise ContractError('input_invalid','repair_runtime_scope')
         if enabled:runtime=RepairRuntime(plan,cell,credential_reader=credential_reader)
         execution=getattr(args,'enable_repair_verification',False)
+        backend_config=getattr(args,'repair_backend_config',None)
+        if backend_config is not None and (not execution or repair_verifier_factory is not None):
+            raise ContractError('input_invalid','repair_backend_scope')
         factory=None
         if execution:
-            verifier=(repair_verifier_factory or repair_entry._verification_backend)()
+            if backend_config is not None:
+                from ..execution.docker_backend import configured_verifier,DockerError
+                try:verifier=configured_verifier(backend_config,enabled=True)
+                except DockerError as error:raise ContractError(error.code,'repair_backend') from None
+            else:verifier=(repair_verifier_factory or repair_entry._verification_backend)()
             if type(verifier) is not BackendVerifier or not verifier.available():
                 raise ContractError('verification_unavailable','repair_backend')
             factory=lambda:verifier

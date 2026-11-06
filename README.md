@@ -89,10 +89,12 @@ python3 -I -S -B cli/agent_review.py repair --help
 Model calls and verification remain disabled by default. A controlled startup
 can enable official HTTP for one frozen spend-plan cell; Key input stays in the
 foreground terminal, outside the browser. Verification has a separate startup
-opt-in and requires an already authorized application-owned backend. No production
-backend is registered, so normal verification opt-in fails before Key input and
-feedback remains blocked. These flags do not grant execution permission or
-bypass stopped operations. See [startup limits](docs/evidence-workbench.md#controlled-repair-startup).
+opt-in and requires an already authorized application-owned backend. A concrete
+[Docker executor](docs/docker-executor.md) can be selected explicitly with a
+backend configuration; it has not been qualified or calibrated on a live engine.
+Without that configuration the normal factory remains unavailable. These flags
+do not grant execution permission or bypass stopped operations. See
+[startup limits](docs/evidence-workbench.md#controlled-repair-startup).
 The connection is checked with offline fixtures; no real model repair or gain
 is established. See [the normal repair entry](docs/repair-entry.md),
 [public verification boundary](docs/repair-public-verification.md), and

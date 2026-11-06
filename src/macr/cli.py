@@ -122,6 +122,7 @@ def main() -> None:
     ui_parser.add_argument('--repair-spend-plan',type=Path,help='Nonsecret frozen shared repair spend plan; not a credential file.')
     ui_parser.add_argument('--repair-spend-cell',help='One fixed approved cell in that plan; browser input cannot change it.')
     ui_parser.add_argument('--enable-repair-verification',action='store_true',help='Opt in to an independently authorized application-registered verifier. No production backend is registered by default.')
+    ui_parser.add_argument('--repair-backend-config',type=Path,help='Explicit Docker executor policy; requires --enable-repair-verification and separately authorized engine qualification/execution. No automatic engine start or image pull.')
     args = parser.parse_args()
     if args.command == 'evidence-ui':
         from macr.api.evidence_http import run_cli

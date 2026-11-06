@@ -3,7 +3,9 @@
 Repair can consume structured **public-test** results from an application-owned
 `BackendVerifier`. The default CLI factory still returns `None`: no VM, container,
 host subprocess, plugin, saved-result import or new execution permission is
-enabled. Existing stopped native operations are not retried by this interface.
+enabled. The workbench's explicit Docker configuration path is described in the
+[executor guide](docker-executor.md); its existence does not establish a qualified
+live engine. Existing stopped native operations are not retried by this interface.
 
 An embedding application may call `repair_entry.run(args,
 verifier_factory=approved_factory)`. The side-effect-free factory must return
@@ -13,8 +15,11 @@ The backend implements the existing `ExecutionBackend` contract. Its owner must
 separately establish execution authority, environment identity, isolation,
 resource limits, unique dispatch and cleanup. An object, capability boolean,
 opaque backend label or local hash is not evidence of those facts. There is
-currently no production backend registered, so normal feedback CLI runs remain
-`verification_unavailable`.
+no backend selected by default, so unconfigured feedback CLI runs remain
+`verification_unavailable`. The workbench may explicitly construct the concrete
+Docker backend after separately approved metadata qualification. That backend
+owns staging, resource policy, collection and verified container/volume cleanup;
+it does not supply a general host subprocess or an automatic fallback around a refusal.
 
 The explicit execution profile is a bounded opaque label for an already
 configured backend policy; empty labels and `none` are rejected. It is bound

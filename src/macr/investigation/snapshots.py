@@ -31,7 +31,10 @@ def canonical(manifest: ContentManifest) -> bytes:
 
 
 class SnapshotStore:
-    def __init__(self, root: Path | None = None, *, allowed_root=None, profile=None, budget=None):
+    def __init__(self, root: Path | None = None, *, allowed_root=None, profile=None, budget=None, read_only=False):
+        if type(read_only) is not bool:
+            raise SnapshotError('contract_invalid','read_only_snapshot')
+        self.read_only=read_only
         self.allowed = Path(allowed_root).absolute() if allowed_root is not None else (Path(__file__).resolve().parents[3] / 'artifacts').resolve()
         self.profile = profile or (budget.profile if budget else EvidenceProfile())
         self.budget = budget or (EvidenceBudget(self.profile) if profile is not None else None)
@@ -40,7 +43,13 @@ class SnapshotStore:
             raise SnapshotError('forbidden_path', 'storage_root')
         validate_workspace_path(self.allowed, output=True)
         validate_workspace_path(requested_root, output=True)
-        self.root = storage_root(requested_root, self.allowed, budget=self.budget)
+        if read_only:
+            from .scope import open_directory
+            with open_directory(self.allowed),open_directory(requested_root):
+                pass
+            self.root=requested_root
+        else:
+            self.root = storage_root(requested_root, self.allowed, budget=self.budget)
         self.last_usage = ActionUsage()
 
     def _read(self, root, relative, limit, stage):
@@ -55,6 +64,8 @@ class SnapshotStore:
             raise SnapshotError("snapshot_unstable", "inventory")
 
     def capture(self, root: Path, scope: ScopeManifest) -> SnapshotBundle:
+        if self.read_only:
+            raise SnapshotError('forbidden_action','read_only_snapshot')
         if scope.errors:
             raise SnapshotError(scope.errors[0].code, "scope")
         if self.budget:
@@ -180,6 +191,8 @@ class SnapshotStore:
             self._read_entry(ref, entries[relative])
 
     def export_verified(self, ref: SnapshotRef, destination: Path) -> ContentManifest:
+        if self.read_only:
+            raise SnapshotError('forbidden_action','read_only_snapshot')
         destination = Path(destination).absolute()
         if not destination.is_relative_to(self.allowed):
             raise SnapshotError("forbidden_path", "export_destination")

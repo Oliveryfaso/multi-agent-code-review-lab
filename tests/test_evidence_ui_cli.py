@@ -19,7 +19,7 @@ class WorkbenchCLITests(unittest.TestCase):
                 main()
         self.assertEqual(caught.exception.code, 0)
         for flag in ('--data-root', '--enable-remote-repair', '--repair-spend-plan',
-                     '--repair-spend-cell', '--enable-repair-verification'):
+                     '--repair-spend-cell', '--enable-repair-verification','--repair-backend-config'):
             self.assertIn(flag, output.getvalue())
         reader.assert_not_called()
 
@@ -177,3 +177,25 @@ class WorkbenchCLITests(unittest.TestCase):
                 main()
         self.assertEqual(caught.exception.code, 4)
         self.assertNotIn('/dev/null', error.getvalue())
+
+    def test_concrete_backend_config_requires_opt_in_and_routes_the_normal_entry(self):
+        from macr.api import evidence_http as http
+        from macr.execution.docker_backend import DockerError
+        from macr.investigation.repair_verification import BackendVerifier
+        from test_repair_backend_verifier import FixtureBackend
+        backend=FixtureBackend(['checks.py::Check.test_public'])
+        verifier=BackendVerifier(backend,backend.public_result,backend_id='authored-docker',execution_profile='docker-public-python-v1')
+        for execution,fail in ((False,False),(True,False),(True,True)):
+            with self.subTest(execution=execution,fail=fail),ExitStack() as stack:
+                events=[];owner,listener=self.fake_service(stack,events)
+                factory=stack.enter_context(patch('macr.execution.docker_backend.configured_verifier',return_value=verifier,
+                    side_effect=DockerError('docker_qualification_failed') if fail else None))
+                args=self.arguments(execution=execution);args.repair_backend_config=Path('/authored/backend.json')
+                code=http.run_cli(args)
+                self.assertEqual(code,0 if execution and not fail else 4)
+                if not execution:factory.assert_not_called()
+                else:factory.assert_called_once_with(args.repair_backend_config,enabled=True)
+                if execution and not fail:
+                    self.assertIs(owner.call_args.kwargs['repair_verifier_factory'](),verifier);listener.assert_called_once()
+                else:owner.assert_not_called();listener.assert_not_called()
+                self.assertEqual(backend.calls,[])
