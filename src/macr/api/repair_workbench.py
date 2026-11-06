@@ -1,7 +1,7 @@
 """Repair records under the workbench's existing owner and admission lock.
 
 The HTTP request selects neutral inputs only. Transport/verifier injection is an
-application-owned fixture seam; this service cannot enable an execution runtime.
+application-owned seam. Browser text cannot enable a runtime or execution grant.
 """
 from copy import deepcopy
 import math
@@ -26,13 +26,32 @@ REPAIR_RESERVE = 1024 * 262144 + RESERVE_EXTRA
 _FIELDS = {'intent_id', 'repo', 'task', 'model_config', 'strategy', 'proposal_contract'}
 _STATES = {'running', 'verifying', 'blocked', 'completed', 'failed', 'unknown'}
 _BLOCKED = {'verification_unavailable', 'provider_disabled', 'provider_unavailable'}
+_MODE='macr.workbench.repair-runtime.v1'
+
+
+def _mode(run):
+    value=run.get('runtime',{'schema':_MODE,'remote_requested':False,'execution_enabled':False,
+        'spend_plan_sha256':None,'spend_cell':None})
+    if (type(value) is not dict or set(value)!={'schema','remote_requested','execution_enabled','spend_plan_sha256','spend_cell'}
+            or value['schema']!=_MODE or type(value['remote_requested']) is not bool
+            or type(value['execution_enabled']) is not bool):
+        raise ContractError('registry_invalid','repair_runtime')
+    if value['remote_requested']:
+        if (type(value['spend_plan_sha256']) is not str or re.fullmatch('[0-9a-f]{64}',value['spend_plan_sha256']) is None
+                or type(value['spend_cell']) is not str or re.fullmatch('[A-Za-z0-9][A-Za-z0-9_.-]{0,95}',value['spend_cell']) is None):
+            raise ContractError('registry_invalid','repair_runtime')
+    elif value['spend_plan_sha256'] is not None or value['spend_cell'] is not None:
+        raise ContractError('registry_invalid','repair_runtime')
+    return value
 
 
 def _outcome_state(summary, exit_code):
     if summary['status'] in _BLOCKED:
         return 'blocked'
     if (summary['status'] in ('provider_outcome_unknown', 'verification_outcome_unknown')
-            or summary.get('unknown_reserved_usd', '0.000000') != '0.000000'):
+            or summary.get('unknown_reserved_usd', '0.000000') != '0.000000'
+            or summary.get('spend_status')=='unreconciled'
+            or summary.get('global_spend',{} ) is not None and summary.get('global_spend',{}).get('stopped') is True):
         return 'unknown'
     return 'completed' if exit_code == 0 else 'failed'
 
@@ -56,8 +75,13 @@ def _input(payload):
 
 
 class RepairWorkbench:
-    def __init__(self, owner, *, provider_factory=None, verifier_factory=None):
+    def __init__(self, owner, *, provider_factory=None, verifier_factory=None,runtime=None,execution_enabled=False):
         self.owner = owner
+        from .repair_runtime import RepairRuntime
+        if (runtime is not None and type(runtime) is not RepairRuntime or type(execution_enabled) is not bool
+                or runtime is not None and provider_factory is not None):
+            raise ContractError('input_invalid','repair_runtime')
+        self.runtime,self.execution_enabled=runtime,execution_enabled
         self.provider_factory, self.verifier_factory = provider_factory, verifier_factory
         try:
             raw = read_safe(owner.root, 'repair-registry.json', META_LIMIT)
@@ -102,9 +126,11 @@ class RepairWorkbench:
             intents = {run['intent_id'] for run in self.owner.registry['runs'].values()}
             for identifier, run in value['runs'].items():
                 _uuid(identifier)
-                if type(run) is not dict or set(run) != {'id', 'intent_id', 'payload_digest', 'request', 'started_at',
-                        'state', 'repair_status', 'exit_code', 'summary', 'binding', 'error', 'reservation'}:
+                fields={'id', 'intent_id', 'payload_digest', 'request', 'started_at',
+                        'state', 'repair_status', 'exit_code', 'summary', 'binding', 'error', 'reservation'}
+                if type(run) is not dict or set(run) not in (fields,fields|{'runtime'}):
                     raise ValueError()
+                mode=_mode(run)
                 request = _input(run['request'])
                 if (run['id'] != identifier or run['intent_id'] != request['intent_id'] or run['intent_id'] in intents
                         or run['payload_digest'] != document(encode_bounded(request, 32768))['sha256']
@@ -123,19 +149,29 @@ class RepairWorkbench:
                 if run['summary'] is not None:
                     summary = run['summary']
                     if (type(summary) is not dict or summary.get('status') != run['repair_status']
-                            or summary.get('remote_enabled') is not False
-                            or summary.get('target_code_executed') is not False):
+                            or type(summary.get('remote_enabled')) is not bool
+                            or summary['remote_enabled'] and not mode['remote_requested']
+                            or summary.get('target_code_executed') is not False and not (
+                                mode['execution_enabled'] and summary.get('target_code_executed') is None)):
                         raise ValueError()
                     encode_bounded(summary, 16384)
                 binding = run['binding']
                 if binding is not None:
-                    if (type(binding) is not dict or set(binding) != {'out_identity', 'report'}
+                    if (type(binding) is not dict or set(binding) not in ({'out_identity','report'},{'out_identity','report','summary'})
                             or type(binding['out_identity']) is not list or len(binding['out_identity']) != 2
                             or any(type(n) is not int or n < 0 for n in binding['out_identity'])
                             or type(binding['report']) is not dict or set(binding['report']) != {'sha256', 'size_bytes'}
                             or type(binding['report']['size_bytes']) is not int or not 0 < binding['report']['size_bytes'] <= 262144
                             or type(binding['report']['sha256']) is not str
                             or re.fullmatch('[0-9a-f]{64}', binding['report']['sha256']) is None):
+                        raise ValueError()
+                    if 'summary' in binding:
+                        bound=binding['summary']
+                        if (type(bound) is not dict or set(bound)!={'sha256','size_bytes'}
+                                or type(bound['size_bytes']) is not int or not 0<bound['size_bytes']<=16384
+                                or type(bound['sha256']) is not str or re.fullmatch('[0-9a-f]{64}',bound['sha256']) is None):
+                            raise ValueError()
+                    elif 'runtime' in run:
                         raise ValueError()
                     if run['summary'] is None or run['exit_code'] is None:
                         raise ValueError()
@@ -146,6 +182,13 @@ class RepairWorkbench:
 
     def has_intent(self, intent):
         return any(run['intent_id'] == intent for run in self.registry['runs'].values())
+
+    def capabilities(self):
+        return {'schema':'macr.workbench.repair-capabilities.v1',
+            'model':self.runtime.public() if self.runtime else {'remote_enabled':False,'credential_ready':False},
+            'verification':{'execution_enabled':self.execution_enabled,
+                'backend_registered':self.verifier_factory is not None,
+                'authority':'application_owned_not_attested'}}
 
     def _public(self, run):
         return {key: deepcopy(run[key]) for key in ('id', 'intent_id', 'started_at', 'state', 'repair_status',
@@ -211,9 +254,17 @@ class RepairWorkbench:
             if owner._allocation() + REPAIR_RESERVE > ROOT_LIMIT:
                 raise ContractError('workbench_storage_limit', 'retained_allocation')
             identifier = str(uuid4())
+            args=None
+            if self.runtime is not None:
+                args=self.runtime.arguments(request,owner.root/'repairs'/identifier)
             run = {'id': identifier, 'intent_id': intent, 'payload_digest': digest, 'request': request,
                    'started_at': time.time(), 'state': 'running', 'repair_status': None, 'exit_code': None,
                    'summary': None, 'binding': None, 'error': None, 'reservation': REPAIR_RESERVE}
+            if self.runtime is not None or self.execution_enabled:
+                run['runtime']={'schema':_MODE,'remote_requested':self.runtime is not None,
+                    'execution_enabled':self.execution_enabled,
+                    'spend_plan_sha256':self.runtime.plan_sha256 if self.runtime else None,
+                    'spend_cell':args.spend_cell if args else None}
             self.registry['runs'][identifier] = run
             try:
                 self._save()
@@ -243,9 +294,10 @@ class RepairWorkbench:
         return provider
 
     def _verifier(self):
-        from ..investigation.repair_loop import ReplayVerifier
+        from ..investigation.repair_loop import ReplayVerifier,BackendVerifier
         verifier = self.verifier_factory() if self.verifier_factory else None
-        if verifier is not None and type(verifier) is not ReplayVerifier:
+        if verifier is not None and not(type(verifier) is ReplayVerifier or
+                self.execution_enabled and type(verifier) is BackendVerifier):
             raise ContractError('repair_runtime_forbidden', 'verifier')
         return verifier
 
@@ -262,14 +314,22 @@ class RepairWorkbench:
         report = repair_loop.verify_loop(out)
         config = repair_loop._read(out, 'claim.json')['config']
         summary = run['summary']
+        if 'summary' in binding and document(encode_bounded(summary,16384))!=binding['summary']:
+            raise ContractError('history_corrupt','repair_summary')
+        mode=_mode(run);meter=report['provider_accounting']
         origins = {'candidate_origin': report['candidate_origin'], 'verification_origin': report['verification_origin']}
         selection_fields = {'selected_content_id', 'final_verification_status', 'historical_verification_origin'}
         selection = report.get('final_selection')
         if selection is not None:
             origins.update(selected_content_id=selection['selected_source_id'], final_verification_status='not_rerun',
                            verification_origin='unavailable', historical_verification_origin=report['verification_origin'])
-        if (report['provider_accounting']['remote_enabled'] is not False or report['simulation'] is not True
-                or report['target_code_executed'] is not False or report['repaired'] is not False
+        if (meter['remote_enabled'] and not mode['remote_requested']
+                or summary.get('remote_enabled') is not meter['remote_enabled']
+                or meter['remote_enabled'] and meter.get('spend_commitment')!={
+                    'plan_sha256':mode['spend_plan_sha256'],'cell_id':mode['spend_cell']}
+                or report['target_code_executed'] is not False and not (
+                    mode['execution_enabled'] and report['target_code_executed'] is None)
+                or report['repaired'] is not False
                 or set(summary) & selection_fields != set(origins) & selection_fields
                 or any(summary.get(key) != value for key, value in origins.items())
                 or config['strategy'] != run['request']['strategy']
@@ -300,12 +360,17 @@ class RepairWorkbench:
         out = owner.root / 'repairs' / run['id']
         summaries = []
         try:
-            args = SimpleNamespace(**run['request'], out=out, enable_remote=False, spend_plan=None, spend_cell=None)
-            code = repair_entry.run(args, provider_factory=self._provider, verifier_factory=self._verifier, emit=summaries.append)
+            mode=_mode(run)
+            args = (self.runtime.arguments(run['request'],out) if mode['remote_requested'] else
+                SimpleNamespace(**run['request'],out=out,enable_remote=False,spend_plan=None,spend_cell=None))
+            code = repair_entry.run(args, provider_factory=self._provider, verifier_factory=self._verifier,
+                credential_reader=self.runtime.credential if mode['remote_requested'] else None,emit=summaries.append)
             if len(summaries) != 1:
                 raise ContractError('repair_result_invalid', 'summary')
             summary = deepcopy(summaries[0])
-            if summary.get('remote_enabled') is not False or summary.get('target_code_executed') is not False:
+            if (summary.get('remote_enabled') and not mode['remote_requested']
+                    or summary.get('target_code_executed') is not False and not (
+                        mode['execution_enabled'] and summary.get('target_code_executed') is None)):
                 raise ContractError('repair_runtime_forbidden', 'summary')
             with owner.mutex:
                 run.update(summary=summary, exit_code=code, repair_status=summary['status'])
@@ -317,7 +382,8 @@ class RepairWorkbench:
                     run['state'] = 'verifying'
                     self._save()
                 binding = {'out_identity': self._identity(out),
-                           'report': document(read_safe(out, 'report.json', repair_loop.CAP))}
+                           'report': document(read_safe(out, 'report.json', repair_loop.CAP)),
+                           'summary':document(encode_bounded(summary,16384))}
                 with owner.consumer:
                     self._read_record(run, binding)
                 with owner.mutex:

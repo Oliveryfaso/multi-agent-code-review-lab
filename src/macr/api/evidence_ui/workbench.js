@@ -206,6 +206,7 @@ function showRepairState(run) {
   else if(run.state==='running'||run.state==='verifying') detail='正在处理已选任务；没有可用的逐步进度或修复取消接口。退出工作台会等待该流程结束。';
   else if(['no_candidate','insufficient_evidence'].includes(run.repair_status)) detail='本次未交付候选补丁，下方仅保留提案历史。';
   if(summary.simulation) detail+=' 这是模拟流程，不是实际模型修复或目标测试通过。';
+  if(summary.verification_origin==='backend_reported_unattested') detail+=' 公开测试结果由已注册后端报告；这不证明隐藏测试通过、环境已获独立认证或故障已修复。';
   if(summary.final_verification_status==='not_rerun') detail+=' 已选择历史候选，未重新运行验证。';
   if(run.error) detail+=' 代码：'+clean(run.error)+'。';
   text('repair-detail',detail);
@@ -277,3 +278,13 @@ $('new-repair').addEventListener('click',()=>{$('repair-panel').hidden=false;if(
 $('repair-reconnect').addEventListener('click',()=>repairSubmitting?resolveRepairIntent():repairCurrent?pollRepair(repairCurrent.id):resolveRepairIntent());
 $('more-repairs').addEventListener('click',()=>loadRepairHistory(true).catch(error=>connection(explain(error))));
 if(token)loadRepairHistory().then(()=>repairIntent?resolveRepairIntent():null).catch(error=>connection(explain(error)));
+async function loadRepairCapabilities() {
+  try {
+    const value=await api('/api/repair-capabilities');
+    if(value.schema!=='macr.workbench.repair-capabilities.v1'||typeof value.model?.remote_enabled!=='boolean'||typeof value.verification?.execution_enabled!=='boolean')throw {code:'contract_invalid'};
+    const model=value.model,verification=value.verification;
+    const message=model.remote_enabled?'官方模型会话已配置 · 固定单元 '+model.cell_id+' · 共享计划最多 '+model.max_requests+' 次／$'+model.max_usd+'。本地预算不是账单硬限；输入必须匹配冻结计划。':'模型会话未启用。';
+    text('repair-runtime',message+(verification.execution_enabled&&verification.backend_registered?' 验证接口由应用注册；仍需独立的环境资格与执行授权。':' 真实验证后端未配置。'));
+  }catch {text('repair-runtime','暂时无法核对启动配置；此表单不能更改运行权限，任务仍受启动端范围与费用门禁约束。');}
+}
+if(token)loadRepairCapabilities();

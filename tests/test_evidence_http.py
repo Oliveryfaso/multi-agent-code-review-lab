@@ -15,6 +15,29 @@ from macr.api.evidence_workbench import Workbench
 
 
 class LoopbackProtocolTests(unittest.TestCase):
+    def test_repair_capabilities_are_authenticated_nonsecret_launch_metadata(self):
+        self.assertEqual(self.request('GET','/api/repair-capabilities')[0],401)
+        code,raw,_=self.request('GET','/api/repair-capabilities',headers=self.auth())
+        self.assertEqual(code,200);value=json.loads(raw)
+        self.assertEqual(value['schema'],'macr.workbench.repair-capabilities.v1')
+        self.assertFalse(value['model']['remote_enabled']);self.assertFalse(value['verification']['execution_enabled'])
+        self.assertEqual(self.request('GET','/api/repair-capabilities?path=/etc/passwd',headers=self.auth())[0],404)
+        from macr.api.repair_runtime import RepairRuntime
+        from macr.investigation.repair_loop import digest,output_contract
+        from macr.providers.repair_binding import development_config
+        import time
+        path=Path(self.temp.name)/'approved-plan.json'
+        plan={'schema':'macr.repair.spend-plan.v1','run_id':'http-authored','ledger_root':str(Path(self.temp.name)/'ledger'),
+            'configuration_sha256':digest(development_config()),'output_contract_sha256':digest(output_contract('v6')),
+            'max_requests':1,'max_usd':'0.500000','max_total_input_tokens':24576,'max_total_output_tokens':3072,
+            'expires_at':int(time.time())+600,'cells':[{'cell_id':'one','binding_sha256':'a'*64}]}
+        path.write_text(json.dumps(plan));runtime=RepairRuntime(path,'one',credential_reader=lambda:'DUMMY-NOT-A-REAL-KEY')
+        self.addCleanup(runtime.close);runtime.prepare();self.workbench.repairs.runtime=runtime
+        code,raw,_=self.request('GET','/api/repair-capabilities',headers=self.auth());value=json.loads(raw)
+        self.assertTrue(value['model']['credential_ready']);self.assertEqual(value['model']['cell_id'],'one')
+        self.assertNotIn(b'DUMMY-NOT-A-REAL-KEY',raw);self.assertNotIn(str(path).encode(),raw)
+        self.assertNotIn(plan['ledger_root'].encode(),raw)
+
     def repair_payload(self):
         from macr.investigation import repair_loop as loop
         from macr.providers.repair_binding import development_config

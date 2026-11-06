@@ -113,7 +113,8 @@ def _local_filesystem(fd):
 
 
 class Workbench:
-    def __init__(self, root: Path, *, repair_provider_factory=None, repair_verifier_factory=None):
+    def __init__(self, root: Path, *, repair_provider_factory=None, repair_verifier_factory=None,
+                 repair_runtime=None, repair_execution_enabled=False):
         self.root = Path(root).absolute()
         self.mutex = threading.RLock()
         self.consumer = threading.Lock()
@@ -161,7 +162,8 @@ class Workbench:
                 self._recover()
             from .repair_workbench import RepairWorkbench
             self.repairs = RepairWorkbench(self, provider_factory=repair_provider_factory,
-                                            verifier_factory=repair_verifier_factory)
+                                            verifier_factory=repair_verifier_factory,runtime=repair_runtime,
+                                            execution_enabled=repair_execution_enabled)
         except BaseException as error:
             if self.lock_fd is not None:
                 os.close(self.lock_fd)

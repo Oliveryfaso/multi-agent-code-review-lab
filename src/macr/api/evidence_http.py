@@ -167,6 +167,9 @@ class Handler(BaseHTTPRequestHandler):
                 if split.path == '/api/repairs' and set(query) == {'intent_id'}:
                     self._json(200, workbench.repair_by_intent(query['intent_id'][0]))
                     return
+                if split.path == '/api/repair-capabilities' and not query:
+                    self._json(200,workbench.repairs.capabilities())
+                    return
                 repair = re.fullmatch('/api/repairs/([0-9a-f-]{36})(?:/(result))?', split.path)
                 if repair and not query:
                     identifier, action = repair.groups()
@@ -275,13 +278,34 @@ def make_server(workbench, port=0):
     return BoundedServer(workbench, port)
 
 
-def run_cli(args):
+def run_cli(args, *, repair_verifier_factory=None, credential_reader=None):
     workbench = None
     server = None
     previous_term = None
+    runtime=None
     try:
+        from ..investigation import repair_entry
+        from ..investigation.repair_verification import BackendVerifier
+        from ..providers.base import ProviderError
+        from .repair_runtime import RepairRuntime
+        enabled=getattr(args,'enable_remote_repair',False)
+        plan=getattr(args,'repair_spend_plan',None);cell=getattr(args,'repair_spend_cell',None)
+        if (enabled or plan is not None or cell is not None) and not (enabled and plan is not None and cell is not None):
+            raise ContractError('input_invalid','repair_runtime_scope')
+        if enabled:runtime=RepairRuntime(plan,cell,credential_reader=credential_reader)
+        execution=getattr(args,'enable_repair_verification',False)
+        factory=None
+        if execution:
+            verifier=(repair_verifier_factory or repair_entry._verification_backend)()
+            if type(verifier) is not BackendVerifier or not verifier.available():
+                raise ContractError('verification_unavailable','repair_backend')
+            factory=lambda:verifier
         root = Path(args.data_root) if args.data_root else Path.home() / 'Library/Application Support/MACR Evidence'
-        workbench = Workbench(root)
+        workbench = Workbench(root,repair_runtime=runtime,repair_execution_enabled=execution,
+            repair_verifier_factory=factory)
+        # Foreground terminal only, before serving browser requests. The session
+        # retains this value in memory, never in args, registry or child env.
+        if runtime is not None:runtime.prepare()
         server = make_server(workbench)
         def interrupt(signum, frame):
             raise KeyboardInterrupt()
@@ -292,15 +316,20 @@ def run_cli(args):
         except KeyboardInterrupt:
             pass
         return 0
-    except (ContractError, OSError):
-        print('workbench unavailable; inspect the owned data root and runtime boundary', file=__import__('sys').stderr)
+    except (ContractError, OSError,ProviderError) as error:
+        code=getattr(error,'code','workbench_unavailable')
+        if type(code) is not str or re.fullmatch('[a-z][a-z0-9_]{0,63}',code) is None:code='workbench_unavailable'
+        print('workbench unavailable: '+code+'; no automatic retry',file=__import__('sys').stderr)
         return 4
     finally:
-        if workbench:
-            workbench.begin_shutdown()
-        if server:
-            server.server_close()
-        if workbench:
-            workbench.shutdown()
-        if previous_term is not None:
-            signal.signal(signal.SIGTERM, previous_term)
+        try:
+            if workbench:
+                workbench.begin_shutdown()
+            if server:
+                server.server_close()
+            if workbench:
+                workbench.shutdown()
+        finally:
+            if runtime is not None:runtime.close()
+            if previous_term is not None:
+                signal.signal(signal.SIGTERM, previous_term)

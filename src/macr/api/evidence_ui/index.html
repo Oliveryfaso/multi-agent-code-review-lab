@@ -22,7 +22,7 @@
         <form id="repair-form" novalidate>
           <label for="repair-repo">项目目录</label><input id="repair-repo" autocomplete="off" spellcheck="false" placeholder="项目的绝对目录">
           <label for="repair-task">任务清单</label><input id="repair-task" autocomplete="off" spellcheck="false" placeholder="任务 JSON 文件的绝对路径" aria-describedby="repair-task-help"><p id="repair-task-help" class="help">任务清单包含问题、源码摘要、编辑范围与公开测试；不要选择答案或隐藏评分文件。</p>
-          <label for="repair-config">模型配置文件</label><input id="repair-config" autocomplete="off" spellcheck="false" placeholder="非密钥配置 JSON 的绝对路径"><p class="help">此入口不接收 API Key，不开放远程调用。模型或验证器不可用时会保留明确的阻塞记录。</p>
+          <label for="repair-config">模型配置文件</label><input id="repair-config" autocomplete="off" spellcheck="false" placeholder="非密钥配置 JSON 的绝对路径"><p class="help">此表单不接收 API Key，也不能启用模型或验证后端。真实运行能力由启动时的明确配置决定；不可用时保留阻塞记录。</p><p id="repair-runtime" class="help" role="status">正在核对启动配置；任务仍须匹配启动端限定的范围。</p>
           <label for="repair-strategy">修复策略</label><select id="repair-strategy"><option value="api_debugger">Debugger · 公开测试通过即停</option><option value="api_test_feedback">模型自检 · 同样的公开测试反馈</option><option value="direct_api">直接 API · 无测试反馈自检</option></select>
           <div class="form-actions"><p id="repair-error" class="field-error" role="alert" hidden></p><button id="repair-start" type="submit" class="primary">开始修复流程</button></div>
         </form>

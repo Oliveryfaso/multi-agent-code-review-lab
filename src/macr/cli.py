@@ -116,8 +116,12 @@ def main() -> None:
 
     from macr.evidence_cli import add_parser
     add_parser(subparsers)
-    ui_parser = subparsers.add_parser('evidence-ui', help='Start the local static evidence workbench; no model or target execution.')
+    ui_parser = subparsers.add_parser('evidence-ui', help='Start the local workbench; model and verification disabled by default.')
     ui_parser.add_argument('--data-root', type=Path, help='Owned local data root; default: ~/Library/Application Support/MACR Evidence.')
+    ui_parser.add_argument('--enable-remote-repair',action='store_true',help='Explicit official repair HTTP session; requires a frozen spend plan/cell and terminal Key input.')
+    ui_parser.add_argument('--repair-spend-plan',type=Path,help='Nonsecret frozen shared repair spend plan; not a credential file.')
+    ui_parser.add_argument('--repair-spend-cell',help='One fixed approved cell in that plan; browser input cannot change it.')
+    ui_parser.add_argument('--enable-repair-verification',action='store_true',help='Opt in to an independently authorized application-registered verifier. No production backend is registered by default.')
     args = parser.parse_args()
     if args.command == 'evidence-ui':
         from macr.api.evidence_http import run_cli

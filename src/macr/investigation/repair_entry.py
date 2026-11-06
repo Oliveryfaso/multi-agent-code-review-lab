@@ -125,6 +125,8 @@ def _runtime_plan(args,task,config):
     from . import repair_loop as loop
     from .scope import validate_workspace_path
     plan=validate_spend_plan(_json(args.spend_plan))
+    expected=getattr(args,'expected_spend_plan_sha256',None)
+    loop._require(expected is None or loop.digest(plan)==expected,'repair_spend_scope_mismatch')
     binding=spend_binding_sha256(task,args.strategy,config,proposal_contract=args.proposal_contract)
     loop._require(plan['configuration_sha256']==loop.digest(config)
         and plan['output_contract_sha256']==loop.digest(loop.output_contract(args.proposal_contract))
@@ -149,7 +151,7 @@ def _run_report(args,task,provider,verifier):
         source_windows=task.get('source_windows'))
 
 
-def _run_durable(args,task,config,plan,binding,state,verifier=None):
+def _run_durable(args,task,config,plan,binding,state,verifier=None,*,credential_reader=None):
     from . import repair_loop as loop
     from macr.providers.repair_spend import RepairSpendLedger
     box={};failure=None;report=None
@@ -159,7 +161,7 @@ def _run_durable(args,task,config,plan,binding,state,verifier=None):
             try:
                 loop._require(not state['global_spend']['stopped'],'repair_spend_stopped')
                 ledger.claim_cell(args.spend_cell,binding)
-                box['credential']=_read_runtime_credential()
+                box['credential']=(credential_reader or _read_runtime_credential)()
                 provider=_make_runtime_provider(config,ledger,credential_reader=lambda:box['credential'])
                 state['provider']=provider
                 loop._require(provider.config==config,'provider_config_binding')
@@ -304,7 +306,7 @@ def score_handoff(record_root, plan, cell_id):
         test_plan=config.get('test_plan'),source_scope=config.get('source_scope'),source_windows=windows)
 
 
-def run(args, *, verifier_factory=None, provider_factory=None, emit=None):
+def run(args, *, verifier_factory=None, provider_factory=None, credential_reader=None, emit=None):
     from macr.providers.base import ProviderError
     from macr.providers.repair_binding import validate_config
     from . import repair_loop
@@ -333,7 +335,8 @@ def run(args, *, verifier_factory=None, provider_factory=None, emit=None):
                 repair_loop._require(provider.config==config,'provider_config_binding')
                 report=_run_report(args,task,provider,None)
             else:
-                report=_run_durable(args,task,config,plan,binding,state,verifier);provider=state['provider']
+                report=_run_durable(args,task,config,plan,binding,state,verifier,
+                    credential_reader=credential_reader);provider=state['provider']
         else:
             provider=(provider_factory or _make_provider)(config)
             repair_loop._require(provider.config==config,'provider_config_binding')

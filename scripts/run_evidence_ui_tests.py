@@ -18,8 +18,8 @@ from unittest.mock import patch
 from uuid import uuid4
 
 PROJECT = Path(__file__).resolve().parents[1]
-NAMES = ('test_evidence_reader', 'test_evidence_workbench', 'test_evidence_http', 'test_evidence_ui_cli', 'test_evidence_ui_guard', 'test_workbench_repair')
-EXPECTED = 53
+NAMES = ('test_evidence_reader', 'test_evidence_workbench', 'test_evidence_http', 'test_evidence_ui_cli', 'test_evidence_ui_guard', 'test_workbench_repair', 'test_workbench_repair_runtime', 'test_workbench_repair_backend')
+EXPECTED = 72
 ALLOCATION_LIMIT = 64 * 1024 * 1024
 RSS_LIMIT = 256 * 1024 * 1024
 

@@ -3,4 +3,4 @@
 @media(max-width:780px){.topbar{align-items:flex-start;padding:16px;flex-direction:column}.workspace{grid-template-columns:1fr}aside{border-right:0;border-bottom:1px solid #d5deea;padding:16px}main{padding:16px}.evidence-layout{grid-template-columns:1fr}#input-panel{padding:14px}.source-heading{flex-direction:column}.notice{margin:12px 16px}.warning{margin:16px 0}h1 span{padding-left:6px}.actions{gap:6px}.tabs button{padding:10px 8px}}
 @media(prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
 .repair-history-title{margin-top:28px}.repair-panel{background:#fff;border:1px solid #d5deea;border-radius:6px;padding:20px;margin-bottom:24px}.repair-result{border-top:1px solid #d5deea;margin-top:24px;padding-top:20px}.repair-changes-title{margin-top:24px;margin-bottom:8px}.repair-edit{margin-top:18px}.repair-edit h4{font-size:14px;overflow-wrap:anywhere}.repair-edit pre{max-height:320px;overflow:auto}.repair-result button{margin-top:12px}.repair-panel input{max-width:100%}
-.repair-result .help { overflow-wrap: anywhere; }
+.repair-panel .help { overflow-wrap: anywhere; }

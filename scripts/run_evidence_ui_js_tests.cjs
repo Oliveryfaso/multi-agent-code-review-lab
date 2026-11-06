@@ -20,7 +20,7 @@ function fixture(session=false,seed={}) {
   const document = {hidden:false,getElementById(id){if(!elements.has(id)) elements.set(id,element());return elements.get(id);},createElement:element};
   const env={fetch:async()=>{throw new Error('fixture_fetch_unconfigured');}};
   const factory=new Function('document','location','sessionStorage','history','fetch','setTimeout','clearTimeout','setInterval','crypto','URL',
-    source+'\nreturn {api,poll,loadReport,showState,download,loadHistory,loadRepairHistory,showRepairState:typeof showRepairState==="function"?showRepairState:null,pollRepair:typeof pollRepair==="function"?pollRepair:null,get:()=>({current,saved,intent,repairCurrent:typeof repairCurrent!=="undefined"?repairCurrent:null})};');
+    source+'\nreturn {api,poll,loadReport,showState,download,loadHistory,loadRepairHistory,loadRepairCapabilities,showRepairState:typeof showRepairState==="function"?showRepairState:null,pollRepair:typeof pollRepair==="function"?pollRepair:null,get:()=>({current,saved,intent,repairCurrent:typeof repairCurrent!=="undefined"?repairCurrent:null})};');
   const api=factory(document,{hash:session?'#'+'A'.repeat(43):'',pathname:'/'},{getItem:k=>storage.get(k)||null,setItem:(k,v)=>storage.set(k,v),removeItem:k=>storage.delete(k)},
     {replaceState(){}},(...args)=>{calls.push(args);return env.fetch(...args);},()=>1,()=>{},()=>{}, {randomUUID},{createObjectURL:()=>'blob:fixture',revokeObjectURL(){}});
   return {api,env,calls,downloads,el:id=>document.getElementById(id),storage};
@@ -31,6 +31,19 @@ const response=value=>({ok:true,json:async()=>value});
 const logs=[];const log=value=>{logs.push(String(value));console.log(value);};
 (async()=>{
   const tests = [
+    ['runtime display reports fixed budget and backend registration without asserting repair',async()=>{
+      const f=fixture();f.env.fetch=async()=>response({schema:'macr.workbench.repair-capabilities.v1',
+        model:{remote_enabled:true,cell_id:'approved-one',max_requests:2,max_usd:'1.000000'},
+        verification:{execution_enabled:true,backend_registered:true}});
+      await f.api.loadRepairCapabilities();assert.match(f.el('repair-runtime').textContent,/approved-one/);
+      assert.match(f.el('repair-runtime').textContent,/不是账单硬限/);assert.match(f.el('repair-runtime').textContent,/独立的环境资格/);
+      f.api.showRepairState({id:'R',state:'completed',repair_status:'public_tests_reported_passed',summary:{simulation:false,verification_origin:'backend_reported_unattested'}});
+      assert.match(f.el('repair-detail').textContent,/不证明隐藏测试通过/);assert.doesNotMatch(f.el('repair-status').textContent,/修复成功/);
+    }],
+    ['unavailable runtime metadata does not invent enabled model access',async()=>{
+      const f=fixture();await f.api.loadRepairCapabilities();
+      assert.match(f.el('repair-runtime').textContent,/无法核对/);assert.equal(f.calls.filter(([,o])=>o?.method==='POST').length,0);
+    }],
     ['acknowledged shutdown gates both flows even after a late state reply',async()=>{
       const f=fixture(true);f.env.fetch=async()=>response({status:'stopping'});
       await f.el('shutdown').events.get('click')();
