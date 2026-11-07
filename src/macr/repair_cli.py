@@ -44,7 +44,16 @@ def add_comparison_parser(subparsers):
     scoring_parser.add_argument('--cell', required=True)
     scoring_parser.add_argument('--overlay-manifest', type=Path, required=True)
     scoring_parser.add_argument('--overlay-root', type=Path, required=True)
-    for command in (compile_parser, report_parser, handoff_parser, scoring_parser):
+    final_commands = []
+    for operation in ('prepare-final', 'import-final'):
+        command = commands.add_parser(operation, help='Evaluator-only frozen final observations; no dispatch or scoring credit.')
+        for flag in ('plan', 'stage', 'record', 'overlay-manifest', 'overlay-root', 'policy', 'custodian'):
+            command.add_argument('--' + flag, type=Path, required=True)
+        command.add_argument('--cell', required=True)
+        if operation == 'import-final':
+            command.add_argument('--receipt', type=Path, required=True)
+        final_commands.append(command)
+    for command in (compile_parser, report_parser, handoff_parser, scoring_parser, *final_commands):
         command.add_argument('--out', type=Path, required=True, help='New exclusive local artifact directory; never overwritten or resumed.')
 
 

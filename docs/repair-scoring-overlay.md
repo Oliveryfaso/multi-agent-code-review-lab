@@ -111,8 +111,8 @@ test plan is not automatically reused as a scoring selector.
 Directories and files are private local artifacts (0700/0600). A partial write
 remains failed and cannot be resumed or overwritten. `staging.json` is written
 last after byte readback; it is a local integrity record, not an execution or
-pass receipt. There is no saved-bundle execution/import command in this change;
-any future consumer must revalidate all commitments and file bytes.
+pass receipt. There is no saved-bundle execution command. The separate final-observation
+consumer below revalidates all commitments and file bytes without execution.
 
 ## Capacity is a separate metric
 
@@ -123,3 +123,12 @@ are separate requirements. Unlisted helper files and dependencies must still be
 qualified; preserving listed file bytes does not establish environment fidelity.
 Static capacity counts must keep all tasks, missing files and rejected paths in
 their denominator. They are neither a repair rate nor a model-quality gain.
+
+## Final observation handoff
+
+The separate [final evaluator path](repair-final-scoring.md) revalidates saved
+stages, binds pre-generation selector/environment/custodian commitments and
+imports bounded `phase: final` producer observations. It rechecks unchanged
+public tests separately from the hidden overlay and never reuses a historical
+public pass. It supplies no execution backend or locked review; observations
+remain unauthenticated and award zero new credit.

@@ -97,8 +97,10 @@ do not grant execution permission or bypass stopped operations. See
 [startup limits](docs/evidence-workbench.md#controlled-repair-startup).
 The connection is checked with offline fixtures; no real model repair or gain
 is established. See [the normal repair entry](docs/repair-entry.md),
-[public verification boundary](docs/repair-public-verification.md), and
-[fair three-arm comparison](docs/repair-comparison.md).
+[public verification boundary](docs/repair-public-verification.md),
+[fair three-arm comparison](docs/repair-comparison.md), and
+[evaluator-only final observations](docs/repair-final-scoring.md). Final observations
+remain unauthenticated and award no new repair credit.
 
 ## DeepSeek policy research
 

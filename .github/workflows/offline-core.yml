@@ -181,6 +181,7 @@ jobs:
           test_repair_provider_binding test_repair_transport test_repair_spend
           test_repair_runtime_binding test_repair_scoring_flow
           test_repair_comparison test_repair_comparison_entry test_repair_backend_verifier
+          test_repair_final_scoring
 
       - name: Repair inputs and source evidence
         run: >-

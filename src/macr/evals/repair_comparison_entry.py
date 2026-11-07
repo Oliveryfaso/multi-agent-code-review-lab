@@ -61,6 +61,26 @@ def run(args):
                 'comparison_sha256':staging['comparison_sha256'],
                 'staging_sha256':staging['staging_sha256'],
                 'scoring_credit_awarded':False}
+        elif args.comparison_operation in ('prepare-final', 'import-final'):
+            from .repair_final_scoring import prepare_final, import_final
+            from macr.investigation.scope import paths_overlap
+            inputs = [getattr(args, name) for name in ('plan', 'stage', 'record',
+                'overlay_manifest', 'overlay_root', 'policy', 'custodian')]
+            if args.comparison_operation == 'import-final': inputs.append(args.receipt)
+            output = Path(args.out).absolute().resolve()
+            if any(paths_overlap(output, Path(path).absolute().resolve()) for path in inputs):
+                raise ValueError('comparison_final_output_overlap')
+            plan = _read(args.plan)
+            request = prepare_final(args.stage, args.record, plan, args.cell,
+                _read(args.overlay_manifest), args.overlay_root, _read(args.policy), _read(args.custodian))
+            values = {'request.json':request}
+            summary = {'status':'prepared_pending_final_observation',
+                'comparison_sha256':request['comparison_sha256'],
+                'request_sha256':request['request_sha256'], 'scoring_credit_awarded':False}
+            if args.comparison_operation == 'import-final':
+                final, results, report = import_final(request, _read(args.receipt), plan=plan)
+                values.update({'final.json':final, 'results.json':results, 'report.json':report})
+                summary.update(status=final['status'], must_stop=final['must_stop'])
         elif args.comparison_operation == 'handoff':
             from macr.investigation.repair_entry import score_handoff
             # A handoff must never add files to its immutable input record.

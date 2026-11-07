@@ -27,21 +27,9 @@ def _resolved(path):
         raise ValueError('comparison_scoring_path_invalid') from None
 
 
-def stage_scoring(record, plan, cell_id, manifest, overlay_root, out, *, input_paths=()):
-    """Revalidate generation provenance, then freeze two unexecuted scorer trees.
-
-    Staged identities bind raw inventories separately from complete generation
-    source IDs. Mutable local hashes are not independent attestation.
-    """
+def prepare_scoring(record, plan, cell_id, manifest, overlay_root):
+    """Recompute all committed stage data without writing or executing anything."""
     record = Path(record).absolute(); overlay_root = Path(overlay_root).absolute()
-    out = Path(out).absolute()
-    validate_workspace_path(out, output=True)
-    if out != _resolved(out):
-        raise ValueError('comparison_output_identity')
-    for source in (record, overlay_root, *map(Path, input_paths)):
-        source = _resolved(source.absolute())
-        if _overlap(out,source):
-            raise ValueError('comparison_scoring_output_overlap')
     packet = score_handoff(record, plan, cell_id)
     config = loop._read(record,'claim.json')['config']
     windows = config.get('source_windows')
@@ -87,6 +75,27 @@ def stage_scoring(record, plan, cell_id, manifest, overlay_root, out, *, input_p
     staging['staging_sha256'] = result_digest(staging)
     metadata = {'packet.json':packet, 'results.json':{cell_id:packet['result']},
                 'overlay-manifest.json':manifest, 'staging.json':staging}
+    return metadata, original, candidate, staged_original, staged_candidate
+
+
+def stage_scoring(record, plan, cell_id, manifest, overlay_root, out, *, input_paths=()):
+    """Revalidate generation provenance, then freeze two unexecuted scorer trees.
+
+    Staged identities bind raw inventories separately from complete generation
+    source IDs. Mutable local hashes are not independent attestation.
+    """
+    record = Path(record).absolute(); overlay_root = Path(overlay_root).absolute()
+    out = Path(out).absolute()
+    validate_workspace_path(out, output=True)
+    if out != _resolved(out):
+        raise ValueError('comparison_output_identity')
+    for source in (record, overlay_root, *map(Path, input_paths)):
+        source = _resolved(source.absolute())
+        if _overlap(out,source):
+            raise ValueError('comparison_scoring_output_overlap')
+    metadata, _, _, staged_original, staged_candidate = prepare_scoring(
+        record, plan, cell_id, manifest, overlay_root)
+    staging = metadata['staging.json']
     prepared = {name:encode_bounded(value,JSON_LIMIT) for name,value in metadata.items()}
     if sum(map(len,prepared.values())) > JSON_LIMIT:
         raise ValueError('comparison_scoring_metadata_size')
