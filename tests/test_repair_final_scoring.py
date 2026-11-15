@@ -261,6 +261,127 @@ class FinalScoringTests(unittest.TestCase):
         self.assertFalse(final['candidate_all_required_tests_passed'])
         self.assertEqual(report['arms']['api_debugger']['scored'],0)
 
+    def report_observations(self, rows, observations, name='reported-final'):
+        rows_path = self.root / 'aggregate-rows.json'
+        final_path = self.root / 'aggregate-final.json'
+        rows_path.write_text(json.dumps(rows))
+        final_path.write_text(json.dumps(observations))
+        output = io.StringIO()
+        argv = ['agent-review', 'repair-comparison', 'report',
+            '--plan', str(self.fixture.plan_path), '--results', str(rows_path),
+            '--final-observations', str(final_path), '--out', str(self.root / name)]
+        with patch.object(sys, 'argv', argv), redirect_stdout(output):
+            try: cli.main()
+            except SystemExit as error: code = error.code
+            else: code = 0
+        return code, json.loads(output.getvalue()) if output.getvalue() else {}
+
+    def test_report_retains_final_unknown_latency_and_missing_denominator(self):
+        final, rows, _ = self.observe()
+        observations = {self.cell['cell_id']: final}
+        record, _ = self.fixture.record('api_test_feedback')
+        self.assertEqual(self.fixture.invoke(record, arm='api_test_feedback')[0], 0)
+        cell = next(c for c in self.fixture.plan['cells'] if c['arm'] == 'api_test_feedback')
+        request = self.request(stage=self.root/'staged-api_test_feedback', record=record,
+                               cell_id=cell['cell_id'])
+        receipt = self.receipt(request)
+        receipt['checks'][-1]['cleanup_status'] = 'outcome_unknown'
+        unknown, more_rows, _ = self.observe(request, receipt)
+        rows.update(more_rows)
+        observations[cell['cell_id']] = unknown
+        before = deepcopy((rows, observations))
+        with patch('subprocess.Popen', side_effect=AssertionError('no dispatch')):
+            code, summary = self.report_observations(rows, observations)
+        self.assertEqual(code, 0)
+        self.assertTrue(summary['must_stop'])
+        report = json.loads((self.root/'reported-final/report.json').read_text())
+        self.assertTrue(report['must_stop'])
+        self.assertEqual(report['planned_cells'], 3)
+        self.assertEqual(report['final_scoring_coverage'],
+            {'planned': 3, 'observed': 2, 'not_observed': 1})
+        self.assertEqual(report['final_scoring'][cell['cell_id']]['status'],
+                         'final_verification_unknown')
+        for arm in ('direct_api', 'api_test_feedback'):
+            stats = report['final_scoring_arms'][arm]
+            self.assertEqual(stats['timing_ms'],
+                {'preparation': 2, 'verification': 40, 'total': 42})
+            self.assertEqual(stats['observed'], 1)
+            self.assertEqual(stats['generation_plus_reported_final_ms'],
+                             report['arms'][arm]['timing_ms']['total'] + 42)
+        self.assertEqual(report['final_scoring_arms']['api_debugger']['not_observed'], 1)
+        generation = comparison.build_report(self.fixture.plan, rows)
+        self.assertEqual(report['arms'], generation['arms'])
+        self.assertTrue(all(stats['scored'] == 0 for stats in report['arms'].values()))
+        self.assertEqual((rows, observations), before)
+        self.assertNotIn('checks.py::test_full_file', json.dumps(report))
+        self.assertFalse(summary['target_code_executed'])
+
+    def test_report_rejects_rehashed_summary_and_generation_mismatch_before_output(self):
+        final, rows, _ = self.observe()
+        bad = deepcopy(final)
+        bad['must_stop'] = True
+        bad['observation_sha256'] = comparison.result_digest(
+            {k: v for k, v in bad.items() if k != 'observation_sha256'})
+        changed_rows = deepcopy(rows)
+        changed_rows[self.cell['cell_id']]['timing_ms']['total'] += 1
+        malformed = deepcopy(final)
+        malformed['request']['cell'] = {}
+        malformed['request']['request_sha256'] = comparison.result_digest(
+            {k: v for k, v in malformed['request'].items() if k != 'request_sha256'})
+        wrong_cell = next(c for c in self.fixture.plan['cells'] if c['arm'] == 'api_debugger')
+        cases = [(rows, {self.cell['cell_id']: bad}),
+                 (changed_rows, {self.cell['cell_id']: final}),
+                 ({}, {self.cell['cell_id']: final}),
+                 (rows, {'unplanned': final}),
+                 (rows, {wrong_cell['cell_id']: final}),
+                 (rows, {self.cell['cell_id']: malformed}),
+                 (rows, {self.cell['cell_id']: {}})]
+        for index, (results, observations) in enumerate(cases):
+            name = 'rejected-final-' + str(index)
+            with self.subTest(index=index):
+                code, summary = self.report_observations(results, observations, name)
+                self.assertEqual(code, 2)
+                self.assertEqual(summary['status'], 'rejected')
+                self.assertFalse((self.root/name).exists())
+
+    def test_report_empty_final_map_keeps_missing_final_observations_explicit(self):
+        self.assertEqual(self.report_observations({}, {})[0], 0)
+        report = json.loads((self.root/'reported-final/report.json').read_text())
+        self.assertEqual(report['final_scoring_coverage'],
+                         {'planned': 3, 'observed': 0, 'not_observed': 3})
+        self.assertFalse(report['must_stop'])
+        for cell in report['final_scoring'].values():
+            self.assertEqual(cell['status'], 'not_observed')
+            self.assertIsNone(cell['total_ms'])
+
+    def test_report_all_observed_keeps_timeout_and_absent_candidate_unscored(self):
+        final, rows, _ = self.observe()
+        observations = {self.cell['cell_id']: final}
+        for arm in ('api_test_feedback', 'api_debugger'):
+            record, _ = self.fixture.record(arm, candidate=arm != 'api_debugger')
+            self.assertEqual(self.fixture.invoke(record, arm=arm)[0], 0)
+            cell = next(c for c in self.fixture.plan['cells'] if c['arm'] == arm)
+            request = self.request(stage=self.root/('staged-' + arm), record=record,
+                                   cell_id=cell['cell_id'])
+            receipt = self.receipt(request)
+            if arm == 'api_test_feedback':
+                receipt['checks'][-1].update(execution_status='timeout', outcomes={},
+                    failure_kinds={}, test_counts=None, exit_code=None)
+            final, more, _ = self.observe(request, receipt)
+            observations[cell['cell_id']] = final
+            rows.update(more)
+        self.assertEqual(self.report_observations(rows, observations)[0], 0)
+        report = json.loads((self.root/'reported-final/report.json').read_text())
+        self.assertEqual(report['final_scoring_coverage'],
+                         {'planned': 3, 'observed': 3, 'not_observed': 0})
+        self.assertEqual(report['final_scoring_arms']['api_debugger']['timing_ms']['total'], 22)
+        self.assertEqual(report['final_scoring_arms']['api_test_feedback']['statuses']
+                         ['final_verification_timeout'], 1)
+        self.assertFalse(report['final_scoring_provenance_authenticated'])
+        self.assertTrue(all(arm['scored'] == 0 for arm in report['arms'].values()))
+        self.assertTrue(all(not cell['scoring_credit_awarded']
+                            for cell in report['final_scoring'].values()))
+
     def invoke(self, operation, out, *, receipt=None):
         argv=['agent-review','repair-comparison',operation,'--plan',str(self.fixture.plan_path),
             '--stage',str(self.stage),'--record',str(self.record),'--cell',self.cell['cell_id'],

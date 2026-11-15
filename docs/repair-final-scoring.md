@@ -134,6 +134,44 @@ The existing low-level `build_report` accepts already reviewed result maps;
 its structural locked-review checks are not independent authentication and
 must not be used to manufacture a review from these observations.
 
+## Aggregate final observations
+
+For a report including final verification, supply `--final-observations` to
+`repair-comparison report`. Its JSON input is a map from planned cell IDs to
+the complete `final.json` objects produced by `import-final`. Supply the same
+unchanged generation rows in `--results`. For example:
+
+```sh
+python3 -I -S -B cli/agent_review.py repair-comparison report \
+  --plan comparison/plan.json --results scoring/generation-results.json \
+  --final-observations scoring/final-observations.json \
+  --out scoring/combined-report
+```
+
+The aggregator revalidates each embedded request and receipt against the plan,
+recomputes the entire observation, and requires an exact match with the supplied
+generation row. Edited derived flags, mismatched rows, unknown cells and
+observations filed under another arm are rejected before creating the output.
+It does not execute tests, reread staged source, authenticate a producer or
+create locked reviews. Keep the input map private: it includes evaluator-only
+selectors and commitments. The aggregate report does not repeat those selectors.
+
+`final_scoring` retains each observed status and stop flag; missing cells are
+explicitly `not_observed` with null times. `final_scoring_coverage` and
+`final_scoring_arms` retain the whole planned denominator, per-arm observed and
+missing counts, status counts and separately reported final timing. Any unknown
+final execution or cleanup keeps the combined `must_stop` flag true. This is a
+read-only reporting decision, not enforcement of an execution schedule.
+
+Generation calls, tokens, costs, timing, origins and scores remain unchanged.
+`generation_plus_reported_final_ms` adds generation totals and supplied final
+totals once, including failed or uncertain final checks. It is a sum of reported
+durations, not measured batch wall-clock latency; unobserved final work is
+missing, not zero-duration. Complete observation coverage does not establish
+successful repairs or independent review. Without `--final-observations`, the
+existing report remains generation-only and cannot represent final uncertainty
+or final latency.
+
 Remaining before a real repair comparison: qualify an authorized execution
 backend with original/reference/masking controls, establish a real independent
 custodian and model-provenance validation boundary, produce truthful final

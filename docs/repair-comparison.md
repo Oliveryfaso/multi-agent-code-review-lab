@@ -97,6 +97,13 @@ bindings. No command imports a private scoring file or searches for credentials.
 Local hashes establish consistency, not provider authenticity, independent
 review, OS isolation or proof that a custodian excluded every answer leak.
 
+When final observations exist, include their complete imported objects with
+`report --final-observations PATH`. This evaluator-only map preserves final
+unknown/cleanup stop flags, missing coverage and per-arm final timing across
+cells. A results-only report covers generation and cannot recover these facts.
+See [final observation aggregation](repair-final-scoring.md#aggregate-final-observations)
+for the format and limits. Aggregation grants no new repair credit.
+
 ## Reading the report
 
 Keep every planned cell in the denominator, including contract/transport

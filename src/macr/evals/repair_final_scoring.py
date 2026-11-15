@@ -320,3 +320,62 @@ def import_final(request, receipt, *, plan):
         'total_ms': receipt['total_ms']}}
     report['must_stop'] = must_stop
     return final, {cell['cell_id']: row}, report
+
+
+def build_final_report(plan, results, observations):
+    """Aggregate imported claims without authenticating execution or awarding credit.
+
+    Recompute every observation from its bound request/receipt; stored status,
+    stop flags and timings are never accepted as independent authority. This
+    offline report does not reopen source trees or change generation records.
+    """
+    plan = validate_comparison(plan)
+    report = build_report(plan, results)
+    bounded_json(observations, max_bytes=JSON_LIMIT, max_depth=24)
+    _need(type(observations) is dict and set(observations) <=
+          {cell['cell_id'] for cell in plan['cells']}, 'observation_cells')
+    arms = {arm: {'planned': stats['planned'], 'observed': 0,
+        'not_observed': stats['planned'], 'statuses': {},
+        'timing_ms': {'preparation': 0, 'verification': 0, 'total': 0},
+        'generation_plus_reported_final_ms': stats['timing_ms']['total']}
+        for arm, stats in report['arms'].items()}
+    final_scoring = {}
+    for cell in plan['cells']:
+        cell_id = cell['cell_id']
+        if cell_id not in observations:
+            final_scoring[cell_id] = {'status': 'not_observed',
+                'must_stop': False, 'final_verification_must_stop': False,
+                'receipt_sha256': None, 'scoring_credit_awarded': False,
+                'preparation_ms': None, 'verification_ms': None, 'total_ms': None}
+            continue
+        saved = observations[cell_id]
+        _need(type(saved) is dict and type(saved.get('request')) is dict
+            and type(saved.get('receipt')) is dict and saved.get('cell') == cell,
+            'observation_binding')
+        try:
+            final, rows, single = import_final(saved['request'], saved['receipt'], plan=plan)
+        except (KeyError, StopIteration, AttributeError) as error:
+            raise ValueError('comparison_final_observation_binding') from error
+        # Compare canonical bytes, so e.g. false cannot substitute for zero.
+        _need(result_digest(saved) == result_digest(final), 'observation_changed')
+        _need(cell_id in results and result_digest(results[cell_id]) == result_digest(rows[cell_id]),
+              'observation_generation_mismatch')
+        summary = single['final_scoring'][cell_id]
+        final_scoring[cell_id] = summary
+        report['must_stop'] = report['must_stop'] or summary['must_stop']
+        stats = arms[cell['arm']]
+        stats['observed'] += 1
+        stats['not_observed'] -= 1
+        status = summary['status']
+        stats['statuses'][status] = stats['statuses'].get(status, 0) + 1
+        for phase in stats['timing_ms']:
+            stats['timing_ms'][phase] += summary[phase + '_ms']
+        stats['generation_plus_reported_final_ms'] += summary['total_ms']
+    for stats in arms.values():
+        stats['statuses']['not_observed'] = stats['not_observed']
+    report['final_scoring'] = final_scoring
+    report['final_scoring_arms'] = arms
+    report['final_scoring_coverage'] = {'planned': plan['planned_cells'],
+        'observed': len(observations), 'not_observed': plan['planned_cells'] - len(observations)}
+    report['final_scoring_provenance_authenticated'] = False
+    return report

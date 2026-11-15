@@ -94,7 +94,12 @@ def run(args):
             summary = {'status': 'pending_independent_review', 'comparison_sha256': packet['comparison_sha256'],
                        'packet_sha256': packet['packet_sha256'], 'scoring_credit_awarded': False}
         else:
-            report = build_report(_read(args.plan), _read(args.results))
+            plan, results = _read(args.plan), _read(args.results)
+            if args.final_observations is not None:
+                from .repair_final_scoring import build_final_report
+                report = build_final_report(plan, results, _read(args.final_observations))
+            else:
+                report = build_report(plan, results)
             values = {'report.json': report}
             summary = {'status': 'reported', 'comparison_sha256': report['comparison_sha256'],
                        'planned_cells': report['planned_cells'], 'must_stop': report['must_stop']}

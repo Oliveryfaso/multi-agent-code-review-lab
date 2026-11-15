@@ -22,3 +22,6 @@ The repair batch includes evaluator-only final-scoring observations: full saved-
 byte checks, public/hidden separation, frozen policies, receipt contradictions,
 missing candidates, resource overruns and uncertain cleanup. All use authored
 fixtures, leave generation rows unchanged and award zero new scoring credit.
+The same batch checks multi-cell final aggregation, preserving unknown cleanup,
+missing coverage and separate final timing while rejecting altered observations
+and mismatched generation rows before creating outputs.

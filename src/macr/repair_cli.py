@@ -34,6 +34,8 @@ def add_comparison_parser(subparsers):
     report_parser = commands.add_parser('report')
     report_parser.add_argument('--plan', type=Path, required=True)
     report_parser.add_argument('--results', type=Path, required=True, help='Sanitized result map by cell ID; omit missing cells, never invent passes.')
+    report_parser.add_argument('--final-observations', type=Path,
+        help='Evaluator-only map of imported final.json objects by cell ID; preserves final uncertainty and timing, awards no credit.')
     handoff_parser = commands.add_parser('handoff', help='Revalidate one saved repair record and export a pending, unscored packet.')
     handoff_parser.add_argument('--plan', type=Path, required=True)
     handoff_parser.add_argument('--record', type=Path, required=True)
